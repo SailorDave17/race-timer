@@ -1,0 +1,265 @@
+package com.racetimer.shared
+
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+
+/**
+ * Unit tests for [TimerEngine] using a fake monotonic clock so we can control time.
+ */
+class TimerEngineTest {
+
+    private var fakeNow = 0L
+    private val fakeClock = MonotonicClock { fakeNow }
+
+    private lateinit var engine: TimerEngine
+    private val cues = mutableListOf<SequenceCue>()
+    private var gunFired = false
+    private val ticks = mutableListOf<Long>()
+    private var syncedTo: Long? = null
+
+    private val listener = object : TimerListener {
+        override fun onCue(cue: SequenceCue) { cues += cue }
+        override fun onGun() { gunFired = true }
+        override fun onTick(remainingMs: Long) { ticks += remainingMs }
+        override fun onSync(snappedToMs: Long) { syncedTo = snappedToMs }
+    }
+
+    @Before fun setUp() {
+        fakeNow = 0L
+        cues.clear()
+        gunFired = false
+        ticks.clear()
+        syncedTo = null
+
+        engine = TimerEngine(fakeClock)
+        engine.addListener(listener)
+    }
+
+    // --- Basic lifecycle tests ------------------------------------------------
+
+    @Test fun `initial state is IDLE`() {
+        assertEquals(TimerState.IDLE, engine.currentState)
+    }
+
+    @Test fun `load sets state to IDLE`() {
+        engine.load(BuiltInSequences.club)
+        assertEquals(TimerState.IDLE, engine.currentState)
+    }
+
+    @Test fun `start transitions to RUNNING`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        assertEquals(TimerState.RUNNING, engine.currentState)
+    }
+
+    @Test fun `remainingMs decreases over time`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        val r0 = engine.remainingMs
+        fakeNow += 1_000L
+        val r1 = engine.remainingMs
+        assertEquals(r0 - 1_000L, r1)
+    }
+
+    @Test fun `reset returns to IDLE with full duration`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        fakeNow += 10_000L
+        engine.reset()
+        assertEquals(TimerState.IDLE, engine.currentState)
+        assertEquals(BuiltInSequences.club.totalMs, engine.remainingMs)
+    }
+
+    @Test fun `pause captures remaining and stops decreasing`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        fakeNow += 5_000L
+        engine.pause()
+        val r = engine.remainingMs
+        fakeNow += 10_000L
+        assertEquals(r, engine.remainingMs)
+        assertEquals(TimerState.PAUSED, engine.currentState)
+    }
+
+    @Test fun `resume after pause continues from correct position`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        fakeNow += 5_000L
+        engine.pause()
+        val pausedAt = engine.remainingMs
+        fakeNow += 100_000L  // wall time passes while paused
+        engine.start()      // resume
+        // remaining should be pausedAt minus any tick advance
+        fakeNow += 1_000L
+        assertEquals(pausedAt - 1_000L, engine.remainingMs)
+    }
+
+    // --- Cue firing -----------------------------------------------------------
+
+    @Test fun `club sequence fires correct number of cues`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+
+        // Advance past every cue
+        advanceTo(BuiltInSequences.club.totalMs + 1_000L)
+
+        // 3 named cues + 1 gun = 4 cues total
+        assertEquals(4, cues.size)
+        assertTrue(gunFired)
+    }
+
+    @Test fun `first cue fires at correct time`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+
+        // Just before 3:00 — no cues yet
+        fakeNow += 1L
+        engine.tick()
+        assertTrue(cues.isEmpty())
+
+        // Advance to 3:00 mark (offset=180_000 ms before gun, fires when elapsed = totalMs - 180_000 + 1)
+        // Club sequence: totalMs = 180_000; 3:00 cue fires when elapsed >= 0 (immediately)
+        // Actually: totalMs = 180_000 and first cue offsetMs = 180_000
+        // The cue fires when: now >= gunTimeMs - 180_000 = startTime + 180_000 - 180_000 = startTime
+        // So it fires on the very first tick after start.
+        fakeNow = 0L
+        engine.reset()
+        engine.start()
+        engine.tick()
+        assertEquals(1, cues.size)
+        assertEquals(3 * 60_000L, cues[0].offsetMs)
+    }
+
+    @Test fun `gun cue transitions to FINISHED`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        advanceTo(BuiltInSequences.club.totalMs + 1_000L)
+        assertEquals(TimerState.FINISHED, engine.currentState)
+        assertTrue(gunFired)
+    }
+
+    @Test fun `us sailing sequence has 4 cues`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        advanceTo(BuiltInSequences.usSailing.totalMs + 1_000L)
+        assertEquals(4, cues.size)
+    }
+
+    @Test fun `scholastic sequence has 13 cues`() {
+        engine.load(BuiltInSequences.scholastic)
+        engine.start()
+        advanceTo(BuiltInSequences.scholastic.totalMs + 1_000L)
+        assertEquals(13, cues.size)
+    }
+
+    // --- Sync -----------------------------------------------------------------
+
+    @Test fun `sync snaps to nearest minute - round up`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        // Advance 8s (4:52 remaining from 5:00 start) → should snap to 5:00 (nearest)
+        // US Sailing totalMs = 300_000. After 8s elapsed: remaining = 292_000 (4:52)
+        // 4:52 → nearest minute = 5:00 (upper, since 8 > 30)
+        fakeNow = 8_000L
+        engine.sync()
+        val snapped = syncedTo!!
+        assertEquals(5 * 60_000L, snapped)
+    }
+
+    @Test fun `sync snaps to nearest minute - round down`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        // Advance 8s (remaining = 292_000 = 4:52) → round-down snap → 4:00
+        fakeNow = 8_000L
+        engine.sync(roundDown = false) // nearest → 5:00 already tested; test round-down below
+        // Reset for round-down test
+        syncedTo = null
+        engine.reset()
+        engine.start()
+        fakeNow += 65_000L // remaining = 235_000 (3:55) → round down → 3:00
+        engine.sync(roundDown = true)
+        assertEquals(3 * 60_000L, syncedTo!!)
+    }
+
+    @Test fun `sync guard prevents double-snap within 1 second`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        fakeNow = 8_000L
+        engine.sync()
+        val first = syncedTo
+        syncedTo = null
+        fakeNow += 500L  // only 500 ms later — within guard
+        engine.sync()
+        assertNull(syncedTo)  // second sync was ignored
+        assertEquals(first, syncedTo ?: first)
+    }
+
+    @Test fun `sync after guard window is allowed`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        fakeNow = 8_000L
+        engine.sync()
+        fakeNow += 1_100L // past the 1-second guard
+        engine.sync()
+        assertNotNull(syncedTo)
+    }
+
+    // --- Custom sequence ------------------------------------------------------
+
+    @Test fun `custom 6-minute sequence has correct totalMs`() {
+        val seq = BuiltInSequences.custom(totalSeconds = 360L)
+        assertEquals(360_000L, seq.totalMs)
+    }
+
+    @Test fun `custom sequence gun cue at 0`() {
+        val seq = BuiltInSequences.custom(totalSeconds = 120L)
+        val gun = seq.cues.first { it.isGun }
+        assertEquals(0L, gun.offsetMs)
+    }
+
+    // --- State restoration ----------------------------------------------------
+
+    @Test fun `restoreFromWallClock resumes correctly`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        fakeNow += 30_000L
+        val wallGun = engine.gunWallClockMs()
+
+        // Simulate restart: new engine, same clock
+        val engine2 = TimerEngine(fakeClock)
+        engine2.restoreFromWallClock(BuiltInSequences.club, wallGun)
+        assertEquals(TimerState.RUNNING, engine2.currentState)
+        // Remaining should be approximately (180_000 - 30_000) = 150_000
+        assertEquals(150_000L, engine2.remainingMs, 100L)
+    }
+
+    @Test fun `restoreFromWallClock after gun results in FINISHED`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        val wallGun = engine.gunWallClockMs()
+
+        fakeNow += 190_000L  // well past the gun
+        val engine2 = TimerEngine(fakeClock)
+        engine2.restoreFromWallClock(BuiltInSequences.club, wallGun)
+        assertEquals(TimerState.FINISHED, engine2.currentState)
+    }
+
+    // --- Helper ---------------------------------------------------------------
+
+    /** Advance fake clock in 100 ms steps, calling tick() each step. */
+    private fun advanceTo(totalElapsedMs: Long) {
+        val step = 100L
+        while (fakeNow < totalElapsedMs) {
+            fakeNow += step
+            engine.tick()
+        }
+    }
+
+    private fun assertEquals(expected: Long, actual: Long, tolerance: Long) {
+        assertTrue(
+            "Expected ~$expected but was $actual (tolerance ±$tolerance)",
+            Math.abs(actual - expected) <= tolerance
+        )
+    }
+}

@@ -1,0 +1,27 @@
+# Gradle build outputs
+build/
+.gradle/
+out/
+
+# Android/IntelliJ project files
+*.iml
+.idea/
+*.ipr
+*.iws
+
+# Local SDK properties (not to be versioned)
+local.properties
+
+# Signing keystore files
+*.jks
+*.keystore
+
+# Generated APK/AAB files
+*.apk
+*.aab
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
