@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Race Timer</string>
+    <string name="btn_start">Start</string>
+    <string name="btn_stop">Stop</string>
+    <string name="btn_reset">Reset</string>
+    <string name="btn_sync">Sync</string>
+    <string name="btn_resume">Resume</string>
+    <string name="label_synced">Synced</string>
+    <string name="label_finished">GO!</string>
+    <string name="notification_channel_id">race_timer_channel</string>
+    <string name="notification_channel_name">Race Timer</string>
+    <string name="notification_content_title">Race Timer Running</string>
+    <string name="notification_content_text">Countdown to start</string>
+    <string name="sequence_us_sailing">US Sailing 5-4-1-Go</string>
+    <string name="sequence_scholastic">Scholastic (ICSA)</string>
+    <string name="sequence_club">Club 3-2-1-Go</string>
+    <string name="sequence_custom">Custom</string>
+</resources>
