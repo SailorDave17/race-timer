@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity() {
     private var uiTimerState by mutableStateOf(TimerState.IDLE)
     private var uiSequenceName by mutableStateOf(BuiltInSequences.usSailing.name)
     private var uiSyncLabel by mutableStateOf<String?>(null)
+    private var uiMessage by mutableStateOf<String?>(null)
 
     private var selectedSequence: RaceSequence = BuiltInSequences.usSailing
 
@@ -114,10 +115,13 @@ class MainActivity : ComponentActivity() {
                             state = uiTimerState,
                             sequenceName = uiSequenceName,
                             syncLabel = uiSyncLabel,
+                            message = uiMessage,
                             onStart = { handleStart() },
                             onStop = { handleStop() },
                             onReset = { handleReset() },
                             onSync = { handleSync() },
+                            onPause = { handlePause() },
+                            onPickSequence = { navController.navigate(NAV_PICKER) },
                         )
                     }
                     wearComposable(NAV_PICKER) {
@@ -170,6 +174,10 @@ class MainActivity : ComponentActivity() {
         startService(TimerService.syncIntent(this))
     }
 
+    private fun handlePause() {
+        startService(TimerService.pauseIntent(this))
+    }
+
     // --- Engine listener ------------------------------------------------------
 
     private val engineListener = object : TimerListener {
@@ -180,6 +188,11 @@ class MainActivity : ComponentActivity() {
             val label = "Synced → ${formatMmSs(snappedToMs)}"
             uiSyncLabel = label
             uiHandler.postDelayed({ uiSyncLabel = null }, SYNC_LABEL_DURATION_MS)
+        }
+
+        override fun onClockAdjusted(remainingMs: Long) {
+            uiMessage = "Clock changed — countdown held steady"
+            uiHandler.postDelayed({ uiMessage = null }, MESSAGE_DURATION_MS)
         }
     }
 
@@ -198,5 +211,6 @@ class MainActivity : ComponentActivity() {
         private const val NAV_PICKER = "picker"
         private const val UI_REFRESH_MS = 50L
         private const val SYNC_LABEL_DURATION_MS = 2_000L
+        private const val MESSAGE_DURATION_MS = 3_000L
     }
 }

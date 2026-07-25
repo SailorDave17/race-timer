@@ -35,13 +35,11 @@ data class SignalPattern(
  * @param offsetMs      Milliseconds before the start gun (positive).  The gun itself is 0.
  * @param signal        The blast pattern to play/buzz at this cue.
  * @param isGun         True only for the 0:00 "Start" cue.
- * @param countdownTick True for the individual final-5 tick cues (4, 3, 2, 1 seconds).
  */
 data class SequenceCue(
     val offsetMs: Long,
     val signal: SignalPattern,
     val isGun: Boolean = false,
-    val countdownTick: Boolean = false,
 )
 
 // ---------------------------------------------------------------------------
@@ -132,27 +130,22 @@ object BuiltInSequences {
             SequenceCue(
                 offsetMs = 5_000L,
                 signal = SignalPattern(shortBlasts = 1, label = "1 short"),
-                countdownTick = true,
             ),
             SequenceCue(
                 offsetMs = 4_000L,
                 signal = SignalPattern(shortBlasts = 1, label = "1 short"),
-                countdownTick = true,
             ),
             SequenceCue(
                 offsetMs = 3_000L,
                 signal = SignalPattern(shortBlasts = 1, label = "1 short"),
-                countdownTick = true,
             ),
             SequenceCue(
                 offsetMs = 2_000L,
                 signal = SignalPattern(shortBlasts = 1, label = "1 short"),
-                countdownTick = true,
             ),
             SequenceCue(
                 offsetMs = 1_000L,
                 signal = SignalPattern(shortBlasts = 1, label = "1 short"),
-                countdownTick = true,
             ),
             SequenceCue(
                 offsetMs = 0L,
@@ -223,7 +216,6 @@ object BuiltInSequences {
                 cues += SequenceCue(
                     offsetMs = sec * 1_000L,
                     signal = SignalPattern(shortBlasts = 1, label = "$sec"),
-                    countdownTick = true,
                 )
             }
         }

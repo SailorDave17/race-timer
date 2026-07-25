@@ -49,7 +49,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.datastore.preferences)
 
     // Wear Compose
     implementation(libs.wear.compose.material)
