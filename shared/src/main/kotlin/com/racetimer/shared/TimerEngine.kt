@@ -91,9 +91,6 @@ class TimerEngine(private val clock: MonotonicClock) {
     /** Cues that have not yet fired in the current run. */
     private var pendingCues: ArrayDeque<SequenceCue> = ArrayDeque()
 
-    /** Most recently fired cue index (for state restoration). */
-    private var lastFiredCueOffset: Long = Long.MAX_VALUE
-
     private val listeners = mutableListOf<TimerListener>()
 
     // --- Public API -----------------------------------------------------------
@@ -117,7 +114,6 @@ class TimerEngine(private val clock: MonotonicClock) {
         state = TimerState.IDLE
         pausedRemainingMs = seq.totalMs
         pendingCues = ArrayDeque(seq.cues.sortedByDescending { it.offsetMs })
-        lastFiredCueOffset = Long.MAX_VALUE
     }
 
     /**
@@ -155,7 +151,6 @@ class TimerEngine(private val clock: MonotonicClock) {
         state = TimerState.IDLE
         pausedRemainingMs = seq.totalMs
         pendingCues = ArrayDeque(seq.cues.sortedByDescending { it.offsetMs })
-        lastFiredCueOffset = Long.MAX_VALUE
     }
 
     /** Stop without resetting (sequence position lost). */
