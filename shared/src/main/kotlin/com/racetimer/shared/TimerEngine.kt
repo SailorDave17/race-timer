@@ -61,6 +61,14 @@ interface TimerListener {
      * @param snappedToMs The new remaining ms (a whole minute boundary).
      */
     fun onSync(snappedToMs: Long)
+
+    /**
+     * Called when a wall-clock adjustment (e.g. an NTP correction or manual time change) is
+     * detected while the countdown is running. The monotonic countdown itself is unaffected;
+     * [remainingMs] is the still-correct remaining time. Implementers may surface a brief
+     * on-watch notice and/or re-persist derived wall-clock state. Default: no-op.
+     */
+    fun onClockAdjusted(remainingMs: Long) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +98,12 @@ class TimerEngine(private val clock: MonotonicClock) {
 
     /** Cues that have not yet fired in the current run. */
     private var pendingCues: ArrayDeque<SequenceCue> = ArrayDeque()
+
+    /**
+     * Baseline (wall-clock minus monotonic) offset captured when the countdown started or was
+     * restored. Used by [pollClockAdjustment] to detect wall-clock jumps mid-run.
+     */
+    private var wallMonoOffsetMs: Long = 0L
 
     private val listeners = mutableListOf<TimerListener>()
 
@@ -129,11 +143,13 @@ class TimerEngine(private val clock: MonotonicClock) {
                 // Re-anchor gun time to now + remaining
                 gunTimeMs = clock.elapsedMs() + pausedRemainingMs
                 state = TimerState.RUNNING
+                captureClockBaseline()
             }
             TimerState.IDLE, TimerState.FINISHED -> {
                 pendingCues = ArrayDeque(seq.cues.sortedByDescending { it.offsetMs })
                 gunTimeMs = clock.elapsedMs() + seq.totalMs
                 state = TimerState.RUNNING
+                captureClockBaseline()
             }
         }
     }
@@ -197,6 +213,38 @@ class TimerEngine(private val clock: MonotonicClock) {
     }
 
     private var lastSyncTimeMs: Long = Long.MIN_VALUE
+
+    /** Capture the current wall-clock/monotonic offset as the drift baseline. */
+    private fun captureClockBaseline() {
+        wallMonoOffsetMs = System.currentTimeMillis() - clock.elapsedMs()
+    }
+
+    /**
+     * Detect a wall-clock jump (e.g. NTP correction) since the countdown started.
+     *
+     * The countdown is anchored to the monotonic clock, so a wall-clock jump does **not** change
+     * the remaining time. But any *derived* wall-clock state (used to survive process death) does
+     * drift, so callers should re-persist it when this returns true. Also fires
+     * [TimerListener.onClockAdjusted] so the UI can reassure the sailor.
+     *
+     * Call periodically (e.g. from the tick loop). Re-baselines on detection so each jump is
+     * reported once.
+     *
+     * @param thresholdMs Minimum absolute drift to treat as a jump (default 2 s).
+     * @return true if a jump was detected and the baseline was reset.
+     */
+    fun pollClockAdjustment(thresholdMs: Long = 2_000L): Boolean {
+        if (state != TimerState.RUNNING) return false
+        val currentOffset = System.currentTimeMillis() - clock.elapsedMs()
+        val drift = currentOffset - wallMonoOffsetMs
+        if (drift >= thresholdMs || drift <= -thresholdMs) {
+            wallMonoOffsetMs = currentOffset
+            val remaining = gunTimeMs - clock.elapsedMs()
+            listeners.forEach { it.onClockAdjusted(remaining) }
+            return true
+        }
+        return false
+    }
 
     /**
      * Must be called periodically (e.g. every 100 ms from a coroutine or Handler).
@@ -262,6 +310,7 @@ class TimerEngine(private val clock: MonotonicClock) {
                     .sortedByDescending { it.offsetMs }
             )
             state = TimerState.RUNNING
+            captureClockBaseline()
         }
     }
 }
