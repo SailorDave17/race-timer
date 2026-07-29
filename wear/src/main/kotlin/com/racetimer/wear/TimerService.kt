@@ -74,9 +74,6 @@ class TimerService : Service() {
                     handler.postDelayed(this, TICK_INTERVAL_MS)
                     updateOngoingNotification()
                 }
-                TimerState.PAUSED -> {
-                    // Paused: stop ticking but keep the service instance alive so it can resume.
-                }
                 else -> stopForegroundAndCleanup()
             }
         }
@@ -98,34 +95,28 @@ class TimerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                if (engine.currentState == TimerState.PAUSED) {
-                    // Resume from a paused countdown — keep the existing position, and keep
-                    // lastRestoreOutcome: a degraded anchor is still degraded after a pause.
-                    engine.start()
+                val sequenceId = intent.getStringExtra(EXTRA_SEQUENCE_ID) ?: BuiltInSequences.usSailing.id
+                val sequence = findSequence(sequenceId)
+
+                // Check if we should restore from saved state
+                val savedGunElapsed = prefs.getLong(PREF_GUN_ELAPSED, -1L)
+                val savedGunWall = prefs.getLong(PREF_GUN_WALL_CLOCK, -1L)
+                val savedCapturedElapsed = prefs.getLong(PREF_CAPTURED_ELAPSED, Long.MIN_VALUE)
+                val savedSeqId = prefs.getString(PREF_SEQUENCE_ID, null)
+
+                if (savedGunWall > 0 && savedCapturedElapsed != Long.MIN_VALUE &&
+                    savedSeqId == sequenceId && engine.currentState == TimerState.IDLE) {
+                    val snapshot = TimerEngine.Snapshot(
+                        sequenceId = savedSeqId,
+                        gunElapsedMs = savedGunElapsed,
+                        gunWallMs = savedGunWall,
+                        capturedElapsedMs = savedCapturedElapsed,
+                    )
+                    lastRestoreOutcome = engine.restore(sequence, snapshot)
                 } else {
-                    val sequenceId = intent.getStringExtra(EXTRA_SEQUENCE_ID) ?: BuiltInSequences.usSailing.id
-                    val sequence = findSequence(sequenceId)
-
-                    // Check if we should restore from saved state
-                    val savedGunElapsed = prefs.getLong(PREF_GUN_ELAPSED, -1L)
-                    val savedGunWall = prefs.getLong(PREF_GUN_WALL_CLOCK, -1L)
-                    val savedCapturedElapsed = prefs.getLong(PREF_CAPTURED_ELAPSED, Long.MIN_VALUE)
-                    val savedSeqId = prefs.getString(PREF_SEQUENCE_ID, null)
-
-                    if (savedGunWall > 0 && savedCapturedElapsed != Long.MIN_VALUE &&
-                        savedSeqId == sequenceId && engine.currentState == TimerState.IDLE) {
-                        val snapshot = TimerEngine.Snapshot(
-                            sequenceId = savedSeqId,
-                            gunElapsedMs = savedGunElapsed,
-                            gunWallMs = savedGunWall,
-                            capturedElapsedMs = savedCapturedElapsed,
-                        )
-                        lastRestoreOutcome = engine.restore(sequence, snapshot)
-                    } else {
-                        engine.load(sequence)
-                        engine.start()
-                        lastRestoreOutcome = null
-                    }
+                    engine.load(sequence)
+                    engine.start()
+                    lastRestoreOutcome = null
                 }
 
                 persistSnapshot()
@@ -134,19 +125,6 @@ class TimerService : Service() {
                 scheduleTickLoop()
             }
             ACTION_SYNC -> engine.sync()
-            ACTION_PAUSE -> {
-                engine.pause()
-                handler.removeCallbacks(tickRunnable)
-                releaseWakeLock()
-                // Keep the service instance alive (the Activity stays bound) so the sailor can
-                // resume, but drop the ongoing notification and stop ticking.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                } else {
-                    @Suppress("DEPRECATION")
-                    stopForeground(true)
-                }
-            }
             ACTION_STOP -> {
                 engine.stop()
                 clearPersistedState()
@@ -311,7 +289,6 @@ class TimerService : Service() {
     companion object {
         const val ACTION_START = "com.racetimer.wear.ACTION_START"
         const val ACTION_SYNC = "com.racetimer.wear.ACTION_SYNC"
-        const val ACTION_PAUSE = "com.racetimer.wear.ACTION_PAUSE"
         const val ACTION_STOP = "com.racetimer.wear.ACTION_STOP"
         const val ACTION_RESET = "com.racetimer.wear.ACTION_RESET"
         const val EXTRA_SEQUENCE_ID = "sequence_id"
@@ -334,8 +311,6 @@ class TimerService : Service() {
         fun syncIntent(context: Context): Intent =
             Intent(context, TimerService::class.java).apply { action = ACTION_SYNC }
 
-        fun pauseIntent(context: Context): Intent =
-            Intent(context, TimerService::class.java).apply { action = ACTION_PAUSE }
 
         fun stopIntent(context: Context): Intent =
             Intent(context, TimerService::class.java).apply { action = ACTION_STOP }
