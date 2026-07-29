@@ -166,7 +166,8 @@ class MainActivity : ComponentActivity() {
     // --- User actions ---------------------------------------------------------
 
     private fun handleStart() {
-        resyncAcknowledged = false
+        // Resuming keeps any prior sync acknowledgement; only a fresh start clears it.
+        if (uiTimerState != TimerState.PAUSED) resyncAcknowledged = false
         startForegroundService(TimerService.startIntent(this, selectedSequence.id))
     }
 

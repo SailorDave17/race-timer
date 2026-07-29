@@ -99,9 +99,9 @@ class TimerService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 if (engine.currentState == TimerState.PAUSED) {
-                    // Resume from a paused countdown — keep the existing position.
+                    // Resume from a paused countdown — keep the existing position, and keep
+                    // lastRestoreOutcome: a degraded anchor is still degraded after a pause.
                     engine.start()
-                    lastRestoreOutcome = null
                 } else {
                     val sequenceId = intent.getStringExtra(EXTRA_SEQUENCE_ID) ?: BuiltInSequences.usSailing.id
                     val sequence = findSequence(sequenceId)
