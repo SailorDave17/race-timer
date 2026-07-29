@@ -114,25 +114,20 @@ class TimerEngineTest {
     }
 
     @Test fun `first cue fires at correct time`() {
+        // The club sequence's first cue sits at offsetMs == totalMs (the 3:00 warning of a 3:00
+        // sequence), so it fires when now >= gunTimeMs - 180_000 == startTime — i.e. on the very
+        // first tick after start, not later.
         engine.load(BuiltInSequences.club)
         engine.start()
 
-        // Just before 3:00 — no cues yet
-        fakeNow += 1L
-        engine.tick()
-        assertTrue(cues.isEmpty())
-
-        // Advance to 3:00 mark (offset=180_000 ms before gun, fires when elapsed = totalMs - 180_000 + 1)
-        // Club sequence: totalMs = 180_000; 3:00 cue fires when elapsed >= 0 (immediately)
-        // Actually: totalMs = 180_000 and first cue offsetMs = 180_000
-        // The cue fires when: now >= gunTimeMs - 180_000 = startTime + 180_000 - 180_000 = startTime
-        // So it fires on the very first tick after start.
-        fakeNow = 0L
-        engine.reset()
-        engine.start()
         engine.tick()
         assertEquals(1, cues.size)
         assertEquals(3 * 60_000L, cues[0].offsetMs)
+
+        // The 2:00 cue must wait its turn rather than following immediately.
+        fakeNow += 1L
+        engine.tick()
+        assertEquals(1, cues.size)
     }
 
     @Test fun `gun cue transitions to FINISHED`() {
@@ -203,6 +198,17 @@ class TimerEngineTest {
         fakeNow = 60_100L
         engine.tick()
         assertEquals(1, cues.count { it.offsetMs == 120_000L })  // still once, no double-fire
+    }
+
+    @Test fun `first sync of a race is never swallowed by the double-tap guard`() {
+        // Regression: the guard used to seed lastSyncTimeMs with Long.MIN_VALUE, so `now - last`
+        // overflowed negative and every first sync of a race silently did nothing.
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        fakeNow = 8_000L
+        engine.sync()
+        assertNotNull("first sync must be honoured", syncedTo)
+        assertEquals(5 * 60_000L, syncedTo)
     }
 
     @Test fun `sync guard prevents double-snap within 1 second`() {

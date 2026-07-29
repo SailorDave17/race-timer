@@ -222,7 +222,10 @@ class TimerEngine(
         if (state != TimerState.RUNNING) return
 
         val now = clock.elapsedMs()
-        if (now - lastSyncTimeMs < guardMs) return
+        // null == never synced this session, so the first sync is always allowed. (Do not fold this
+        // into a sentinel Long: `now - Long.MIN_VALUE` overflows negative and swallowed every
+        // first sync of a race.)
+        lastSyncTimeMs?.let { if (now - it < guardMs) return }
         lastSyncTimeMs = now
 
         val remaining = gunTimeMs - now
@@ -252,7 +255,8 @@ class TimerEngine(
         listeners.forEach { it.onSync(snapped) }
     }
 
-    private var lastSyncTimeMs: Long = Long.MIN_VALUE
+    /** Monotonic time of the last accepted [sync], or null if none yet. Backs the double-tap guard. */
+    private var lastSyncTimeMs: Long? = null
 
     /** Capture the current wall-clock/monotonic offset as the drift baseline. */
     private fun captureClockBaseline() {
