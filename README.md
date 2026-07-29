@@ -8,7 +8,7 @@ A precise, glanceable start-sequence timer for sailboat racing that runs **stand
 - **US Sailing 5-4-1-Go** (RRS 26) — 5-min sequence with Warning, Preparatory, One-minute, and Start signals
 - **Scholastic / ICSA** — 3-min sequence with dense horn-blast cues (3L, 2L, 1L+3S, 1L, 3S, 2S, 1S × 6, 1L-Start)
 - **Club 3-2-1-Go** — simple 3-min club racing sequence
-- **Custom** — arbitrary duration with configurable intermediate cues
+- **Custom** *(V1.1 — engine implemented and unit-tested, not yet exposed in the watch UI)* — arbitrary duration with configurable intermediate cues
 
 ### Sync Button
 Tap **Sync** at any point during the countdown to snap to the nearest whole minute — absorbs your reaction-time lag when watching the Race Committee's flag. Round-to-nearest by default; round-down available as a toggle.
@@ -89,7 +89,7 @@ race-timer/
 
 | Phase | Features |
 |-------|---------|
-| **MVP (current)** | Standalone Wear OS app — all 4 sequences, Sync, haptics, foreground service, keep-screen-on |
-| V1.1 | Named custom presets, round-down sync toggle, mute/haptics settings, Wear Tile + complication |
+| **MVP (current)** | Standalone Wear OS app — 3 built-in sequences (US Sailing, Scholastic, Club), Sync, haptics, foreground service, keep-screen-on |
+| V1.1 | Custom sequence UI (engine already implemented), named custom presets, round-down sync toggle, mute/haptics settings, Wear Tile + complication |
 | V1.2 | Android phone companion app (sequence picker, config, countdown mirror) |
 | Later | Rolling/chained starts, mic airhorn auto-sync, OCS/recall handling |
