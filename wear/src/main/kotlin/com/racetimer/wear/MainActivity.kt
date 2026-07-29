@@ -22,6 +22,7 @@ import androidx.wear.compose.navigation.composable as wearComposable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.RaceSequence
+import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
@@ -68,6 +69,11 @@ class MainActivity : ComponentActivity() {
     private var uiTimerState by mutableStateOf(TimerState.IDLE)
     private var uiSequenceName by mutableStateOf(BuiltInSequences.usSailing.name)
     private var uiSyncLabel by mutableStateOf<String?>(null)
+    private var uiShowResyncPrompt by mutableStateOf(false)
+
+    /** Set once the sailor taps Sync after a degraded recovery, dismissing the re-sync prompt. */
+    private var resyncAcknowledged = false
+
     private var uiMessage by mutableStateOf<String?>(null)
 
     private var selectedSequence: RaceSequence = BuiltInSequences.usSailing
@@ -115,6 +121,7 @@ class MainActivity : ComponentActivity() {
                             state = uiTimerState,
                             sequenceName = uiSequenceName,
                             syncLabel = uiSyncLabel,
+                            showResyncPrompt = uiShowResyncPrompt,
                             message = uiMessage,
                             onStart = { handleStart() },
                             onStop = { handleStop() },
@@ -159,6 +166,8 @@ class MainActivity : ComponentActivity() {
     // --- User actions ---------------------------------------------------------
 
     private fun handleStart() {
+        // Resuming keeps any prior sync acknowledgement; only a fresh start clears it.
+        if (uiTimerState != TimerState.PAUSED) resyncAcknowledged = false
         startForegroundService(TimerService.startIntent(this, selectedSequence.id))
     }
 
@@ -171,6 +180,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleSync() {
+        resyncAcknowledged = true
         startService(TimerService.syncIntent(this))
     }
 
@@ -202,6 +212,10 @@ class MainActivity : ComponentActivity() {
         val engine = timerService?.engine ?: return
         uiRemainingMs = engine.remainingMs
         uiTimerState = engine.currentState
+        // Prompt a re-sync only while a degraded recovery is still running and unconfirmed.
+        uiShowResyncPrompt = timerService?.lastRestoreOutcome == RestoreOutcome.DEGRADED &&
+            engine.currentState == TimerState.RUNNING &&
+            !resyncAcknowledged
         // Manage keep-screen-on
         setScreenOn(engine.currentState == TimerState.RUNNING)
     }

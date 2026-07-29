@@ -19,6 +19,7 @@ import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.RaceSequence
+import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
@@ -52,6 +53,14 @@ class TimerService : Service() {
     val engine = TimerEngine(SystemMonotonicClock)
     private lateinit var haptic: HapticManager
     private lateinit var prefs: SharedPreferences
+
+    /**
+     * Outcome of the most recent restore, or null if the last start was fresh.
+     * [RestoreOutcome.DEGRADED] means a reboot or clock step was detected during recovery and the
+     * UI should prompt the sailor to re-sync against the Race Committee flag.
+     */
+    var lastRestoreOutcome: RestoreOutcome? = null
+        private set
 
     // --- Handler tick loop ----------------------------------------------------
 
@@ -90,27 +99,36 @@ class TimerService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 if (engine.currentState == TimerState.PAUSED) {
-                    // Resume from a paused countdown — keep the existing position.
+                    // Resume from a paused countdown — keep the existing position, and keep
+                    // lastRestoreOutcome: a degraded anchor is still degraded after a pause.
                     engine.start()
-                    persistGunWallClock()
                 } else {
                     val sequenceId = intent.getStringExtra(EXTRA_SEQUENCE_ID) ?: BuiltInSequences.usSailing.id
                     val sequence = findSequence(sequenceId)
 
                     // Check if we should restore from saved state
+                    val savedGunElapsed = prefs.getLong(PREF_GUN_ELAPSED, -1L)
                     val savedGunWall = prefs.getLong(PREF_GUN_WALL_CLOCK, -1L)
+                    val savedCapturedElapsed = prefs.getLong(PREF_CAPTURED_ELAPSED, Long.MIN_VALUE)
                     val savedSeqId = prefs.getString(PREF_SEQUENCE_ID, null)
 
-                    if (savedGunWall > 0 && savedSeqId == sequenceId &&
-                        engine.currentState == TimerState.IDLE) {
-                        engine.restoreFromWallClock(sequence, savedGunWall)
+                    if (savedGunWall > 0 && savedCapturedElapsed != Long.MIN_VALUE &&
+                        savedSeqId == sequenceId && engine.currentState == TimerState.IDLE) {
+                        val snapshot = TimerEngine.Snapshot(
+                            sequenceId = savedSeqId,
+                            gunElapsedMs = savedGunElapsed,
+                            gunWallMs = savedGunWall,
+                            capturedElapsedMs = savedCapturedElapsed,
+                        )
+                        lastRestoreOutcome = engine.restore(sequence, snapshot)
                     } else {
                         engine.load(sequence)
                         engine.start()
+                        lastRestoreOutcome = null
                     }
-
-                    persistState(sequenceId)
                 }
+
+                persistSnapshot()
                 acquireWakeLock()
                 startForegroundWithNotification()
                 scheduleTickLoop()
@@ -253,36 +271,35 @@ class TimerService : Service() {
 
         override fun onSync(snappedToMs: Long) {
             haptic.playSync()
-            persistGunWallClock()
+            persistSnapshot()
         }
 
         override fun onClockAdjusted(remainingMs: Long) {
             // Wall clock jumped (e.g. NTP correction). The monotonic countdown is unaffected,
             // but the persisted wall-clock anchor must be refreshed so a restore-after-death
             // stays correct.
-            persistGunWallClock()
+            persistSnapshot()
         }
     }
 
     // --- State persistence ----------------------------------------------------
 
-    private fun persistState(sequenceId: String) {
+    private fun persistSnapshot() {
+        val snap = engine.snapshot() ?: return
         prefs.edit()
-            .putString(PREF_SEQUENCE_ID, sequenceId)
-            .apply()
-        persistGunWallClock()
-    }
-
-    private fun persistGunWallClock() {
-        prefs.edit()
-            .putLong(PREF_GUN_WALL_CLOCK, engine.gunWallClockMs())
+            .putString(PREF_SEQUENCE_ID, snap.sequenceId)
+            .putLong(PREF_GUN_ELAPSED, snap.gunElapsedMs)
+            .putLong(PREF_GUN_WALL_CLOCK, snap.gunWallMs)
+            .putLong(PREF_CAPTURED_ELAPSED, snap.capturedElapsedMs)
             .apply()
     }
 
     private fun clearPersistedState() {
         prefs.edit()
-            .remove(PREF_GUN_WALL_CLOCK)
             .remove(PREF_SEQUENCE_ID)
+            .remove(PREF_GUN_ELAPSED)
+            .remove(PREF_GUN_WALL_CLOCK)
+            .remove(PREF_CAPTURED_ELAPSED)
             .apply()
     }
 
@@ -300,8 +317,10 @@ class TimerService : Service() {
         const val EXTRA_SEQUENCE_ID = "sequence_id"
 
         private const val PREFS_NAME = "race_timer_state"
-        private const val PREF_GUN_WALL_CLOCK = "gun_wall_clock_ms"
         private const val PREF_SEQUENCE_ID = "sequence_id"
+        private const val PREF_GUN_ELAPSED = "gun_elapsed_ms"
+        private const val PREF_GUN_WALL_CLOCK = "gun_wall_clock_ms"
+        private const val PREF_CAPTURED_ELAPSED = "captured_elapsed_ms"
 
         private const val TICK_INTERVAL_MS = 50L
         private const val GUN_LINGER_MS = 3_000L
