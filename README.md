@@ -23,7 +23,7 @@ Tap **Sync** at any point during the countdown to snap to the nearest whole minu
 - **Monotonic clock** — anchored to `elapsedRealtimeNanos()`, immune to NTP/wall-clock changes
 - **Foreground service + Ongoing Activity** — countdown survives screen-off and app backgrounding
 - **Keep-screen-on** — display stays on for the full sequence; clears the moment the sequence ends
-- **State persistence** — gun time saved to `SharedPreferences`; restored if the process is killed mid-race
+- **State persistence** — the running gun time is snapshotted to `SharedPreferences`. A killed process is restored **exactly** (the monotonic anchor survives, immune to NTP). After a device restart the timer is recovered best-effort from wall-clock and prompts you to tap **Sync** to confirm against the flag.
 
 ## Project Structure
 
@@ -81,7 +81,7 @@ race-timer/
 | Navigation | Wear Compose Navigation |
 | Timing | `SystemClock.elapsedRealtime()` (monotonic) |
 | Background | Android `ForegroundService` + Wear `OngoingActivity` |
-| State | `SharedPreferences` (gun wall-clock) |
+| State | `SharedPreferences` (boot-anchored gun snapshot) |
 | Min SDK | 30 (Wear OS 3.5 / Android 11) |
 | Target SDK | 34 |
 

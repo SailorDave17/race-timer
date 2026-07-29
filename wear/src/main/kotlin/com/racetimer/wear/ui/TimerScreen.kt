@@ -63,6 +63,8 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  * @param state          Current [TimerState] of the engine.
  * @param sequenceName   Name of the loaded sequence shown as a small label.
  * @param syncLabel      Non-null for ~2 s after a sync to flash "Synced → X:XX".
+ * @param showResyncPrompt True after a degraded recovery (reboot / clock step): the restored gun
+ *                       is best-effort, so prompt the sailor to tap Sync against the RC flag.
  * @param onStart        Called when the user taps Start or Resume.
  * @param onStop         Called when the user taps Stop.
  * @param onReset        Called when the user taps Reset.
@@ -74,6 +76,7 @@ fun TimerScreen(
     state: TimerState,
     sequenceName: String,
     syncLabel: String?,
+    showResyncPrompt: Boolean,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onReset: () -> Unit,
@@ -105,6 +108,18 @@ fun TimerScreen(
                 color = Color.White.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center,
             )
+
+            // Degraded-recovery prompt: gun was reconstructed best-effort, confirm against the flag.
+            if (showResyncPrompt) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Recovered — tap Sync to confirm",
+                    style = MaterialTheme.typography.caption2,
+                    color = Color(0xFFFFC107),
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                )
+            }
 
             Spacer(modifier = Modifier.height(4.dp))
 

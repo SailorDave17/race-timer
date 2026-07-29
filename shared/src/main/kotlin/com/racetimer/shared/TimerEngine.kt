@@ -26,6 +26,29 @@ fun interface MonotonicClock {
     fun elapsedMs(): Long
 }
 
+/**
+ * Returns wall-clock time (ms since epoch).
+ *
+ * Declared as an injectable interface (rather than calling [System.currentTimeMillis] directly)
+ * so tests can step or jump the wall clock independently of the monotonic clock — which is exactly
+ * what a reboot or an NTP correction does in the wild.
+ */
+fun interface WallClock {
+    fun nowMs(): Long
+}
+
+/**
+ * Outcome of a [TimerEngine.restore] attempt, so the caller (and UI) can react to a degraded recovery.
+ */
+enum class RestoreOutcome {
+    /** Same boot, clock stable — the monotonic gun time was trusted verbatim. Zero drift. */
+    EXACT,
+    /** Reboot or wall-clock step detected — gun reconstructed from wall-clock. Re-sync advised. */
+    DEGRADED,
+    /** The gun already fired while the process was dead. */
+    EXPIRED,
+}
+
 // ---------------------------------------------------------------------------
 // Timer state
 // ---------------------------------------------------------------------------
@@ -68,14 +91,17 @@ interface TimerListener {
 // ---------------------------------------------------------------------------
 
 /**
- * @param clock  Injectable monotonic clock (defaults to [SystemMonotonicClock]).
+ * @param clock      Injectable monotonic clock. In production, pass [com.racetimer.wear.SystemMonotonicClock]
+ *                   (or any [MonotonicClock] backed by [android.os.SystemClock.elapsedRealtime]).
+ *                   In unit tests, inject a fake clock via a lambda: `MonotonicClock { fakeNow }`.
+ * @param wallClock  Injectable wall clock, used only for persistence/restore across process death.
+ *                   Defaults to [System.currentTimeMillis]; tests inject a fake to simulate reboots
+ *                   and NTP steps.
  */
-/**
- * @param clock  Injectable monotonic clock. In production, pass [com.racetimer.wear.SystemMonotonicClock]
- *               (or any [MonotonicClock] backed by [android.os.SystemClock.elapsedRealtime]).
- *               In unit tests, inject a fake clock via a lambda: `MonotonicClock { fakeNow }`.
- */
-class TimerEngine(private val clock: MonotonicClock) {
+class TimerEngine(
+    private val clock: MonotonicClock,
+    private val wallClock: WallClock = WallClock { System.currentTimeMillis() },
+) {
 
     // --- Internal state -------------------------------------------------------
 
@@ -90,9 +116,6 @@ class TimerEngine(private val clock: MonotonicClock) {
 
     /** Cues that have not yet fired in the current run. */
     private var pendingCues: ArrayDeque<SequenceCue> = ArrayDeque()
-
-    /** Most recently fired cue index (for state restoration). */
-    private var lastFiredCueOffset: Long = Long.MAX_VALUE
 
     private val listeners = mutableListOf<TimerListener>()
 
@@ -117,7 +140,6 @@ class TimerEngine(private val clock: MonotonicClock) {
         state = TimerState.IDLE
         pausedRemainingMs = seq.totalMs
         pendingCues = ArrayDeque(seq.cues.sortedByDescending { it.offsetMs })
-        lastFiredCueOffset = Long.MAX_VALUE
     }
 
     /**
@@ -155,7 +177,6 @@ class TimerEngine(private val clock: MonotonicClock) {
         state = TimerState.IDLE
         pausedRemainingMs = seq.totalMs
         pendingCues = ArrayDeque(seq.cues.sortedByDescending { it.offsetMs })
-        lastFiredCueOffset = Long.MAX_VALUE
     }
 
     /** Stop without resetting (sequence position lost). */
@@ -174,10 +195,14 @@ class TimerEngine(private val clock: MonotonicClock) {
      *
      * A double-tap guard prevents a second snap within [guardMs] milliseconds.
      *
-     * @param roundDown  If true, always round down (never gain time).  Default false (nearest).
-     * @param guardMs    Minimum interval between consecutive syncs.
+     * @param roundDown       If true, prefer rounding down — but never by more than [maxCorrectionMs];
+     *                        beyond that it falls back to nearest so a stray tap can't delete a minute.
+     *                        Default false (nearest).
+     * @param guardMs         Minimum interval between consecutive syncs.
+     * @param maxCorrectionMs Maximum amount a single sync may move the clock. A sync is a correction,
+     *                        not a jump; nearest is always within half a minute of the current time.
      */
-    fun sync(roundDown: Boolean = false, guardMs: Long = 1_000L) {
+    fun sync(roundDown: Boolean = false, guardMs: Long = 1_000L, maxCorrectionMs: Long = 30_000L) {
         if (state != TimerState.RUNNING) return
 
         val now = clock.elapsedMs()
@@ -185,16 +210,26 @@ class TimerEngine(private val clock: MonotonicClock) {
         lastSyncTimeMs = now
 
         val remaining = gunTimeMs - now
-        val snapped = snapToMinute(remaining, roundDown)
+        var snapped = snapToMinute(remaining, roundDown)
+
+        // A sync is a *correction*, not a jump: never move the clock more than maxCorrectionMs.
+        // This guards round-down from flooring a near-full minute away (e.g. 3:55 -> 3:00, a 55s
+        // deletion that would silently make the sailor OCS). If the chosen rounding overshoots the
+        // bound, fall back to nearest, which is always within half a minute.
+        if (kotlin.math.abs(snapped - remaining) > maxCorrectionMs) {
+            snapped = snapToMinute(remaining, roundDown = false)
+        }
 
         // Re-anchor the gun time
         gunTimeMs = now + snapped
 
-        // Re-queue all cues that should still fire
+        // Re-queue only cues that have NOT already fired. A cue at offset O fires when the countdown
+        // reaches O, so anything with O >= the pre-snap remaining is already spent; re-adding it (the
+        // old `<= snapped` bug) double-fired a horn whenever a sync rounded up onto a fired boundary.
         val seq = sequence ?: return
         pendingCues = ArrayDeque(
             seq.cues
-                .filter { it.offsetMs <= snapped }
+                .filter { it.offsetMs < remaining }
                 .sortedByDescending { it.offsetMs }
         )
 
@@ -237,36 +272,74 @@ class TimerEngine(private val clock: MonotonicClock) {
     // --- Persistence helpers --------------------------------------------------
 
     /**
-     * Returns the absolute wall-clock target time (ms since epoch) for the gun so that
-     * state can be persisted and restored across process restarts.
+     * A point-in-time capture of a running sequence, sufficient to restore it across process death.
      *
-     * Because we use monotonic time internally, this is a best-effort approximation via
-     * the difference between wall clock and monotonic offset.
+     * It carries the gun time in *both* clock domains plus the monotonic reading at capture:
+     *  - [gunElapsedMs] is exact within the capturing boot (monotonic time keeps running while the
+     *    app is gone) but becomes meaningless after a reboot (elapsedRealtime resets to zero).
+     *  - [gunWallMs] survives a reboot but is vulnerable to wall-clock (NTP) steps.
+     *  - [capturedElapsedMs] is the monotonic clock reading at capture. Because elapsedRealtime only
+     *    ever increases within a boot and resets on reboot, a later reading that is *not smaller*
+     *    proves we are in the same boot — so the monotonic gun time is still valid, immune to any
+     *    NTP correction. A smaller reading means a reboot happened and we must fall back to wall-clock.
      */
-    fun gunWallClockMs(): Long {
-        val monotonicOffsetMs = gunTimeMs - clock.elapsedMs()
-        return System.currentTimeMillis() + monotonicOffsetMs
+    data class Snapshot(
+        val sequenceId: String,
+        val gunElapsedMs: Long,
+        val gunWallMs: Long,
+        val capturedElapsedMs: Long,
+    )
+
+    /** Capture the running state for persistence. Returns null unless [TimerState.RUNNING]. */
+    fun snapshot(): Snapshot? {
+        val seq = sequence ?: return null
+        if (state != TimerState.RUNNING) return null
+        val nowElapsed = clock.elapsedMs()
+        val remaining = gunTimeMs - nowElapsed
+        return Snapshot(
+            sequenceId = seq.id,
+            gunElapsedMs = gunTimeMs,
+            gunWallMs = wallClock.nowMs() + remaining,
+            capturedElapsedMs = nowElapsed,
+        )
     }
 
     /**
-     * Restore a running sequence from a previously persisted [gunWallClockMs] value.
-     * Call this after [load] if the process was killed while running.
+     * Restore a running sequence from a previously captured [Snapshot].
+     *
+     * Reboot detection relies on the one signal a wall-clock step can't forge: elapsedRealtime is
+     * monotonic within a boot and resets to zero on reboot. If the current monotonic reading has not
+     * gone backwards relative to the snapshot, we are in the same boot and the monotonic gun time is
+     * trusted verbatim — drift-free and immune to NTP steps ([RestoreOutcome.EXACT]). If it has gone
+     * backwards, a reboot occurred; the gun is reconstructed from wall-clock as a best effort and the
+     * caller is told the recovery is [RestoreOutcome.DEGRADED] so it can prompt a re-sync.
      */
-    fun restoreFromWallClock(seq: RaceSequence, gunWallClockMs: Long) {
+    fun restore(seq: RaceSequence, snap: Snapshot): RestoreOutcome {
         load(seq)
-        val monotonicNow = clock.elapsedMs()
-        val wallNow = System.currentTimeMillis()
-        gunTimeMs = monotonicNow + (gunWallClockMs - wallNow)
-        val remaining = gunTimeMs - monotonicNow
-        if (remaining <= 0) {
-            state = TimerState.FINISHED
+        val nowElapsed = clock.elapsedMs()
+        val sameBoot = nowElapsed >= snap.capturedElapsedMs
+
+        gunTimeMs = if (sameBoot) {
+            snap.gunElapsedMs                              // exact: monotonic domain intact
         } else {
-            pendingCues = ArrayDeque(
-                seq.cues
-                    .filter { it.offsetMs <= remaining }
-                    .sortedByDescending { it.offsetMs }
-            )
-            state = TimerState.RUNNING
+            nowElapsed + (snap.gunWallMs - wallClock.nowMs())  // degraded: wall-clock reconstruction
+        }
+
+        val remaining = gunTimeMs - nowElapsed
+        return when {
+            remaining <= 0L -> {
+                state = TimerState.FINISHED
+                RestoreOutcome.EXPIRED
+            }
+            else -> {
+                pendingCues = ArrayDeque(
+                    seq.cues
+                        .filter { it.offsetMs <= remaining }
+                        .sortedByDescending { it.offsetMs }
+                )
+                state = TimerState.RUNNING
+                if (sameBoot) RestoreOutcome.EXACT else RestoreOutcome.DEGRADED
+            }
         }
     }
 }
