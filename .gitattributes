@@ -1,0 +1,15 @@
+# The Gradle wrapper must survive a round trip through any contributor's autocrlf setting.
+# `gradlew` is a POSIX shell script: a CRLF checkout gives it a `#!/bin/sh\r` shebang, which
+# Linux and macOS (and therefore CI) refuse to execute. The .bat is the mirror image, and the
+# wrapper jar must never be treated as text.
+gradlew        text eol=lf
+gradlew.bat    text eol=crlf
+*.jar          binary
+
+# Normalize sources in the repo, checked out per-platform.
+*.kt    text
+*.kts   text
+*.toml  text
+*.md    text
+*.pro   text
+*.xml   text
