@@ -35,7 +35,7 @@ import com.racetimer.wear.ui.TimerScreen
  * - Bind to [TimerService] so the countdown keeps running when the app is backgrounded.
  * - Keep the screen on while a sequence is running (FLAG_KEEP_SCREEN_ON).
  * - Drive the Compose UI by polling the engine state every [UI_REFRESH_MS].
- * - Handle Start / Sync / Stop / Reset actions by dispatching to the service.
+ * - Handle Start / Sync / Stop actions by dispatching to the service.
  */
 class MainActivity : ComponentActivity() {
 
@@ -87,8 +87,9 @@ class MainActivity : ComponentActivity() {
      * While a sequence runs, the service's tick loop drives [TimerListener.onTick] on this very
      * looper — the service shares the activity's process — so the UI takes the countdown from that
      * callback rather than sampling the engine on a second timer of its own. Idle, finished and
-     * not-yet-bound produce no callbacks, and a Stop or Reset tap has to be picked up somehow, so
-     * this keeps running underneath at a rate suited to state changes rather than to a countdown.
+     * not-yet-bound produce no callbacks, and a Stop tap (or the service's own return to idle after
+     * the gun) has to be picked up somehow, so this keeps running underneath at a rate suited to
+     * state changes rather than to a countdown.
      */
     private val uiRefreshRunnable = object : Runnable {
         override fun run() {
@@ -134,7 +135,6 @@ class MainActivity : ComponentActivity() {
                             message = uiMessage,
                             onStart = { handleStart() },
                             onStop = { handleStop() },
-                            onReset = { handleReset() },
                             onSync = { handleSync() },
                             onPickSequence = { navController.navigate(NAV_PICKER) },
                         )
@@ -185,10 +185,6 @@ class MainActivity : ComponentActivity() {
         startService(TimerService.stopIntent(this))
     }
 
-    private fun handleReset() {
-        startService(TimerService.resetIntent(this))
-    }
-
     private fun handleSync() {
         resyncAcknowledged = true
         startService(TimerService.syncIntent(this))
@@ -213,9 +209,14 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun onClockAdjusted(remainingMs: Long) {
-            uiMessage = "Clock changed — countdown held steady"
-            uiHandler.postDelayed({ uiMessage = null }, MESSAGE_DURATION_MS)
+            showTransientMessage("Clock changed — countdown held steady")
         }
+    }
+
+    /** Post a Tier 1 banner (see `docs/message-surface.md`) that clears itself. */
+    private fun showTransientMessage(text: String) {
+        uiMessage = text
+        uiHandler.postDelayed({ uiMessage = null }, MESSAGE_DURATION_MS)
     }
 
     // --- State refresh --------------------------------------------------------
@@ -235,6 +236,26 @@ class MainActivity : ComponentActivity() {
     private fun displayedRemainingMs(rawMs: Long): Long =
         if (rawMs <= 0L) 0L else ((rawMs + 999L) / 1_000L) * 1_000L
 
+    /**
+     * Say out loud that a Start did something other than start.
+     *
+     * Tapping Start can resume a race that survived process death, or discard one whose gun had
+     * already gone. Both leave the screen showing something the sailor did not ask for — a countdown
+     * already part-way down, or a fresh one where a running race was expected — and with no Reset
+     * button there is no longer an obvious "no, from the top" control to reach for. So name what
+     * happened; the way out of a resumed race is Stop, which clears the snapshot.
+     *
+     * DEGRADED is deliberately absent: it needs a sustained instruction, and gets the Tier 3
+     * re-sync prompt instead of a banner that vanishes in 3 s.
+     */
+    private fun announceRestoreOutcome() {
+        when (timerService?.consumeRestoreNotice()) {
+            RestoreOutcome.EXACT -> showTransientMessage("Resumed race in progress")
+            RestoreOutcome.EXPIRED -> showTransientMessage("Old race ended — starting fresh")
+            RestoreOutcome.DEGRADED, null -> Unit
+        }
+    }
+
     private fun refreshUiState() {
         // Binding uses BIND_AUTO_CREATE, so the service exists well before anything is started -
         // with an engine holding no sequence, whose remainingMs is 0. Showing that made a fresh
@@ -249,6 +270,7 @@ class MainActivity : ComponentActivity() {
         }
         uiRemainingMs = displayedRemainingMs(engine.remainingMs)
         uiTimerState = engine.currentState
+        announceRestoreOutcome()
         // Prompt a re-sync only while a degraded recovery is still running and unconfirmed.
         uiShowResyncPrompt = timerService?.lastRestoreOutcome == RestoreOutcome.DEGRADED &&
             engine.currentState == TimerState.RUNNING &&
