@@ -133,8 +133,14 @@ class RaceSequenceTest {
     }
 
     @Test fun `scholastic ticks every second through the last ten`() {
-        for (sec in 10L downTo 1L) {
+        // Two phases, not one: single from 0:10 to 0:06, doubled from 0:05 down. The single ticks are
+        // load-bearing — they are the contrast that makes the double read as a phase change rather
+        // than as noise, so a change that doubled all ten would defeat the point and must fail here.
+        for (sec in 10L downTo 6L) {
             assertPattern(offsetMs = sec * 1_000L, longBlasts = 0, shortBlasts = 1)
+        }
+        for (sec in 5L downTo 1L) {
+            assertPattern(offsetMs = sec * 1_000L, longBlasts = 0, shortBlasts = 2)
         }
     }
 
@@ -180,8 +186,8 @@ class RaceSequenceTest {
 
     @Test fun `club's gun is the only one still on the legacy triple-buzz`() {
         // A gun carrying no sustainedMs is what falls through to the triple-buzz branch in
-        // HapticManager. scholastic and usSailing both state their own 3 s; club has not been
-        // re-voiced, so it must keep the behaviour it has today.
+        // HapticManager. scholastic and usSailing both state their own 3 s; club has taken on the
+        // final five but nothing else, so its gun must keep the behaviour it has today.
         val sustained = BuiltInSequences.all
             .flatMap { seq -> seq.cues.map { seq to it } }
             .filter { (_, cue) -> cue.signal.sustainedMs > 0L }
@@ -193,8 +199,17 @@ class RaceSequenceTest {
         assertEquals(0L, BuiltInSequences.club.cues.first { it.isGun }.signal.sustainedMs)
     }
 
-    @Test fun `club has 4 cues`() {
-        assertEquals(4, BuiltInSequences.club.cues.size)
+    @Test fun `club has 9 cues`() {
+        // 3 minute signals + the five final-five ticks + the gun.
+        assertEquals(9, BuiltInSequences.club.cues.size)
+    }
+
+    @Test fun `club takes the final five and nothing else below the minute`() {
+        // Club has no final-minute cadence and this story did not give it one. Anything appearing
+        // between 0:59 and 0:06 would be a re-voicing of club that nobody asked for.
+        val belowTheMinute = BuiltInSequences.club.cues.filter { it.offsetMs in 6_000L..59_000L }
+        assertEquals(emptyList<SequenceCue>(), belowTheMinute)
+        assertPattern(BuiltInSequences.club, 1 * 60_000L, longBlasts = 1, shortBlasts = 0)
     }
 
     @Test fun `club totalMs is 3 minutes`() {
@@ -212,6 +227,25 @@ class RaceSequenceTest {
         for (seq in BuiltInSequences.all) {
             val gun = seq.cues.first { it.isGun }
             assertEquals("${seq.name} gun must be at 0 ms", 0L, gun.offsetMs)
+        }
+    }
+
+    @Test fun `every sequence doubles the last five seconds`() {
+        // Iterated over `all` plus a custom rather than asserted per sequence: the point of this
+        // cadence is that it is universal, so a sequence added later must not be able to opt out
+        // quietly. If a new sequence lands without the final five, this is what should catch it.
+        val sequences = BuiltInSequences.all + BuiltInSequences.custom(totalSeconds = 180L)
+        for (seq in sequences) {
+            for (sec in 5L downTo 1L) {
+                val offset = sec * 1_000L
+                val cue = seq.cues.firstOrNull { it.offsetMs == offset }
+                assertNotNull("${seq.id} has no cue at $offset ms", cue)
+                assertEquals("${seq.id} at $offset ms", 2, cue!!.signal.shortBlasts)
+                assertEquals("${seq.id} at $offset ms", 0, cue.signal.longBlasts)
+                assertEquals("${seq.id} at $offset ms", 0L, cue.signal.sustainedMs)
+                // A blast, not a sync tick: this is the race's own countdown, not a drift correction.
+                assertEquals("${seq.id} at $offset ms", CueVoice.BLAST, cue.signal.voice)
+            }
         }
     }
 

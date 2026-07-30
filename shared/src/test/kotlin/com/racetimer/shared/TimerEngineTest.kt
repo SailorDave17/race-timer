@@ -108,8 +108,8 @@ class TimerEngineTest {
         // Advance past every cue
         advanceTo(BuiltInSequences.club.totalMs + 1_000L)
 
-        // 3 named cues + 1 gun = 4 cues total
-        assertEquals(4, cues.size)
+        // 3 named cues + 5 final-five ticks + 1 gun = 9 cues total
+        assertEquals(9, cues.size)
         assertTrue(gunFired)
     }
 
@@ -189,7 +189,7 @@ class TimerEngineTest {
     }
 
     @Test fun `sync rounding up does not re-fire an already-fired cue`() {
-        engine.load(BuiltInSequences.club)  // cues at 3:00, 2:00, 1:00, gun
+        engine.load(BuiltInSequences.club)  // cues at 3:00, 2:00, 1:00, 0:05..0:01, gun
         engine.start()
         // Fire the 3:00 and 2:00 cues by ticking at their boundaries.
         fakeNow = 60_000L

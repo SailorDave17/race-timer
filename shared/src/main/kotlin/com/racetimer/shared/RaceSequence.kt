@@ -111,12 +111,34 @@ object BuiltInSequences {
     // -----------------------------------------------------------------------
 
     /**
+     * The last five seconds, 0:05 to 0:01, doubled — the one cadence every sequence shares.
+     *
+     * These are the only seconds a sailor lives through with their head up and their hands full, so
+     * they get a signature the wrist can carry on its own: two pulses instead of one, every second
+     * the same. The double is not a pattern to decode — all five are identical — it marks a *phase*,
+     * and the single ticks immediately before it are what make the change legible.
+     *
+     * Every sequence composes this, `club` and [custom] included, so a sailor never has to remember
+     * which sequence is loaded to know what the last five seconds mean.
+     */
+    private val finalFiveRun: List<SequenceCue> = (5 downTo 1).map { sec ->
+        SequenceCue(
+            offsetMs = sec * 1_000L,
+            signal = SignalPattern(shortBlasts = 2, label = "2 short — final five"),
+        )
+    }
+
+    /**
      * The last minute, from 0:50 to 0:01 — the cadence a sailor counts off the wrist on the line.
      *
      * Shared by every sequence that ends in a real start, so the final minute cannot come to mean
      * two different things depending on which sequence is loaded. 0:30 and 0:20 keep the descending
-     * 3-short / 2-short call the race committee actually sounds; the last ten seconds are a flat,
-     * even tick — every second identical — so the sailor counts pulses instead of decoding a pattern.
+     * 3-short / 2-short call the race committee actually sounds.
+     *
+     * The last ten seconds are two phases, not one: 0:10 to 0:06 tick flat and single, then
+     * [finalFiveRun] doubles for 0:05 to 0:01. Within each phase every second is identical, so the
+     * sailor still counts pulses rather than decoding a pattern — the single change of shape between
+     * them is the whole message, and it is why 0:10 to 0:06 must stay single.
      */
     private val finalMinuteTail: List<SequenceCue> = listOf(
         SequenceCue(
@@ -135,12 +157,12 @@ object BuiltInSequences {
             offsetMs = 20_000L,
             signal = SignalPattern(shortBlasts = 2, label = "2 short"),
         ),
-    ) + (10 downTo 1).map { sec ->
+    ) + (10 downTo 6).map { sec ->
         SequenceCue(
             offsetMs = sec * 1_000L,
             signal = SignalPattern(shortBlasts = 1, label = "1 short"),
         )
-    }
+    } + finalFiveRun
 
     /** One sustained blast, not a count: the gun is the only cue with nothing to count. */
     private val sustainedGun = SequenceCue(
@@ -228,6 +250,10 @@ object BuiltInSequences {
     )
 
     // --- Club racing 3-2-1-go ---
+    //
+    // Carries [finalFiveRun] and nothing else below the minute: club has never had a final-minute
+    // cadence, and giving it one is a re-voicing of its own. The last five seconds are the exception
+    // because they must mean the same thing in every sequence.
     val club: RaceSequence = RaceSequence(
         id = "club_3_2_1",
         name = "Club 3-2-1-Go",
@@ -244,6 +270,7 @@ object BuiltInSequences {
                 offsetMs = 1 * 60_000L,
                 signal = SignalPattern(longBlasts = 1, label = "One-minute"),
             ),
+        ) + finalFiveRun + listOf(
             SequenceCue(
                 offsetMs = 0L,
                 signal = SignalPattern(longBlasts = 1, shortBlasts = 3, label = "Start"),
@@ -282,15 +309,10 @@ object BuiltInSequences {
                 )
             }
 
-        // Final 5-second individual ticks
-        for (sec in 1L..5L) {
-            if (sec < totalSeconds) {
-                cues += SequenceCue(
-                    offsetMs = sec * 1_000L,
-                    signal = SignalPattern(shortBlasts = 1, label = "$sec"),
-                )
-            }
-        }
+        // Final 5-second individual ticks, doubled like every other sequence's. Added after the
+        // intermediate cues so the `distinctBy` below still resolves an offset collision the same way
+        // it always has: a caller-supplied intermediate at 0:05 keeps its own pattern.
+        cues += finalFiveRun.filter { it.offsetMs < totalSeconds * 1_000L }
 
         // Warning cue at the top
         cues += SequenceCue(
