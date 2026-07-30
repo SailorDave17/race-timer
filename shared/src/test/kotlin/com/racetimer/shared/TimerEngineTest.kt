@@ -12,6 +12,9 @@ class TimerEngineTest {
     private var fakeNow = 0L
     private val fakeClock = MonotonicClock { fakeNow }
 
+    private var fakeWall = 1_000_000L
+    private val fakeWallClock = WallClock { fakeWall }
+
     private lateinit var engine: TimerEngine
     private val cues = mutableListOf<SequenceCue>()
     private var gunFired = false
@@ -27,12 +30,13 @@ class TimerEngineTest {
 
     @Before fun setUp() {
         fakeNow = 0L
+        fakeWall = 1_000_000L
         cues.clear()
         gunFired = false
         ticks.clear()
         syncedTo = null
 
-        engine = TimerEngine(fakeClock)
+        engine = TimerEngine(fakeClock, fakeWallClock)
         engine.addListener(listener)
     }
 
@@ -110,25 +114,20 @@ class TimerEngineTest {
     }
 
     @Test fun `first cue fires at correct time`() {
+        // The club sequence's first cue sits at offsetMs == totalMs (the 3:00 warning of a 3:00
+        // sequence), so it fires when now >= gunTimeMs - 180_000 == startTime — i.e. on the very
+        // first tick after start, not later.
         engine.load(BuiltInSequences.club)
         engine.start()
 
-        // Just before 3:00 — no cues yet
-        fakeNow += 1L
-        engine.tick()
-        assertTrue(cues.isEmpty())
-
-        // Advance to 3:00 mark (offset=180_000 ms before gun, fires when elapsed = totalMs - 180_000 + 1)
-        // Club sequence: totalMs = 180_000; 3:00 cue fires when elapsed >= 0 (immediately)
-        // Actually: totalMs = 180_000 and first cue offsetMs = 180_000
-        // The cue fires when: now >= gunTimeMs - 180_000 = startTime + 180_000 - 180_000 = startTime
-        // So it fires on the very first tick after start.
-        fakeNow = 0L
-        engine.reset()
-        engine.start()
         engine.tick()
         assertEquals(1, cues.size)
         assertEquals(3 * 60_000L, cues[0].offsetMs)
+
+        // The 2:00 cue must wait its turn rather than following immediately.
+        fakeNow += 1L
+        engine.tick()
+        assertEquals(1, cues.size)
     }
 
     @Test fun `gun cue transitions to FINISHED`() {
@@ -167,19 +166,49 @@ class TimerEngineTest {
         assertEquals(5 * 60_000L, snapped)
     }
 
-    @Test fun `sync snaps to nearest minute - round down`() {
+    @Test fun `sync round-down floors when within the correction bound`() {
         engine.load(BuiltInSequences.usSailing)
         engine.start()
-        // Advance 8s (remaining = 292_000 = 4:52) → round-down snap → 4:00
-        fakeNow = 8_000L
-        engine.sync(roundDown = false) // nearest → 5:00 already tested; test round-down below
-        // Reset for round-down test
-        syncedTo = null
-        engine.reset()
-        engine.start()
-        fakeNow += 65_000L // remaining = 235_000 (3:55) → round down → 3:00
+        // remaining = 200_000 (3:20) -> floor to 3:00 is a 20s move, within the +/-30s bound.
+        fakeNow = 100_000L
         engine.sync(roundDown = true)
         assertEquals(3 * 60_000L, syncedTo!!)
+    }
+
+    @Test fun `sync round-down clamps to nearest when flooring would delete a minute`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        // remaining = 235_000 (3:55). Naive floor -> 3:00 is a 55s deletion (OCS footgun).
+        // The +/-30s clamp must instead fall back to nearest -> 4:00.
+        fakeNow = 65_000L
+        engine.sync(roundDown = true)
+        assertEquals(4 * 60_000L, syncedTo!!)
+    }
+
+    @Test fun `sync rounding up does not re-fire an already-fired cue`() {
+        engine.load(BuiltInSequences.club)  // cues at 3:00, 2:00, 1:00, gun
+        engine.start()
+        // Fire the 3:00 and 2:00 cues by ticking at their boundaries.
+        fakeNow = 60_000L
+        engine.tick()
+        assertEquals(1, cues.count { it.offsetMs == 120_000L })  // 2:00 fired once
+
+        // Sync with 2:00 exactly remaining: the just-fired 2:00 cue must NOT be re-queued.
+        engine.sync()
+        fakeNow = 60_100L
+        engine.tick()
+        assertEquals(1, cues.count { it.offsetMs == 120_000L })  // still once, no double-fire
+    }
+
+    @Test fun `first sync of a race is never swallowed by the double-tap guard`() {
+        // Regression: the guard used to seed lastSyncTimeMs with Long.MIN_VALUE, so `now - last`
+        // overflowed negative and every first sync of a race silently did nothing.
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        fakeNow = 8_000L
+        engine.sync()
+        assertNotNull("first sync must be honoured", syncedTo)
+        assertEquals(5 * 60_000L, syncedTo)
     }
 
     @Test fun `sync guard prevents double-snap within 1 second`() {
@@ -220,28 +249,70 @@ class TimerEngineTest {
 
     // --- State restoration ----------------------------------------------------
 
-    @Test fun `restoreFromWallClock resumes correctly`() {
+    @Test fun `restore resumes correctly on same boot`() {
         engine.load(BuiltInSequences.club)
         engine.start()
         fakeNow += 30_000L
-        val wallGun = engine.gunWallClockMs()
+        fakeWall += 30_000L
+        val snap = engine.snapshot()!!
 
-        // Simulate restart: new engine, same clock
-        val engine2 = TimerEngine(fakeClock)
-        engine2.restoreFromWallClock(BuiltInSequences.club, wallGun)
+        // Simulate a killed-and-relaunched process: new engine, same clocks (same boot).
+        val engine2 = TimerEngine(fakeClock, fakeWallClock)
+        val outcome = engine2.restore(BuiltInSequences.club, snap)
+
+        assertEquals(RestoreOutcome.EXACT, outcome)
         assertEquals(TimerState.RUNNING, engine2.currentState)
-        // Remaining should be approximately (180_000 - 30_000) = 150_000
-        assertEquals(150_000L, engine2.remainingMs, 100L)
+        // Remaining should be exactly (180_000 - 30_000) = 150_000, no drift.
+        assertEquals(150_000L, engine2.remainingMs, 1L)
     }
 
-    @Test fun `restoreFromWallClock after gun results in FINISHED`() {
+    @Test fun `NTP step during process death does not move the gun`() {
         engine.load(BuiltInSequences.club)
         engine.start()
-        val wallGun = engine.gunWallClockMs()
+        val snap = engine.snapshot()!!
+
+        // 5s of real death, plus a +3s NTP correction to the wall clock — monotonic clock is unaffected.
+        fakeNow += 5_000L
+        fakeWall += 5_000L + 3_000L
+
+        val engine2 = TimerEngine(fakeClock, fakeWallClock)
+        val outcome = engine2.restore(BuiltInSequences.club, snap)
+
+        // Same boot (elapsedRealtime intact) -> monotonic trusted, gun unmoved by the NTP step.
+        assertEquals(RestoreOutcome.EXACT, outcome)
+        assertEquals(180_000L - 5_000L, engine2.remainingMs, 1L)
+    }
+
+    @Test fun `reboot forces degraded restore via wall clock`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        fakeNow += 30_000L
+        fakeWall += 30_000L
+        val snap = engine.snapshot()!!
+
+        // Reboot: elapsedRealtime resets to zero (goes backwards), wall clock keeps advancing (10s down).
+        fakeNow = 0L
+        fakeWall += 10_000L
+
+        val engine2 = TimerEngine(fakeClock, fakeWallClock)
+        val outcome = engine2.restore(BuiltInSequences.club, snap)
+
+        assertEquals(RestoreOutcome.DEGRADED, outcome)
+        assertEquals(TimerState.RUNNING, engine2.currentState)
+        // 150_000 remained at snapshot, minus 10s of reboot downtime measured on the wall clock.
+        assertEquals(140_000L, engine2.remainingMs, 1L)
+    }
+
+    @Test fun `restore after gun results in FINISHED`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        val snap = engine.snapshot()!!
 
         fakeNow += 190_000L  // well past the gun
-        val engine2 = TimerEngine(fakeClock)
-        engine2.restoreFromWallClock(BuiltInSequences.club, wallGun)
+        fakeWall += 190_000L
+        val engine2 = TimerEngine(fakeClock, fakeWallClock)
+        val outcome = engine2.restore(BuiltInSequences.club, snap)
+        assertEquals(RestoreOutcome.EXPIRED, outcome)
         assertEquals(TimerState.FINISHED, engine2.currentState)
     }
 

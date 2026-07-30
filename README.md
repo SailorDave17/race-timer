@@ -8,7 +8,7 @@ A precise, glanceable start-sequence timer for sailboat racing that runs **stand
 - **US Sailing 5-4-1-Go** (RRS 26) — 5-min sequence with Warning, Preparatory, One-minute, and Start signals
 - **Scholastic / ICSA** — 3-min sequence with dense horn-blast cues (3L, 2L, 1L+3S, 1L, 3S, 2S, 1S × 6, 1L-Start)
 - **Club 3-2-1-Go** — simple 3-min club racing sequence
-- **Custom** — arbitrary duration with configurable intermediate cues
+- **Custom** *(V1.1 — engine implemented and unit-tested, not yet exposed in the watch UI)* — arbitrary duration with configurable intermediate cues
 
 ### Sync Button
 Tap **Sync** at any point during the countdown to snap to the nearest whole minute — absorbs your reaction-time lag when watching the Race Committee's flag. Round-to-nearest by default; round-down available as a toggle.
@@ -23,7 +23,7 @@ Tap **Sync** at any point during the countdown to snap to the nearest whole minu
 - **Monotonic clock** — anchored to `elapsedRealtimeNanos()`, immune to NTP/wall-clock changes
 - **Foreground service + Ongoing Activity** — countdown survives screen-off and app backgrounding
 - **Keep-screen-on** — display stays on for the full sequence; clears the moment the sequence ends
-- **State persistence** — gun time saved to `SharedPreferences`; restored if the process is killed mid-race
+- **State persistence** — the running gun time is snapshotted to `SharedPreferences`. A killed process is restored **exactly** (the monotonic anchor survives, immune to NTP). After a device restart the timer is recovered best-effort from wall-clock and prompts you to tap **Sync** to confirm against the flag.
 
 ## Project Structure
 
@@ -81,7 +81,7 @@ race-timer/
 | Navigation | Wear Compose Navigation |
 | Timing | `SystemClock.elapsedRealtime()` (monotonic) |
 | Background | Android `ForegroundService` + Wear `OngoingActivity` |
-| State | `SharedPreferences` (gun wall-clock) |
+| State | `SharedPreferences` (boot-anchored gun snapshot) |
 | Min SDK | 30 (Wear OS 3.5 / Android 11) |
 | Target SDK | 34 |
 
@@ -89,7 +89,7 @@ race-timer/
 
 | Phase | Features |
 |-------|---------|
-| **MVP (current)** | Standalone Wear OS app — all 4 sequences, Sync, haptics, foreground service, keep-screen-on |
-| V1.1 | Named custom presets, round-down sync toggle, mute/haptics settings, Wear Tile + complication |
+| **MVP (current)** | Standalone Wear OS app — 3 built-in sequences (US Sailing, Scholastic, Club), Sync, haptics, foreground service, keep-screen-on |
+| V1.1 | Custom sequence UI (engine already implemented), named custom presets, round-down sync toggle, mute/haptics settings, Wear Tile + complication |
 | V1.2 | Android phone companion app (sequence picker, config, countdown mirror) |
 | Later | Rolling/chained starts, mic airhorn auto-sync, OCS/recall handling |

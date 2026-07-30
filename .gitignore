@@ -3,6 +3,9 @@ build/
 .gradle/
 out/
 
+# Eclipse/VS Code Java build output
+bin/
+
 # Android/IntelliJ project files
 *.iml
 .idea/

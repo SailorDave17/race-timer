@@ -8,16 +8,19 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -33,6 +36,7 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.formatCountdown
 
 // ---------------------------------------------------------------------------
 // Background colour states
@@ -63,10 +67,14 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  * @param state          Current [TimerState] of the engine.
  * @param sequenceName   Name of the loaded sequence shown as a small label.
  * @param syncLabel      Non-null for ~2 s after a sync to flash "Synced → X:XX".
- * @param onStart        Called when the user taps Start or Resume.
+ * @param showResyncPrompt True after a degraded recovery (reboot / clock step): the restored gun
+ *                       is best-effort, so prompt the sailor to tap Sync against the RC flag.
+ * @param message        Non-null to show a transient notice/warning banner (e.g. clock jump).
+ * @param onStart        Called when the user taps Start.
  * @param onStop         Called when the user taps Stop.
  * @param onReset        Called when the user taps Reset.
  * @param onSync         Called when the user taps Sync.
+ * @param onPickSequence Called when the user taps the sequence name to change it (when not running).
  */
 @Composable
 fun TimerScreen(
@@ -74,10 +82,13 @@ fun TimerScreen(
     state: TimerState,
     sequenceName: String,
     syncLabel: String?,
+    showResyncPrompt: Boolean = false,
+    message: String? = null,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onReset: () -> Unit,
     onSync: () -> Unit,
+    onPickSequence: () -> Unit = {},
 ) {
     val targetBg = backgroundColorFor(remainingMs, state)
     val animatedBg by animateColorAsState(
@@ -98,13 +109,27 @@ fun TimerScreen(
             modifier = Modifier.padding(8.dp),
         ) {
 
-            // Sequence name label
+            // Sequence name label — tappable to change the sequence when not running
+            val canPick = state != TimerState.RUNNING
             Text(
-                text = sequenceName,
+                text = if (canPick) "$sequenceName  ▾" else sequenceName,
                 style = MaterialTheme.typography.caption1,
                 color = Color.White.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center,
+                modifier = if (canPick) Modifier.clickable(onClick = onPickSequence) else Modifier,
             )
+
+            // Degraded-recovery prompt: gun was reconstructed best-effort, confirm against the flag.
+            if (showResyncPrompt) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Recovered — tap Sync to confirm",
+                    style = MaterialTheme.typography.caption2,
+                    color = Color(0xFFFFC107),
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                )
+            }
 
             Spacer(modifier = Modifier.height(4.dp))
 
@@ -127,9 +152,10 @@ fun TimerScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Buttons
+            // Buttons. The app never enters PAUSED (there is no pause control), but the engine
+            // still models the state, so it shares the idle layout rather than going unhandled.
             when (state) {
-                TimerState.IDLE, TimerState.FINISHED -> {
+                TimerState.IDLE, TimerState.FINISHED, TimerState.PAUSED -> {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         PrimaryButton(label = "Start", onClick = onStart)
                         SecondaryButton(label = "Reset", onClick = onReset)
@@ -141,13 +167,15 @@ fun TimerScreen(
                         SecondaryButton(label = "Stop", onClick = onStop)
                     }
                 }
-                TimerState.PAUSED -> {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PrimaryButton(label = "Resume", onClick = onStart)
-                        SecondaryButton(label = "Reset", onClick = onReset)
-                    }
-                }
             }
+        }
+
+        // Transient notice / warning banner (e.g. clock adjustment)
+        if (message != null) {
+            MessageBanner(
+                message = message,
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
         }
     }
 }
@@ -164,7 +192,7 @@ private fun CountdownText(remainingMs: Long, state: TimerState) {
     val displayText = when {
         isFinished -> "GO!"
         remainingMs <= 0L && state == TimerState.RUNNING -> "GO!"
-        else -> formatMmSs(remainingMs)
+        else -> formatCountdown(remainingMs)
     }
 
     if (isFinalTen) {
@@ -258,12 +286,25 @@ private fun SecondaryButton(label: String, onClick: () -> Unit) {
 }
 
 // ---------------------------------------------------------------------------
-// Formatting helper
+// Message / warning banner
 // ---------------------------------------------------------------------------
 
-internal fun formatMmSs(ms: Long): String {
-    val totalSec = (ms / 1_000L).coerceAtLeast(0L)
-    val min = totalSec / 60
-    val sec = totalSec % 60
-    return "%d:%02d".format(min, sec)
+@Composable
+private fun MessageBanner(message: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 2.dp, start = 12.dp, end = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = message,
+            fontSize = 11.sp,
+            color = Color(0xFFFFB74D),
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .background(Color(0xCC3A2A00), shape = RoundedCornerShape(8.dp))
+                .padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+    }
 }

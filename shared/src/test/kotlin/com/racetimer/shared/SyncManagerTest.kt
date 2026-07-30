@@ -58,19 +58,19 @@ class SyncManagerTest {
 
     // --- Round-down mode ------------------------------------------------------
 
-    @Test fun `round-down: 4m05s rounds down to 4m00s`() {
+    @Test fun `round-down - 4m05s rounds down to 4m00s`() {
         assertEquals(4 * 60_000L, snapToMinute(4 * 60_000L + 5_000L, roundDown = true))
     }
 
-    @Test fun `round-down: 3m52s rounds down to 3m00s`() {
+    @Test fun `round-down - 3m52s rounds down to 3m00s`() {
         assertEquals(3 * 60_000L, snapToMinute(3 * 60_000L + 52_000L, roundDown = true))
     }
 
-    @Test fun `round-down: exactly on minute stays unchanged`() {
+    @Test fun `round-down - exactly on minute stays unchanged`() {
         assertEquals(3 * 60_000L, snapToMinute(3 * 60_000L, roundDown = true))
     }
 
-    @Test fun `round-down: 0m40s rounds down to 0`() {
+    @Test fun `round-down - 0m40s rounds down to 0`() {
         assertEquals(0L, snapToMinute(40_000L, roundDown = true))
     }
 
