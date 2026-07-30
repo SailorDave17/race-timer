@@ -24,6 +24,7 @@ import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.formatCountdown
 
 /**
  * Foreground service that keeps the [TimerEngine] alive while the screen is off or the
@@ -171,7 +172,7 @@ class TimerService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val displayText = formatMmSs(remainingMs)
+        val displayText = formatCountdown(remainingMs)
 
         val builder = NotificationCompat.Builder(this, RaceTimerApplication.TIMER_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
@@ -323,11 +324,4 @@ class TimerService : Service() {
         fun resetIntent(context: Context): Intent =
             Intent(context, TimerService::class.java).apply { action = ACTION_RESET }
     }
-}
-
-private fun formatMmSs(ms: Long): String {
-    val totalSec = (ms / 1_000L).coerceAtLeast(0L)
-    val min = totalSec / 60
-    val sec = totalSec % 60
-    return "%d:%02d".format(min, sec)
 }
