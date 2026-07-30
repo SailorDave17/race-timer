@@ -62,7 +62,9 @@ class MainActivity : ComponentActivity() {
 
     // --- UI state (mutable state drives Compose recomposition) ----------------
 
-    private var uiRemainingMs by mutableStateOf(0L)
+    // Seeded with the loaded sequence's full duration: before Start there is no service to bind
+    // to, and showing 0:00 made a fresh launch look like a race that had already finished.
+    private var uiRemainingMs by mutableStateOf(BuiltInSequences.usSailing.totalMs)
     private var uiTimerState by mutableStateOf(TimerState.IDLE)
     private var uiSequenceName by mutableStateOf(BuiltInSequences.usSailing.name)
     private var uiSyncLabel by mutableStateOf<String?>(null)
@@ -124,7 +126,6 @@ class MainActivity : ComponentActivity() {
                             onStop = { handleStop() },
                             onReset = { handleReset() },
                             onSync = { handleSync() },
-                            onPause = { handlePause() },
                             onPickSequence = { navController.navigate(NAV_PICKER) },
                         )
                     }
@@ -133,6 +134,9 @@ class MainActivity : ComponentActivity() {
                             onSequenceSelected = { seq ->
                                 selectedSequence = seq
                                 uiSequenceName = seq.name
+                                // Reflect the new sequence's duration straight away, so picking
+                                // one shows what is about to be started rather than the old total.
+                                uiRemainingMs = seq.totalMs
                                 navController.popBackStack()
                             }
                         )
@@ -163,8 +167,7 @@ class MainActivity : ComponentActivity() {
     // --- User actions ---------------------------------------------------------
 
     private fun handleStart() {
-        // Resuming keeps any prior sync acknowledgement; only a fresh start clears it.
-        if (uiTimerState != TimerState.PAUSED) resyncAcknowledged = false
+        resyncAcknowledged = false
         startForegroundService(TimerService.startIntent(this, selectedSequence.id))
     }
 
@@ -179,10 +182,6 @@ class MainActivity : ComponentActivity() {
     private fun handleSync() {
         resyncAcknowledged = true
         startService(TimerService.syncIntent(this))
-    }
-
-    private fun handlePause() {
-        startService(TimerService.pauseIntent(this))
     }
 
     // --- Engine listener ------------------------------------------------------
@@ -206,7 +205,17 @@ class MainActivity : ComponentActivity() {
     // --- State refresh --------------------------------------------------------
 
     private fun refreshUiState() {
-        val engine = timerService?.engine ?: return
+        // Binding uses BIND_AUTO_CREATE, so the service exists well before anything is started -
+        // with an engine holding no sequence, whose remainingMs is 0. Showing that made a fresh
+        // launch read as a finished race, so preview the pending sequence's duration instead.
+        val engine = timerService?.engine
+        if (engine == null || engine.loadedSequence == null) {
+            uiRemainingMs = selectedSequence.totalMs
+            uiTimerState = TimerState.IDLE
+            uiShowResyncPrompt = false
+            setScreenOn(false)
+            return
+        }
         uiRemainingMs = engine.remainingMs
         uiTimerState = engine.currentState
         // Prompt a re-sync only while a degraded recovery is still running and unconfirmed.

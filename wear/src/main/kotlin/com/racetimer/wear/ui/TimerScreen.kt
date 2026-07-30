@@ -69,11 +69,10 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  * @param showResyncPrompt True after a degraded recovery (reboot / clock step): the restored gun
  *                       is best-effort, so prompt the sailor to tap Sync against the RC flag.
  * @param message        Non-null to show a transient notice/warning banner (e.g. clock jump).
- * @param onStart        Called when the user taps Start or Resume.
+ * @param onStart        Called when the user taps Start.
  * @param onStop         Called when the user taps Stop.
  * @param onReset        Called when the user taps Reset.
  * @param onSync         Called when the user taps Sync.
- * @param onPause        Called when the user taps Pause.
  * @param onPickSequence Called when the user taps the sequence name to change it (when not running).
  */
 @Composable
@@ -88,7 +87,6 @@ fun TimerScreen(
     onStop: () -> Unit,
     onReset: () -> Unit,
     onSync: () -> Unit,
-    onPause: () -> Unit = {},
     onPickSequence: () -> Unit = {},
 ) {
     val targetBg = backgroundColorFor(remainingMs, state)
@@ -111,9 +109,7 @@ fun TimerScreen(
         ) {
 
             // Sequence name label — tappable to change the sequence when not running
-            val canPick = state == TimerState.IDLE ||
-                state == TimerState.FINISHED ||
-                state == TimerState.PAUSED
+            val canPick = state != TimerState.RUNNING
             Text(
                 text = if (canPick) "$sequenceName  ▾" else sequenceName,
                 style = MaterialTheme.typography.caption1,
@@ -155,9 +151,10 @@ fun TimerScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Buttons
+            // Buttons. The app never enters PAUSED (there is no pause control), but the engine
+            // still models the state, so it shares the idle layout rather than going unhandled.
             when (state) {
-                TimerState.IDLE, TimerState.FINISHED -> {
+                TimerState.IDLE, TimerState.FINISHED, TimerState.PAUSED -> {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         PrimaryButton(label = "Start", onClick = onStart)
                         SecondaryButton(label = "Reset", onClick = onReset)
@@ -166,14 +163,7 @@ fun TimerScreen(
                 TimerState.RUNNING -> {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SyncButton(onClick = onSync)
-                        SecondaryButton(label = "Pause", onClick = onPause)
                         SecondaryButton(label = "Stop", onClick = onStop)
-                    }
-                }
-                TimerState.PAUSED -> {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PrimaryButton(label = "Resume", onClick = onStart)
-                        SecondaryButton(label = "Reset", onClick = onReset)
                     }
                 }
             }
