@@ -136,7 +136,12 @@ class TimerService : Service() {
                 stopForegroundAndCleanup()
             }
         }
-        return START_STICKY
+        // NOT_STICKY, deliberately: a sticky restart arrives with a null intent, which matches no
+        // branch above - so startForeground() never runs and Android 12+ kills the process with
+        // ForegroundServiceDidNotStartInTimeException. There is nothing to gain by restarting
+        // either, since a race is recovered from the persisted snapshot when the sailor next taps
+        // Start (see the ACTION_START restore path), not by the service coming back on its own.
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
