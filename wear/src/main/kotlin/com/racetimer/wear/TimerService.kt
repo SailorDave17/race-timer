@@ -19,10 +19,12 @@ import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.RaceSequence
+import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.formatCountdown
 
 /**
  * Foreground service that keeps the [TimerEngine] alive while the screen is off or the
@@ -53,6 +55,14 @@ class TimerService : Service() {
     private lateinit var haptic: HapticManager
     private lateinit var prefs: SharedPreferences
 
+    /**
+     * Outcome of the most recent restore, or null if the last start was fresh.
+     * [RestoreOutcome.DEGRADED] means a reboot or clock step was detected during recovery and the
+     * UI should prompt the sailor to re-sync against the Race Committee flag.
+     */
+    var lastRestoreOutcome: RestoreOutcome? = null
+        private set
+
     // --- Handler tick loop ----------------------------------------------------
 
     private val handler = Handler(Looper.getMainLooper())
@@ -64,9 +74,6 @@ class TimerService : Service() {
                     engine.pollClockAdjustment()
                     handler.postDelayed(this, TICK_INTERVAL_MS)
                     updateOngoingNotification()
-                }
-                TimerState.PAUSED -> {
-                    // Paused: stop ticking but keep the service instance alive so it can resume.
                 }
                 else -> stopForegroundAndCleanup()
             }
@@ -89,46 +96,36 @@ class TimerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                if (engine.currentState == TimerState.PAUSED) {
-                    // Resume from a paused countdown — keep the existing position.
-                    engine.start()
-                    persistGunWallClock()
+                val sequenceId = intent.getStringExtra(EXTRA_SEQUENCE_ID) ?: BuiltInSequences.usSailing.id
+                val sequence = findSequence(sequenceId)
+
+                // Check if we should restore from saved state
+                val savedGunElapsed = prefs.getLong(PREF_GUN_ELAPSED, -1L)
+                val savedGunWall = prefs.getLong(PREF_GUN_WALL_CLOCK, -1L)
+                val savedCapturedElapsed = prefs.getLong(PREF_CAPTURED_ELAPSED, Long.MIN_VALUE)
+                val savedSeqId = prefs.getString(PREF_SEQUENCE_ID, null)
+
+                if (savedGunWall > 0 && savedCapturedElapsed != Long.MIN_VALUE &&
+                    savedSeqId == sequenceId && engine.currentState == TimerState.IDLE) {
+                    val snapshot = TimerEngine.Snapshot(
+                        sequenceId = savedSeqId,
+                        gunElapsedMs = savedGunElapsed,
+                        gunWallMs = savedGunWall,
+                        capturedElapsedMs = savedCapturedElapsed,
+                    )
+                    lastRestoreOutcome = engine.restore(sequence, snapshot)
                 } else {
-                    val sequenceId = intent.getStringExtra(EXTRA_SEQUENCE_ID) ?: BuiltInSequences.usSailing.id
-                    val sequence = findSequence(sequenceId)
-
-                    // Check if we should restore from saved state
-                    val savedGunWall = prefs.getLong(PREF_GUN_WALL_CLOCK, -1L)
-                    val savedSeqId = prefs.getString(PREF_SEQUENCE_ID, null)
-
-                    if (savedGunWall > 0 && savedSeqId == sequenceId &&
-                        engine.currentState == TimerState.IDLE) {
-                        engine.restoreFromWallClock(sequence, savedGunWall)
-                    } else {
-                        engine.load(sequence)
-                        engine.start()
-                    }
-
-                    persistState(sequenceId)
+                    engine.load(sequence)
+                    engine.start()
+                    lastRestoreOutcome = null
                 }
+
+                persistSnapshot()
                 acquireWakeLock()
                 startForegroundWithNotification()
                 scheduleTickLoop()
             }
             ACTION_SYNC -> engine.sync()
-            ACTION_PAUSE -> {
-                engine.pause()
-                handler.removeCallbacks(tickRunnable)
-                releaseWakeLock()
-                // Keep the service instance alive (the Activity stays bound) so the sailor can
-                // resume, but drop the ongoing notification and stop ticking.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                } else {
-                    @Suppress("DEPRECATION")
-                    stopForeground(true)
-                }
-            }
             ACTION_STOP -> {
                 engine.stop()
                 clearPersistedState()
@@ -140,7 +137,12 @@ class TimerService : Service() {
                 stopForegroundAndCleanup()
             }
         }
-        return START_STICKY
+        // NOT_STICKY, deliberately: a sticky restart arrives with a null intent, which matches no
+        // branch above - so startForeground() never runs and Android 12+ kills the process with
+        // ForegroundServiceDidNotStartInTimeException. There is nothing to gain by restarting
+        // either, since a race is recovered from the persisted snapshot when the sailor next taps
+        // Start (see the ACTION_START restore path), not by the service coming back on its own.
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -170,7 +172,7 @@ class TimerService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val displayText = formatMmSs(remainingMs)
+        val displayText = formatCountdown(remainingMs)
 
         val builder = NotificationCompat.Builder(this, RaceTimerApplication.TIMER_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
@@ -253,36 +255,35 @@ class TimerService : Service() {
 
         override fun onSync(snappedToMs: Long) {
             haptic.playSync()
-            persistGunWallClock()
+            persistSnapshot()
         }
 
         override fun onClockAdjusted(remainingMs: Long) {
             // Wall clock jumped (e.g. NTP correction). The monotonic countdown is unaffected,
             // but the persisted wall-clock anchor must be refreshed so a restore-after-death
             // stays correct.
-            persistGunWallClock()
+            persistSnapshot()
         }
     }
 
     // --- State persistence ----------------------------------------------------
 
-    private fun persistState(sequenceId: String) {
+    private fun persistSnapshot() {
+        val snap = engine.snapshot() ?: return
         prefs.edit()
-            .putString(PREF_SEQUENCE_ID, sequenceId)
-            .apply()
-        persistGunWallClock()
-    }
-
-    private fun persistGunWallClock() {
-        prefs.edit()
-            .putLong(PREF_GUN_WALL_CLOCK, engine.gunWallClockMs())
+            .putString(PREF_SEQUENCE_ID, snap.sequenceId)
+            .putLong(PREF_GUN_ELAPSED, snap.gunElapsedMs)
+            .putLong(PREF_GUN_WALL_CLOCK, snap.gunWallMs)
+            .putLong(PREF_CAPTURED_ELAPSED, snap.capturedElapsedMs)
             .apply()
     }
 
     private fun clearPersistedState() {
         prefs.edit()
-            .remove(PREF_GUN_WALL_CLOCK)
             .remove(PREF_SEQUENCE_ID)
+            .remove(PREF_GUN_ELAPSED)
+            .remove(PREF_GUN_WALL_CLOCK)
+            .remove(PREF_CAPTURED_ELAPSED)
             .apply()
     }
 
@@ -294,14 +295,15 @@ class TimerService : Service() {
     companion object {
         const val ACTION_START = "com.racetimer.wear.ACTION_START"
         const val ACTION_SYNC = "com.racetimer.wear.ACTION_SYNC"
-        const val ACTION_PAUSE = "com.racetimer.wear.ACTION_PAUSE"
         const val ACTION_STOP = "com.racetimer.wear.ACTION_STOP"
         const val ACTION_RESET = "com.racetimer.wear.ACTION_RESET"
         const val EXTRA_SEQUENCE_ID = "sequence_id"
 
         private const val PREFS_NAME = "race_timer_state"
-        private const val PREF_GUN_WALL_CLOCK = "gun_wall_clock_ms"
         private const val PREF_SEQUENCE_ID = "sequence_id"
+        private const val PREF_GUN_ELAPSED = "gun_elapsed_ms"
+        private const val PREF_GUN_WALL_CLOCK = "gun_wall_clock_ms"
+        private const val PREF_CAPTURED_ELAPSED = "captured_elapsed_ms"
 
         private const val TICK_INTERVAL_MS = 50L
         private const val GUN_LINGER_MS = 3_000L
@@ -315,8 +317,6 @@ class TimerService : Service() {
         fun syncIntent(context: Context): Intent =
             Intent(context, TimerService::class.java).apply { action = ACTION_SYNC }
 
-        fun pauseIntent(context: Context): Intent =
-            Intent(context, TimerService::class.java).apply { action = ACTION_PAUSE }
 
         fun stopIntent(context: Context): Intent =
             Intent(context, TimerService::class.java).apply { action = ACTION_STOP }
@@ -324,11 +324,4 @@ class TimerService : Service() {
         fun resetIntent(context: Context): Intent =
             Intent(context, TimerService::class.java).apply { action = ACTION_RESET }
     }
-}
-
-private fun formatMmSs(ms: Long): String {
-    val totalSec = (ms / 1_000L).coerceAtLeast(0L)
-    val min = totalSec / 60
-    val sec = totalSec % 60
-    return "%d:%02d".format(min, sec)
 }
