@@ -12,16 +12,26 @@ package com.racetimer.shared
 // ---------------------------------------------------------------------------
 
 /**
- * Describes how many long and short blasts make up a single cue.
- * Used to drive both audio synthesis and vibration patterns on the watch.
+ * Describes the blast structure of a single cue: how many long and short blasts it is made of, or —
+ * where the cue is one held signal rather than a count — how long that signal runs.
  *
- * @param longBlasts  Number of sustained (≈2 s) horn blasts.
- * @param shortBlasts Number of short (≈1 s) horn blasts.
- * @param label       Human-readable description shown in the UI (e.g. "3 long").
+ * Drives both channels of a cue on the watch. The vibration and the tone read the same pattern and
+ * land on the same blast boundaries, so a cue sounds the shape it feels.
+ *
+ * @param longBlasts  Number of long horn blasts.
+ * @param shortBlasts Number of short horn blasts.
+ * @param sustainedMs One continuous blast of this many milliseconds. Zero on every cue built from
+ *                    discrete blasts; set only where the cue is a single held signal, such as the
+ *                    Scholastic gun. When non-zero it *replaces* the blast counts rather than
+ *                    following them — a sustained cue is one unbroken buzz and tone, which the
+ *                    counts cannot express at any value.
+ * @param label       Human-readable description of the pattern (e.g. "3 long"). Documentation
+ *                    only: nothing in the app renders it today.
  */
 data class SignalPattern(
     val longBlasts: Int = 0,
     val shortBlasts: Int = 0,
+    val sustainedMs: Long = 0L,
     val label: String = "",
 )
 
@@ -115,6 +125,16 @@ object BuiltInSequences {
                 offsetMs = 1 * 60_000L,
                 signal = SignalPattern(longBlasts = 1, label = "1 long"),
             ),
+            // 0:50 and 0:40 break the silence the sequence used to leave between 1:00 and 0:30.
+            SequenceCue(
+                offsetMs = 50_000L,
+                signal = SignalPattern(shortBlasts = 1, label = "1 short"),
+            ),
+            SequenceCue(
+                offsetMs = 40_000L,
+                signal = SignalPattern(shortBlasts = 1, label = "1 short"),
+            ),
+            // 0:30 and 0:20 keep the descending 3-short / 2-short call the committee sounds.
             SequenceCue(
                 offsetMs = 30_000L,
                 signal = SignalPattern(shortBlasts = 3, label = "3 short"),
@@ -123,35 +143,18 @@ object BuiltInSequences {
                 offsetMs = 20_000L,
                 signal = SignalPattern(shortBlasts = 2, label = "2 short"),
             ),
+        ) + (10 downTo 1).map { sec ->
+            // The last ten seconds are a flat, even tick — every second identical — so the sailor
+            // counts pulses off the wrist instead of decoding a pattern on the line.
             SequenceCue(
-                offsetMs = 10_000L,
+                offsetMs = sec * 1_000L,
                 signal = SignalPattern(shortBlasts = 1, label = "1 short"),
-            ),
-            SequenceCue(
-                offsetMs = 5_000L,
-                signal = SignalPattern(shortBlasts = 1, label = "1 short"),
-            ),
-            SequenceCue(
-                offsetMs = 4_000L,
-                signal = SignalPattern(shortBlasts = 1, label = "1 short"),
-            ),
-            SequenceCue(
-                offsetMs = 3_000L,
-                signal = SignalPattern(shortBlasts = 1, label = "1 short"),
-            ),
-            SequenceCue(
-                offsetMs = 2_000L,
-                signal = SignalPattern(shortBlasts = 1, label = "1 short"),
-            ),
-            SequenceCue(
-                offsetMs = 1_000L,
-                signal = SignalPattern(shortBlasts = 1, label = "1 short"),
-            ),
-            SequenceCue(
-                offsetMs = 0L,
-                signal = SignalPattern(longBlasts = 1, label = "Start"),
-                isGun = true,
-            ),
+            )
+        } + SequenceCue(
+            // One sustained blast, not a count: the gun is the only cue with nothing to count.
+            offsetMs = 0L,
+            signal = SignalPattern(sustainedMs = 3_000L, label = "Start — sustained"),
+            isGun = true,
         ),
     )
 
