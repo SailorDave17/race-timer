@@ -39,8 +39,9 @@ race-timer/
     └── src/main/
         ├── kotlin/com/racetimer/wear/
         │   ├── MainActivity.kt         — Compose UI, service binding, screen-on
-        │   ├── TimerService.kt         — foreground service, tick loop, haptics
+        │   ├── TimerService.kt         — foreground service, tick loop, cue feedback
         │   ├── HapticManager.kt        — signal → VibrationEffect patterns
+        │   ├── ToneManager.kt          — audible alert beep paired with each haptic
         │   ├── RaceTimerApplication.kt — notification channel creation
         │   └── ui/
         │       ├── Theme.kt            — Wear Compose MaterialTheme
