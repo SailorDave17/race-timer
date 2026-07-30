@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import com.racetimer.shared.CueVoice
 import com.racetimer.shared.SignalPattern
 
 /**
@@ -129,12 +130,26 @@ class ToneManager(context: Context) {
         if (pattern.sustainedMs > 0L) {
             return listOf(Blast(SUSTAINED_TONE, pattern.sustainedMs.toInt(), 0L))
         }
+        // The voice picks the tone and the boundaries together. A sync tick is a different pitch on
+        // a shorter beat than any blast, which is what stops a sailor hearing it as a signal.
+        val tone = when (pattern.voice) {
+            CueVoice.SYNC -> SYNC_TONE
+            CueVoice.BLAST -> BLAST_TONE
+        }
         val blasts = mutableListOf<Blast>()
         repeat(pattern.longBlasts) {
-            blasts += Blast(BLAST_TONE, CueTiming.LONG_ON.toInt(), CueTiming.LONG_OFF)
+            blasts += Blast(
+                tone,
+                CueTiming.onMs(pattern, long = true).toInt(),
+                CueTiming.offMs(pattern, long = true),
+            )
         }
         repeat(pattern.shortBlasts) {
-            blasts += Blast(BLAST_TONE, CueTiming.SHORT_ON.toInt(), CueTiming.SHORT_OFF)
+            blasts += Blast(
+                tone,
+                CueTiming.onMs(pattern, long = false).toInt(),
+                CueTiming.offMs(pattern, long = false),
+            )
         }
         return blasts
     }
@@ -207,6 +222,18 @@ class ToneManager(context: Context) {
          * here against delivered frame count, never by ear.
          */
         const val SUSTAINED_TONE = ToneGenerator.TONE_DTMF_D
+
+        /**
+         * Tone for a [CueVoice.SYNC] tick.
+         *
+         * Chosen for *pitch* distance from [BLAST_TONE], not timbre: `TONE_DTMF_1` is the lowest
+         * DTMF pair (697 + 1209 Hz) against a high CDMA blast, and pitch is what survives wind and
+         * water on the water. DTMF for the same reason [SUSTAINED_TONE] is — a single continuous
+         * segment honours the requested length, where a `TONE_CDMA_*` pattern stops at its own.
+         * At [CueTiming.SYNC_ON] this matters: a truncated tick would land shorter than the buzz
+         * beside it. Confirm any change here against delivered frame count, never by ear.
+         */
+        const val SYNC_TONE = ToneGenerator.TONE_DTMF_1
 
         /** Long enough to register outdoors, short enough to stay clear of the next cue. */
         const val BEEP_MS = 400
