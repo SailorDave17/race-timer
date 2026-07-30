@@ -11,9 +11,13 @@ import com.racetimer.shared.SignalPattern
  * Manages haptic feedback for race cues.
  *
  * Each [SignalPattern] maps to a distinct vibration sequence:
- * - Long blast  → sustained buzz (~500 ms on, ~200 ms off per blast)
- * - Short blast → quick tap   (~150 ms on, ~150 ms off per blast)
- * - Gun (multi) → rapid triple buzz
+ * - Sustained   → one unbroken buzz for [SignalPattern.sustainedMs]
+ * - Long blast  → firm buzz  ([CueTiming.LONG_ON] on, [CueTiming.LONG_OFF] off per blast)
+ * - Short blast → quick tap  ([CueTiming.SHORT_ON] on, [CueTiming.SHORT_OFF] off per blast)
+ * - Gun (multi) → rapid triple buzz, for gun cues that state no sustained duration
+ *
+ * Blast boundaries come from [CueTiming] because [ToneManager] plays a cue's tones on the same
+ * ones; see that object for why they are not constants here.
  *
  * The patterns are composed off the monotonic clock so multiple blasts don't drift.
  */
@@ -28,15 +32,17 @@ class HapticManager(context: Context) {
     }
 
     // --- Timing constants (ms) ---
-    private val LONG_ON = 500L
-    private val LONG_OFF = 250L
-    private val SHORT_ON = 150L
-    private val SHORT_OFF = 150L
-    private val GUN_REPEAT = 3  // triple-buzz for the gun
+    private val LONG_ON = CueTiming.LONG_ON
+    private val LONG_OFF = CueTiming.LONG_OFF
+    private val SHORT_ON = CueTiming.SHORT_ON
+    private val SHORT_OFF = CueTiming.SHORT_OFF
+    private val GUN_REPEAT = CueTiming.GUN_REPEAT  // triple-buzz for the gun
 
     /**
      * Play the haptic pattern for [pattern].
-     * If [isGun] is true, override with the gun triple-buzz regardless of pattern.
+     *
+     * A pattern carrying [SignalPattern.sustainedMs] wins over everything else, [isGun] included.
+     * Otherwise, if [isGun] is true, override with the gun triple-buzz regardless of pattern.
      */
     fun play(pattern: SignalPattern, isGun: Boolean = false) {
         if (!vibrator.hasVibrator()) return
@@ -44,7 +50,13 @@ class HapticManager(context: Context) {
         val timings = mutableListOf<Long>()
         val amplitudes = mutableListOf<Int>()
 
-        if (isGun) {
+        if (pattern.sustainedMs > 0L) {
+            // One unbroken buzz. Ahead of the isGun branch deliberately: a cue that states its own
+            // sustained length means it, and the triple-buzz behind this keeps every gun cue that
+            // states none — usSailing's and club's — on exactly the behaviour it has today.
+            timings += 0L; amplitudes += VibrationEffect.DEFAULT_AMPLITUDE   // lead silence
+            timings += pattern.sustainedMs; amplitudes += 255
+        } else if (isGun) {
             // Gun: 3 rapid long buzzes
             repeat(GUN_REPEAT) {
                 timings += 0L; amplitudes += VibrationEffect.DEFAULT_AMPLITUDE   // lead silence

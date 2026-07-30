@@ -145,11 +145,11 @@ class TimerEngineTest {
         assertEquals(4, cues.size)
     }
 
-    @Test fun `scholastic sequence has 13 cues`() {
+    @Test fun `scholastic sequence has 19 cues`() {
         engine.load(BuiltInSequences.scholastic)
         engine.start()
         advanceTo(BuiltInSequences.scholastic.totalMs + 1_000L)
-        assertEquals(13, cues.size)
+        assertEquals(19, cues.size)
     }
 
     // --- Sync -----------------------------------------------------------------

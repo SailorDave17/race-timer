@@ -8,21 +8,25 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import com.racetimer.shared.SignalPattern
 
 /**
- * Plays a short, loud alert tone alongside the haptic feedback in [HapticManager].
+ * Plays the audible half of a race cue, alongside the haptic half in [HapticManager].
  *
- * Phase 1 (issue #37) is deliberately one single beep per feedback event — no per-cue patterns and
- * no user-configurable sound. The blast structure of a cue is still carried entirely by the
- * vibration; the beep exists so the sailor notices the cue when they can't feel the watch.
+ * A cue's tones land on the same blast boundaries as its vibration — both channels read
+ * [CueTiming] — so three long blasts are three tones against three buzzes, aligned, rather than one
+ * beep laid over a pattern the ear cannot resolve. A cue carrying [SignalPattern.sustainedMs] plays
+ * as a single continuous tone of that length.
  *
- * The tone is generated with [ToneGenerator] rather than a sound asset: it needs no decoding, so
- * [playBeep] returns in well under the perceptual sync window with the vibration that fires
- * alongside it, and there is no asset to ship or to keep in memory.
+ * Tones are generated with [ToneGenerator] rather than a sound asset: there is nothing to decode,
+ * so [playCue] returns well inside the perceptual sync window with the vibration firing alongside
+ * it, and there is no asset to ship or hold in memory. Every blast after the first is
+ * Handler-posted, so the call returns immediately however long the pattern runs and never delays
+ * the vibration.
  *
  * Audio is best-effort by design. A watch may have no speaker at all, and [ToneGenerator] throws
  * when the platform cannot hand out an audio track. Every failure path here logs and returns, so
- * the caller's vibration is never blocked by a broken beep.
+ * the caller's vibration is never blocked by a broken tone.
  */
 class ToneManager(context: Context) {
 
@@ -37,32 +41,109 @@ class ToneManager(context: Context) {
     private val handler = Handler(Looper.getMainLooper())
     private val releaseRunnable = Runnable { releaseGenerator() }
 
-    /** Uptime the current beep started, so [release] can wait out its tail. */
-    private var beepStartedAtMs = 0L
+    /** Blasts of the current cue not yet sounded, so the next cue can cancel what it supersedes. */
+    private val pendingBlasts = mutableListOf<Runnable>()
+
+    /** Uptime the current cue's audio finishes, so [release] can wait out its real tail. */
+    private var soundingUntilMs = 0L
 
     private val hasAudioOutput: Boolean =
         appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_AUDIO_OUTPUT)
 
     /**
      * Build the audio track ahead of the first cue. Without this the allocation lands on whichever
-     * cue beeps first, delaying that one beep behind its vibration.
+     * cue sounds first, delaying that one cue behind its vibration.
      */
     fun prepare() {
         obtainGenerator()
     }
 
     /**
-     * Play the alert beep. Safe to call from the main thread: [ToneGenerator.startTone] hands the
-     * tone to the audio flinger and returns immediately rather than blocking for [BEEP_MS].
+     * Play [pattern] as tones on its blast boundaries.
+     *
+     * Safe to call from the main thread and returns immediately: [ToneGenerator.startTone] hands
+     * the tone to the audio flinger rather than blocking for its duration, and the blasts after the
+     * first are posted rather than waited on.
+     */
+    fun playCue(pattern: SignalPattern) {
+        val blasts = blastsOf(pattern)
+        if (blasts.isEmpty()) return
+
+        cancelPendingBlasts()
+        handler.removeCallbacks(releaseRunnable)
+        if (obtainGenerator() == null) return
+
+        var offsetMs = 0L
+        for (blast in blasts) {
+            if (offsetMs == 0L) {
+                startTone(blast.toneType, blast.onMs)
+            } else {
+                val runnable = Runnable { startTone(blast.toneType, blast.onMs) }
+                pendingBlasts += runnable
+                handler.postDelayed(runnable, offsetMs)
+            }
+            offsetMs += blast.onMs + blast.offMs
+        }
+        soundingUntilMs = SystemClock.uptimeMillis() + offsetMs
+    }
+
+    /**
+     * Play a single feedback beep, for events that carry no blast pattern — a sync snap, say.
      */
     fun playBeep() {
-        val generator = obtainGenerator() ?: return
+        cancelPendingBlasts()
         handler.removeCallbacks(releaseRunnable)
+        if (obtainGenerator() == null) return
+
+        startTone(BLAST_TONE, BEEP_MS)
+        soundingUntilMs = SystemClock.uptimeMillis() + BEEP_MS
+    }
+
+    /**
+     * Release the audio track. Call from the owner's teardown; [playCue] re-inits on demand.
+     *
+     * The gun cue sounds and the timer service then tears down on the same tick, and
+     * [ToneGenerator.release] cuts playback off mid-tone — so while a cue is still sounding, the
+     * teardown waits out whatever is left *of that cue*, not of a fixed beep length. The gun is a
+     * three-second sustained tone: a constant here would be wrong by most of it, and it is the one
+     * cue a sailor most needs to hear in full.
+     */
+    fun release() {
+        initFailed = false
+        val tailMs = soundingUntilMs - SystemClock.uptimeMillis()
+        if (toneGenerator != null && tailMs > 0L) {
+            handler.postDelayed(releaseRunnable, tailMs)
+        } else {
+            cancelPendingBlasts()
+            handler.removeCallbacks(releaseRunnable)
+            releaseGenerator()
+        }
+    }
+
+    // --- Internals ------------------------------------------------------------
+
+    /** One tone of a cue: [onMs] of sound, then [offMs] of silence before the next. */
+    private data class Blast(val toneType: Int, val onMs: Int, val offMs: Long)
+
+    private fun blastsOf(pattern: SignalPattern): List<Blast> {
+        if (pattern.sustainedMs > 0L) {
+            return listOf(Blast(SUSTAINED_TONE, pattern.sustainedMs.toInt(), 0L))
+        }
+        val blasts = mutableListOf<Blast>()
+        repeat(pattern.longBlasts) {
+            blasts += Blast(BLAST_TONE, CueTiming.LONG_ON.toInt(), CueTiming.LONG_OFF)
+        }
+        repeat(pattern.shortBlasts) {
+            blasts += Blast(BLAST_TONE, CueTiming.SHORT_ON.toInt(), CueTiming.SHORT_OFF)
+        }
+        return blasts
+    }
+
+    private fun startTone(toneType: Int, durationMs: Int) {
+        val generator = obtainGenerator() ?: return
         try {
-            if (generator.startTone(BEEP_TONE, BEEP_MS)) {
-                beepStartedAtMs = SystemClock.uptimeMillis()
-            } else {
-                Log.w(TAG, "startTone returned false; beep dropped for this cue")
+            if (!generator.startTone(toneType, durationMs)) {
+                Log.w(TAG, "startTone returned false; blast dropped for this cue")
             }
         } catch (e: RuntimeException) {
             // The generator can be torn down underneath us (audio server restart, resource
@@ -72,23 +153,9 @@ class ToneManager(context: Context) {
         }
     }
 
-    /**
-     * Release the audio track. Call from the owner's teardown; [playBeep] re-inits on demand.
-     *
-     * The gun cue beeps and then immediately tears the timer service down, and
-     * [ToneGenerator.release] cuts playback off mid-tone — so if a beep is still sounding, the
-     * teardown waits out its remaining duration first. That trailing beep is the start signal, the
-     * one cue a sailor most needs to hear in full.
-     */
-    fun release() {
-        initFailed = false
-        val tailMs = BEEP_MS - (SystemClock.uptimeMillis() - beepStartedAtMs)
-        if (toneGenerator != null && beepStartedAtMs > 0L && tailMs > 0L) {
-            handler.postDelayed(releaseRunnable, tailMs)
-        } else {
-            handler.removeCallbacks(releaseRunnable)
-            releaseGenerator()
-        }
+    private fun cancelPendingBlasts() {
+        pendingBlasts.forEach { handler.removeCallbacks(it) }
+        pendingBlasts.clear()
     }
 
     private fun obtainGenerator(): ToneGenerator? {
@@ -102,7 +169,7 @@ class ToneManager(context: Context) {
         }
 
         return try {
-            // STREAM_ALARM so the beep carries outdoors: on Wear it is the loudest stream and is
+            // STREAM_ALARM so the tone carries outdoors: on Wear it is the loudest stream and is
             // the one users leave up for alerts, unlike STREAM_MUSIC or STREAM_NOTIFICATION.
             ToneGenerator(AudioManager.STREAM_ALARM, ToneGenerator.MAX_VOLUME).also {
                 toneGenerator = it
@@ -121,14 +188,25 @@ class ToneManager(context: Context) {
             Log.w(TAG, "ToneGenerator release failed", e)
         }
         toneGenerator = null
-        beepStartedAtMs = 0L
+        soundingUntilMs = 0L
     }
 
     private companion object {
         const val TAG = "ToneManager"
 
         /** High, piercing tone — the most audible of the built-ins over wind and water. */
-        const val BEEP_TONE = ToneGenerator.TONE_CDMA_HIGH_L
+        const val BLAST_TONE = ToneGenerator.TONE_CDMA_HIGH_L
+
+        /**
+         * Tone for a sustained cue.
+         *
+         * Not [BLAST_TONE]: the CDMA tones are *patterns* with their own internal segment lengths,
+         * and asking one for three seconds does not buy three seconds of sound — it stops when its
+         * own segment ends. The DTMF tones are single continuous segments, so they run for exactly
+         * the duration requested, which is the whole requirement for the gun. Confirm any change
+         * here against delivered frame count, never by ear.
+         */
+        const val SUSTAINED_TONE = ToneGenerator.TONE_DTMF_D
 
         /** Long enough to register outdoors, short enough to stay clear of the next cue. */
         const val BEEP_MS = 400

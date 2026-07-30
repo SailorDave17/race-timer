@@ -22,8 +22,8 @@ class RaceSequenceTest {
         assertTrue(gun.isGun)
     }
 
-    @Test fun `scholastic has 13 cues`() {
-        assertEquals(13, BuiltInSequences.scholastic.cues.size)
+    @Test fun `scholastic has 19 cues`() {
+        assertEquals(19, BuiltInSequences.scholastic.cues.size)
     }
 
     @Test fun `scholastic totalMs is 3 minutes`() {
@@ -42,9 +42,74 @@ class RaceSequenceTest {
         assertEquals(0, cue.signal.shortBlasts)
     }
 
+    @Test fun `scholastic minute signals keep their blast patterns`() {
+        // The ICSA blast structure the race committee actually sounds. Filling in the tail must
+        // not re-voice any of it.
+        assertPattern(offsetMs = 3 * 60_000L, longBlasts = 3, shortBlasts = 0)
+        assertPattern(offsetMs = 2 * 60_000L, longBlasts = 2, shortBlasts = 0)
+        assertPattern(offsetMs = 90_000L, longBlasts = 1, shortBlasts = 3)
+        assertPattern(offsetMs = 1 * 60_000L, longBlasts = 1, shortBlasts = 0)
+    }
+
+    @Test fun `scholastic marks 50s and 40s with 1 short each`() {
+        assertPattern(offsetMs = 50_000L, longBlasts = 0, shortBlasts = 1)
+        assertPattern(offsetMs = 40_000L, longBlasts = 0, shortBlasts = 1)
+    }
+
+    @Test fun `scholastic 20s cue has 2 short blasts`() {
+        assertPattern(offsetMs = 20_000L, longBlasts = 0, shortBlasts = 2)
+    }
+
+    @Test fun `scholastic ticks every second through the last ten`() {
+        for (sec in 10L downTo 1L) {
+            assertPattern(offsetMs = sec * 1_000L, longBlasts = 0, shortBlasts = 1)
+        }
+    }
+
+    @Test fun `scholastic gun is a sustained 3 second signal`() {
+        val gun = BuiltInSequences.scholastic.cues.first { it.isGun }
+        assertEquals(3_000L, gun.signal.sustainedMs)
+        // Sustained replaces the blast counts rather than following them.
+        assertEquals(0, gun.signal.longBlasts)
+        assertEquals(0, gun.signal.shortBlasts)
+    }
+
     @Test fun `scholastic cues are sorted descending by offset`() {
         val offsets = BuiltInSequences.scholastic.cues.map { it.offsetMs }
         assertEquals(offsets.sortedDescending(), offsets)
+    }
+
+    @Test fun `scholastic cue offsets are unique`() {
+        val offsets = BuiltInSequences.scholastic.cues.map { it.offsetMs }
+        assertEquals("no offset may fire twice", offsets.size, offsets.distinct().size)
+    }
+
+    @Test fun `no scholastic cue outruns the gap to the next one`() {
+        // Blast lengths mirror CueTiming in the wear module, which HapticManager and ToneManager
+        // both play a cue on. A cue that runs past its successor would overlap it on both channels.
+        val longMs = 500L + 250L
+        val shortMs = 150L + 150L
+        val cues = BuiltInSequences.scholastic.cues
+        for ((cue, next) in cues.zipWithNext()) {
+            val patternMs = cue.signal.longBlasts * longMs + cue.signal.shortBlasts * shortMs
+            val gapMs = cue.offsetMs - next.offsetMs
+            assertTrue(
+                "cue at ${cue.offsetMs} ms runs $patternMs ms into a $gapMs ms gap",
+                patternMs <= gapMs,
+            )
+        }
+    }
+
+    @Test fun `only the scholastic gun is sustained`() {
+        // usSailing and club gun cues carry no sustainedMs, which is what keeps them on the
+        // existing triple-buzz branch in HapticManager.
+        val sustained = BuiltInSequences.all
+            .flatMap { seq -> seq.cues.map { seq to it } }
+            .filter { (_, cue) -> cue.signal.sustainedMs > 0L }
+        assertEquals(1, sustained.size)
+        val (sequence, cue) = sustained.single()
+        assertEquals(BuiltInSequences.scholastic.id, sequence.id)
+        assertTrue(cue.isGun)
     }
 
     @Test fun `club has 4 cues`() {
@@ -91,5 +156,13 @@ class RaceSequenceTest {
         assertTrue(seq.cues.any { it.offsetMs == 60_000L })
         assertTrue(seq.cues.any { it.offsetMs == 30_000L })
         assertTrue(seq.cues.any { it.offsetMs == 10_000L })
+    }
+
+    /** Assert the scholastic cue at [offsetMs] is exactly the given blast pattern. */
+    private fun assertPattern(offsetMs: Long, longBlasts: Int, shortBlasts: Int) {
+        val cue = BuiltInSequences.scholastic.cues.firstOrNull { it.offsetMs == offsetMs }
+        assertNotNull("no scholastic cue at $offsetMs ms", cue)
+        assertEquals("long blasts at $offsetMs ms", longBlasts, cue!!.signal.longBlasts)
+        assertEquals("short blasts at $offsetMs ms", shortBlasts, cue.signal.shortBlasts)
     }
 }
