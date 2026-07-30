@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -72,7 +71,6 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  * @param message        Non-null to show a transient notice/warning banner (e.g. clock jump).
  * @param onStart        Called when the user taps Start.
  * @param onStop         Called when the user taps Stop.
- * @param onReset        Called when the user taps Reset.
  * @param onSync         Called when the user taps Sync.
  * @param onPickSequence Called when the user taps the sequence name to change it (when not running).
  */
@@ -86,7 +84,6 @@ fun TimerScreen(
     message: String? = null,
     onStart: () -> Unit,
     onStop: () -> Unit,
-    onReset: () -> Unit,
     onSync: () -> Unit,
     onPickSequence: () -> Unit = {},
 ) {
@@ -155,11 +152,12 @@ fun TimerScreen(
             // Buttons. The app never enters PAUSED (there is no pause control), but the engine
             // still models the state, so it shares the idle layout rather than going unhandled.
             when (state) {
+                // Waiting to start: there is nothing yet to reset, so Start is the only control and
+                // takes the whole width. FINISHED shares this because it is transient — the service
+                // returns the engine to IDLE once the gun cue and its "GO!" linger are done, so the
+                // sailor is never left on a finished screen with no way back.
                 TimerState.IDLE, TimerState.FINISHED, TimerState.PAUSED -> {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PrimaryButton(label = "Start", onClick = onStart)
-                        SecondaryButton(label = "Reset", onClick = onReset)
-                    }
+                    StartButton(onClick = onStart)
                 }
                 TimerState.RUNNING -> {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -226,19 +224,30 @@ private fun CountdownText(remainingMs: Long, state: TimerState) {
 // Button components
 // ---------------------------------------------------------------------------
 
+/**
+ * The sole pre-start control: a wide pill rather than a bigger circle.
+ *
+ * The column above it (sequence name, 52 sp readout, sync-label slot) already fills most of a 192 dp
+ * small round screen, so there is no vertical room to grow — this trades 8 dp of height for the width
+ * Reset used to take, roughly doubling the tap area. Wear's [Button] defaults to a circle shape, which
+ * at a non-square size renders as a stadium; the rounded ends also tuck inside the display's curve
+ * better than square corners would at this width.
+ */
 @Composable
-private fun PrimaryButton(label: String, onClick: () -> Unit) {
+private fun StartButton(onClick: () -> Unit) {
     Button(
         onClick = onClick,
-        modifier = Modifier.size(64.dp),
+        modifier = Modifier
+            .fillMaxWidth(0.68f)
+            .height(56.dp),
         colors = ButtonDefaults.buttonColors(
             backgroundColor = Color(0xFFFFD700),
             contentColor = Color(0xFF1A1A2E),
         ),
     ) {
         Text(
-            text = label,
-            fontSize = 12.sp,
+            text = "Start",
+            fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )

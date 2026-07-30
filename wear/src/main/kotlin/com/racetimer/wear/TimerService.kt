@@ -35,7 +35,7 @@ import com.racetimer.shared.formatCountdown
  * - Post an Ongoing Activity notification so the countdown shows on the watch face /
  *   system UI.
  * - Persist the gun wall-clock time so state survives process death.
- * - Clear the wake lock and stop itself when the sequence ends or is reset.
+ * - Clear the wake lock and stop itself when the sequence ends or is stopped.
  */
 class TimerService : Service() {
 
@@ -63,6 +63,21 @@ class TimerService : Service() {
     var lastRestoreOutcome: RestoreOutcome? = null
         private set
 
+    /** The outcome of the last start that has not yet been shown to the sailor. */
+    private var pendingRestoreNotice: RestoreOutcome? = null
+
+    /**
+     * Read-and-clear the restore outcome still owed a message on screen.
+     *
+     * Separate from [lastRestoreOutcome], which the UI samples continuously to decide whether the
+     * re-sync prompt belongs on screen. A "we resumed a race you did not start just now" notice must
+     * fire exactly once per start, and a value the UI polls cannot express that: the activity refreshes
+     * every 100 ms and would either re-announce forever or miss the change while the service was still
+     * processing the intent. The service hands the notice over once instead.
+     */
+    fun consumeRestoreNotice(): RestoreOutcome? =
+        pendingRestoreNotice.also { pendingRestoreNotice = null }
+
     // --- Handler tick loop ----------------------------------------------------
 
     private val handler = Handler(Looper.getMainLooper())
@@ -89,7 +104,18 @@ class TimerService : Service() {
     /** Set while [gunTeardownRunnable] is posted, so the tick loop doesn't tear down ahead of it. */
     private var gunTeardownPending = false
 
-    private val gunTeardownRunnable = Runnable { stopForegroundAndCleanup() }
+    /**
+     * Runs once the gun cue has finished sounding and "GO!" has had its [GUN_LINGER_MS] on screen.
+     *
+     * [TimerEngine.reset] is what puts the screen back to the pre-race countdown. The timer face has
+     * no Reset button — before a race there is nothing to reset — so nothing else would ever clear
+     * FINISHED, and the sailor would be stranded on "GO!" until they force-stopped the app. Resetting
+     * here rather than in the UI also keeps it true when the activity is not even bound.
+     */
+    private val gunTeardownRunnable = Runnable {
+        engine.reset()
+        stopForegroundAndCleanup()
+    }
 
     // --- Wake lock ------------------------------------------------------------
 
@@ -126,11 +152,22 @@ class TimerService : Service() {
                         capturedElapsedMs = savedCapturedElapsed,
                     )
                     lastRestoreOutcome = engine.restore(sequence, snapshot)
+                    if (lastRestoreOutcome == RestoreOutcome.EXPIRED) {
+                        // The gun fired while the process was dead, so there is no race to resume —
+                        // and restore leaves the engine FINISHED, which with no Reset button would
+                        // strand the screen on "GO!". The sailor tapped Start, so give them a start:
+                        // drop the spent snapshot and run the sequence from the top. The UI says so
+                        // (see consumeRestoreNotice) rather than silently substituting a fresh race.
+                        clearPersistedState()
+                        engine.load(sequence)
+                        engine.start()
+                    }
                 } else {
                     engine.load(sequence)
                     engine.start()
                     lastRestoreOutcome = null
                 }
+                pendingRestoreNotice = lastRestoreOutcome
 
                 persistSnapshot()
                 acquireWakeLock()
@@ -145,12 +182,9 @@ class TimerService : Service() {
                 if (engine.currentState != TimerState.RUNNING) stopSelf()
             }
             ACTION_STOP -> {
+                // Also the way out of a restored race the sailor did not want: Stop clears the
+                // snapshot, so the next Start runs the sequence from the top rather than resuming.
                 engine.stop()
-                clearPersistedState()
-                stopForegroundAndCleanup()
-            }
-            ACTION_RESET -> {
-                engine.reset()
                 clearPersistedState()
                 stopForegroundAndCleanup()
             }
@@ -346,7 +380,6 @@ class TimerService : Service() {
         const val ACTION_START = "com.racetimer.wear.ACTION_START"
         const val ACTION_SYNC = "com.racetimer.wear.ACTION_SYNC"
         const val ACTION_STOP = "com.racetimer.wear.ACTION_STOP"
-        const val ACTION_RESET = "com.racetimer.wear.ACTION_RESET"
         const val EXTRA_SEQUENCE_ID = "sequence_id"
 
         private const val PREFS_NAME = "race_timer_state"
@@ -375,8 +408,5 @@ class TimerService : Service() {
 
         fun stopIntent(context: Context): Intent =
             Intent(context, TimerService::class.java).apply { action = ACTION_STOP }
-
-        fun resetIntent(context: Context): Intent =
-            Intent(context, TimerService::class.java).apply { action = ACTION_RESET }
     }
 }
