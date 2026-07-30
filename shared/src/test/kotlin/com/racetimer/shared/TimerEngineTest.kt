@@ -138,11 +138,14 @@ class TimerEngineTest {
         assertTrue(gunFired)
     }
 
-    @Test fun `us sailing sequence has 4 cues`() {
+    @Test fun `us sailing sequence has 30 cues`() {
         engine.load(BuiltInSequences.usSailing)
         engine.start()
         advanceTo(BuiltInSequences.usSailing.totalMs + 1_000L)
-        assertEquals(4, cues.size)
+        assertEquals(30, cues.size)
+        // The sync ticks are the ones packed tightest — ten of them at 1-second spacing — so this
+        // is also the check that the engine delivers every one of them rather than coalescing.
+        assertEquals(10, cues.count { it.signal.voice == CueVoice.SYNC })
     }
 
     @Test fun `scholastic sequence has 19 cues`() {
