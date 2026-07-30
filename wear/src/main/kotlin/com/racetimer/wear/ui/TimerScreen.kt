@@ -195,10 +195,11 @@ private fun CountdownText(remainingMs: Long, state: TimerState) {
         else -> formatCountdown(remainingMs)
     }
 
-    if (isFinalTen) {
-        // Flashing effect in final 10 seconds
+    // Only the alpha differs between flashing and steady, so the branch decides that one value and
+    // the countdown itself is written once.
+    val alpha = if (isFinalTen) {
         val infiniteTransition = rememberInfiniteTransition(label = "flash")
-        val alpha by infiniteTransition.animateFloat(
+        val flashAlpha by infiniteTransition.animateFloat(
             initialValue = 1f,
             targetValue = 0.3f,
             animationSpec = infiniteRepeatable(
@@ -207,22 +208,18 @@ private fun CountdownText(remainingMs: Long, state: TimerState) {
             ),
             label = "flashAlpha",
         )
-        Text(
-            text = displayText,
-            fontSize = 52.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White.copy(alpha = alpha),
-            textAlign = TextAlign.Center,
-        )
+        flashAlpha
     } else {
-        Text(
-            text = displayText,
-            fontSize = 52.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White,
-            textAlign = TextAlign.Center,
-        )
+        1f
     }
+
+    Text(
+        text = displayText,
+        fontSize = 52.sp,
+        fontWeight = FontWeight.Bold,
+        color = Color.White.copy(alpha = alpha),
+        textAlign = TextAlign.Center,
+    )
 }
 
 // ---------------------------------------------------------------------------

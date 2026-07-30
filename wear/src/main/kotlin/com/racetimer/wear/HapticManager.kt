@@ -33,13 +33,6 @@ class HapticManager(context: Context) {
         context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
     }
 
-    // --- Timing constants (ms) ---
-    // Only the gun's own shape is aliased here now; per-blast timings come from CueTiming.onMs /
-    // offMs, which read the pattern's voice.
-    private val LONG_ON = CueTiming.LONG_ON
-    private val LONG_OFF = CueTiming.LONG_OFF
-    private val GUN_REPEAT = CueTiming.GUN_REPEAT  // triple-buzz for the gun
-
     /**
      * Play the haptic pattern for [pattern].
      *
@@ -60,10 +53,10 @@ class HapticManager(context: Context) {
             timings += pattern.sustainedMs; amplitudes += 255
         } else if (isGun) {
             // Gun: 3 rapid long buzzes
-            repeat(GUN_REPEAT) {
+            repeat(CueTiming.GUN_REPEAT) {
                 timings += 0L; amplitudes += VibrationEffect.DEFAULT_AMPLITUDE   // lead silence
-                timings += LONG_ON; amplitudes += 255
-                timings += LONG_OFF; amplitudes += 0
+                timings += CueTiming.LONG_ON; amplitudes += 255
+                timings += CueTiming.LONG_OFF; amplitudes += 0
             }
         } else {
             // A sync tick is lighter and quicker than any blast, so a sailor can tell it from a
@@ -89,36 +82,24 @@ class HapticManager(context: Context) {
 
         if (timings.isEmpty()) return
 
-        val effect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        vibrator.vibrate(
             VibrationEffect.createWaveform(timings.toLongArray(), amplitudes.toIntArray(), -1)
-        } else {
-            @Suppress("DEPRECATION")
-            VibrationEffect.createOneShot(LONG_ON, VibrationEffect.DEFAULT_AMPLITUDE)
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator.vibrate(effect)
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator.vibrate(LONG_ON)
-        }
+        )
     }
 
     /** Short distinct haptic for sync feedback. */
     fun playSync() {
         if (!vibrator.hasVibrator()) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator.vibrate(
-                VibrationEffect.createOneShot(80L, VibrationEffect.DEFAULT_AMPLITUDE)
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator.vibrate(80L)
-        }
+        vibrator.vibrate(VibrationEffect.createOneShot(SYNC_FEEDBACK_MS, VibrationEffect.DEFAULT_AMPLITUDE))
     }
 
     /** Cancel any ongoing haptic. */
     fun cancel() {
         vibrator.cancel()
+    }
+
+    private companion object {
+        /** Confirmation buzz for a sync tap. Not a cue, so it has no [CueTiming] shape to follow. */
+        const val SYNC_FEEDBACK_MS = 80L
     }
 }

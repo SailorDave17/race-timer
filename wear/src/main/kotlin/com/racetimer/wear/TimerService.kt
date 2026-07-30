@@ -9,7 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Binder
-import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -138,7 +137,13 @@ class TimerService : Service() {
                 startForegroundWithNotification()
                 scheduleTickLoop()
             }
-            ACTION_SYNC -> engine.sync()
+            ACTION_SYNC -> {
+                engine.sync()
+                // The intent can land on a service the system created just to deliver it — the app
+                // was killed, or the race has already ended. There is then nothing to sync and no
+                // countdown to hold open, so don't leave a started service sitting idle.
+                if (engine.currentState != TimerState.RUNNING) stopSelf()
+            }
             ACTION_STOP -> {
                 engine.stop()
                 clearPersistedState()
@@ -168,25 +173,42 @@ class TimerService : Service() {
 
     // --- Foreground / Ongoing Activity ----------------------------------------
 
-    private fun startForegroundWithNotification() {
-        val notification = buildNotification(engine.remainingMs)
-        startForeground(RaceTimerApplication.TIMER_NOTIFICATION_ID, notification)
-    }
+    /** The countdown text currently posted, so a tick that renders the same string can skip the post. */
+    private var postedNotificationText: String? = null
 
-    private fun updateOngoingNotification() {
-        val notification = buildNotification(engine.remainingMs)
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(RaceTimerApplication.TIMER_NOTIFICATION_ID, notification)
-    }
-
-    private fun buildNotification(remainingMs: Long): Notification {
-        val launchIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, launchIntent,
+    /** The launch intent never varies, so it is built once rather than on every notification. */
+    private val contentIntent: PendingIntent by lazy {
+        PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+    }
 
-        val displayText = formatCountdown(remainingMs)
+    private fun startForegroundWithNotification() {
+        val displayText = formatCountdown(engine.remainingMs)
+        postedNotificationText = displayText
+        startForeground(RaceTimerApplication.TIMER_NOTIFICATION_ID, buildNotification(displayText))
+    }
+
+    /**
+     * Re-post the ongoing notification, but only when the countdown it renders has actually changed.
+     *
+     * The tick loop runs at [TICK_INTERVAL_MS] because cues need that resolution; the notification
+     * shows M:SS, which yields one new value per second. Posting on every tick meant roughly 6 000
+     * binder round-trips to NotificationManagerService per race with 19 of every 20 re-rendering a
+     * string identical to the one already on screen — and a package enqueueing at that rate gets
+     * throttled by the framework regardless.
+     */
+    private fun updateOngoingNotification() {
+        val displayText = formatCountdown(engine.remainingMs)
+        if (displayText == postedNotificationText) return
+        postedNotificationText = displayText
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(RaceTimerApplication.TIMER_NOTIFICATION_ID, buildNotification(displayText))
+    }
+
+    private fun buildNotification(displayText: String): Notification {
+        val pendingIntent = contentIntent
 
         val builder = NotificationCompat.Builder(this, RaceTimerApplication.TIMER_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
@@ -221,23 +243,28 @@ class TimerService : Service() {
         handler.removeCallbacks(tickRunnable)
         releaseWakeLock()
         clearPersistedState()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
+        postedNotificationText = null
+        stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     // --- Wake lock management -------------------------------------------------
 
     private fun acquireWakeLock() {
+        // Release first. ACTION_START can arrive while a lock is already held — a double tap, or a
+        // restart straight after the gun — and overwriting the field orphaned the previous lock:
+        // releaseWakeLock() could then only ever see the newest one, leaving the old held until its
+        // own timeout ran out.
+        releaseWakeLock()
         val pm = getSystemService(PowerManager::class.java)
+        // Sized to what is actually left to run rather than a constant "longest built-in sequence":
+        // BuiltInSequences.custom() accepts any duration, and a restore resumes partway through. The
+        // margin covers the gun cue itself plus the teardown linger that follows it.
+        val timeoutMs = engine.remainingMs.coerceAtLeast(0L) + WAKE_LOCK_MARGIN_MS
         wakeLock = pm.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
             "RaceTimer:TimerWakeLock"
-        ).also { it.acquire(6 * 60 * 1000L) }  // max 6 min (longest sequence)
+        ).also { it.acquire(timeoutMs) }
     }
 
     private fun releaseWakeLock() {
@@ -332,6 +359,9 @@ class TimerService : Service() {
 
         /** Time the UI keeps showing "GO!" *after* the gun cue itself has finished sounding. */
         private const val GUN_LINGER_MS = 3_000L
+
+        /** Slack added to the wake-lock timeout to cover the gun cue and the teardown that follows. */
+        private const val WAKE_LOCK_MARGIN_MS = 30_000L
 
         fun startIntent(context: Context, sequenceId: String): Intent =
             Intent(context, TimerService::class.java).apply {
