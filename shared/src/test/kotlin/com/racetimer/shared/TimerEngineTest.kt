@@ -317,6 +317,20 @@ class TimerEngineTest {
         val outcome = engine2.restore(BuiltInSequences.club, snap)
         assertEquals(RestoreOutcome.EXPIRED, outcome)
         assertEquals(TimerState.FINISHED, engine2.currentState)
+        assertEquals(0L, engine2.remainingMs)
+    }
+
+    // --- Remaining time once the gun has fired --------------------------------
+
+    @Test fun `remainingMs is zero after the gun fires`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        advanceTo(BuiltInSequences.club.totalMs + 1_000L)
+
+        // Outside RUNNING the getter reports the paused position, which load() had seeded with the
+        // sequence total — so a FINISHED engine used to claim a whole countdown was still to come.
+        assertEquals(TimerState.FINISHED, engine.currentState)
+        assertEquals(0L, engine.remainingMs)
     }
 
     // --- Helper ---------------------------------------------------------------

@@ -93,7 +93,9 @@ data class RaceSequence(
     val name: String,
     val cues: List<SequenceCue>,
 ) {
-    val totalMs: Long get() = cues.maxOfOrNull { it.offsetMs } ?: 0L
+    // Computed once at construction rather than on each read: the idle screen reads this every UI
+    // refresh, and a getter re-scanned all ~30 cues each time to return a value that cannot change.
+    val totalMs: Long = cues.maxOfOrNull { it.offsetMs } ?: 0L
 }
 
 // ---------------------------------------------------------------------------

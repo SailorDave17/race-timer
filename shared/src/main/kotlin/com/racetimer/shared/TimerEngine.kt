@@ -148,12 +148,24 @@ class TimerEngine(
     fun addListener(l: TimerListener) { listeners += l }
     fun removeListener(l: TimerListener) { listeners -= l }
 
+    /**
+     * Rebuild [pendingCues] from [seq] in firing order (largest offset first, gun last).
+     *
+     * [keep] selects the cues that have not yet fired. It defaults to all of them, which is right
+     * whenever the countdown is starting from the top; the two mid-run requeues ([sync] and
+     * [restore]) pass their own predicate, and they deliberately differ at the boundary — see each
+     * call site for why.
+     */
+    private fun queueCues(seq: RaceSequence, keep: (SequenceCue) -> Boolean = { true }) {
+        pendingCues = ArrayDeque(seq.cues.filter(keep).sortedByDescending { it.offsetMs })
+    }
+
     /** Load a sequence and reset the engine to IDLE. */
     fun load(seq: RaceSequence) {
         sequence = seq
         state = TimerState.IDLE
         pausedRemainingMs = seq.totalMs
-        pendingCues = ArrayDeque(seq.cues.sortedByDescending { it.offsetMs })
+        queueCues(seq)
     }
 
     /**
@@ -172,7 +184,7 @@ class TimerEngine(
                 captureClockBaseline()
             }
             TimerState.IDLE, TimerState.FINISHED -> {
-                pendingCues = ArrayDeque(seq.cues.sortedByDescending { it.offsetMs })
+                queueCues(seq)
                 gunTimeMs = clock.elapsedMs() + seq.totalMs
                 state = TimerState.RUNNING
                 captureClockBaseline()
@@ -192,7 +204,7 @@ class TimerEngine(
         val seq = sequence ?: return
         state = TimerState.IDLE
         pausedRemainingMs = seq.totalMs
-        pendingCues = ArrayDeque(seq.cues.sortedByDescending { it.offsetMs })
+        queueCues(seq)
     }
 
     /** Stop without resetting (sequence position lost). */
@@ -245,12 +257,9 @@ class TimerEngine(
         // Re-queue only cues that have NOT already fired. A cue at offset O fires when the countdown
         // reaches O, so anything with O >= the pre-snap remaining is already spent; re-adding it (the
         // old `<= snapped` bug) double-fired a horn whenever a sync rounded up onto a fired boundary.
+        // Strictly `<` for that reason, unlike restore's `<=`: here the boundary cue has fired.
         val seq = sequence ?: return
-        pendingCues = ArrayDeque(
-            seq.cues
-                .filter { it.offsetMs < remaining }
-                .sortedByDescending { it.offsetMs }
-        )
+        queueCues(seq) { it.offsetMs < remaining }
 
         listeners.forEach { it.onSync(snapped) }
     }
@@ -309,6 +318,10 @@ class TimerEngine(
                 listeners.forEach { it.onCue(nextCue) }
                 if (nextCue.isGun) {
                     state = TimerState.FINISHED
+                    // remainingMs reads pausedRemainingMs outside RUNNING, and load() left it at the
+                    // sequence total — so without this the engine reports a full countdown still to
+                    // go the instant the gun fires.
+                    pausedRemainingMs = 0L
                     listeners.forEach { it.onGun() }
                 }
             } else {
@@ -381,14 +394,13 @@ class TimerEngine(
         return when {
             remaining <= 0L -> {
                 state = TimerState.FINISHED
+                pausedRemainingMs = 0L   // see tick(): the gun has fired, nothing is left to run
                 RestoreOutcome.EXPIRED
             }
             else -> {
-                pendingCues = ArrayDeque(
-                    seq.cues
-                        .filter { it.offsetMs <= remaining }
-                        .sortedByDescending { it.offsetMs }
-                )
+                // `<=`, unlike sync's strict `<`: nothing fired while the process was dead, so a cue
+                // sitting exactly on `remaining` is still to come and tick() should sound it at once.
+                queueCues(seq) { it.offsetMs <= remaining }
                 state = TimerState.RUNNING
                 captureClockBaseline()
                 if (sameBoot) RestoreOutcome.EXACT else RestoreOutcome.DEGRADED

@@ -80,10 +80,20 @@ class MainActivity : ComponentActivity() {
     // --- UI refresh handler ---------------------------------------------------
 
     private val uiHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Fallback refresh for the states that emit nothing.
+     *
+     * While a sequence runs, the service's tick loop drives [TimerListener.onTick] on this very
+     * looper — the service shares the activity's process — so the UI takes the countdown from that
+     * callback rather than sampling the engine on a second timer of its own. Idle, finished and
+     * not-yet-bound produce no callbacks, and a Stop or Reset tap has to be picked up somehow, so
+     * this keeps running underneath at a rate suited to state changes rather than to a countdown.
+     */
     private val uiRefreshRunnable = object : Runnable {
         override fun run() {
             refreshUiState()
-            uiHandler.postDelayed(this, UI_REFRESH_MS)
+            uiHandler.postDelayed(this, UI_FALLBACK_REFRESH_MS)
         }
     }
 
@@ -188,8 +198,14 @@ class MainActivity : ComponentActivity() {
 
     private val engineListener = object : TimerListener {
         override fun onCue(cue: SequenceCue) { /* haptics handled in service */ }
-        override fun onGun() { /* state refreshed via ticker */ }
-        override fun onTick(remainingMs: Long) { /* refreshed below */ }
+
+        // The gun is the one transition worth catching the instant it happens rather than on the
+        // next fallback pass: it is what flips the display to "GO!".
+        override fun onGun() = refreshUiState()
+
+        // Drives the countdown while running, at the engine's own cadence and on its thread.
+        override fun onTick(remainingMs: Long) = refreshUiState()
+
         override fun onSync(snappedToMs: Long) {
             val label = "Synced → ${formatCountdown(snappedToMs)}"
             uiSyncLabel = label
@@ -204,6 +220,21 @@ class MainActivity : ComponentActivity() {
 
     // --- State refresh --------------------------------------------------------
 
+    /**
+     * Round [rawMs] up to the whole second the screen actually shows.
+     *
+     * Everything downstream of this value is second-granular: [formatCountdown] rounds up to the
+     * next whole second, and the background-colour and flash thresholds all sit on whole seconds.
+     * Storing raw milliseconds meant the Compose state changed on all 20 engine ticks a second and
+     * recomposed the screen each time to draw a frame identical to the last one.
+     *
+     * Rounding the same way [formatCountdown] does keeps every consumer's output byte-identical —
+     * a threshold on a whole second is crossed by the rounded value at exactly the same instant as
+     * by the raw one — while letting the state change only when the display does.
+     */
+    private fun displayedRemainingMs(rawMs: Long): Long =
+        if (rawMs <= 0L) 0L else ((rawMs + 999L) / 1_000L) * 1_000L
+
     private fun refreshUiState() {
         // Binding uses BIND_AUTO_CREATE, so the service exists well before anything is started -
         // with an engine holding no sequence, whose remainingMs is 0. Showing that made a fresh
@@ -216,7 +247,7 @@ class MainActivity : ComponentActivity() {
             setScreenOn(false)
             return
         }
-        uiRemainingMs = engine.remainingMs
+        uiRemainingMs = displayedRemainingMs(engine.remainingMs)
         uiTimerState = engine.currentState
         // Prompt a re-sync only while a degraded recovery is still running and unconfirmed.
         uiShowResyncPrompt = timerService?.lastRestoreOutcome == RestoreOutcome.DEGRADED &&
@@ -229,7 +260,14 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val NAV_TIMER = "timer"
         private const val NAV_PICKER = "picker"
-        private const val UI_REFRESH_MS = 50L
+        /**
+         * Fallback poll rate; the running countdown comes from onTick, not from this.
+         *
+         * Kept at 100 ms rather than slowed further because a Stop or Reset tap silences the engine
+         * and so has nothing but this to notice it — and past about 100 ms a button stops feeling
+         * like it responded. An idle pass writes no state that changed, so it costs no recomposition.
+         */
+        private const val UI_FALLBACK_REFRESH_MS = 100L
         private const val SYNC_LABEL_DURATION_MS = 2_000L
         private const val MESSAGE_DURATION_MS = 3_000L
     }
