@@ -108,8 +108,8 @@ class TimerEngineTest {
         // Advance past every cue
         advanceTo(BuiltInSequences.club.totalMs + 1_000L)
 
-        // 3 named cues + 1 gun = 4 cues total
-        assertEquals(4, cues.size)
+        // 3 named cues + 5 final-five ticks + 1 gun = 9 cues total
+        assertEquals(9, cues.size)
         assertTrue(gunFired)
     }
 
@@ -138,18 +138,21 @@ class TimerEngineTest {
         assertTrue(gunFired)
     }
 
-    @Test fun `us sailing sequence has 4 cues`() {
+    @Test fun `us sailing sequence has 30 cues`() {
         engine.load(BuiltInSequences.usSailing)
         engine.start()
         advanceTo(BuiltInSequences.usSailing.totalMs + 1_000L)
-        assertEquals(4, cues.size)
+        assertEquals(30, cues.size)
+        // The sync ticks are the ones packed tightest — ten of them at 1-second spacing — so this
+        // is also the check that the engine delivers every one of them rather than coalescing.
+        assertEquals(10, cues.count { it.signal.voice == CueVoice.SYNC })
     }
 
-    @Test fun `scholastic sequence has 13 cues`() {
+    @Test fun `scholastic sequence has 19 cues`() {
         engine.load(BuiltInSequences.scholastic)
         engine.start()
         advanceTo(BuiltInSequences.scholastic.totalMs + 1_000L)
-        assertEquals(13, cues.size)
+        assertEquals(19, cues.size)
     }
 
     // --- Sync -----------------------------------------------------------------
@@ -186,7 +189,7 @@ class TimerEngineTest {
     }
 
     @Test fun `sync rounding up does not re-fire an already-fired cue`() {
-        engine.load(BuiltInSequences.club)  // cues at 3:00, 2:00, 1:00, gun
+        engine.load(BuiltInSequences.club)  // cues at 3:00, 2:00, 1:00, 0:05..0:01, gun
         engine.start()
         // Fire the 3:00 and 2:00 cues by ticking at their boundaries.
         fakeNow = 60_000L

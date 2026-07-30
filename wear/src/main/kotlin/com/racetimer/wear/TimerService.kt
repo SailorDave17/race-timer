@@ -53,6 +53,7 @@ class TimerService : Service() {
 
     val engine = TimerEngine(SystemMonotonicClock)
     private lateinit var haptic: HapticManager
+    private lateinit var tone: ToneManager
     private lateinit var prefs: SharedPreferences
 
     /**
@@ -75,10 +76,21 @@ class TimerService : Service() {
                     handler.postDelayed(this, TICK_INTERVAL_MS)
                     updateOngoingNotification()
                 }
-                else -> stopForegroundAndCleanup()
+                // The gun leaves the engine FINISHED on the same tick it fires, so tearing down
+                // here would cut the gun cue off within one tick of it starting. When onGun has
+                // already scheduled the teardown, let that one run instead.
+                else -> if (!gunTeardownPending) stopForegroundAndCleanup()
             }
         }
     }
+
+    /** How long the cue that fired most recently occupies the wrist and speaker. */
+    private var lastCueDurationMs = 0L
+
+    /** Set while [gunTeardownRunnable] is posted, so the tick loop doesn't tear down ahead of it. */
+    private var gunTeardownPending = false
+
+    private val gunTeardownRunnable = Runnable { stopForegroundAndCleanup() }
 
     // --- Wake lock ------------------------------------------------------------
 
@@ -89,6 +101,7 @@ class TimerService : Service() {
     override fun onCreate() {
         super.onCreate()
         haptic = HapticManager(this)
+        tone = ToneManager(this).also { it.prepare() }
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         engine.addListener(engineListener)
     }
@@ -148,6 +161,7 @@ class TimerService : Service() {
     override fun onDestroy() {
         handler.removeCallbacks(tickRunnable)
         releaseWakeLock()
+        tone.release()
         engine.removeListener(engineListener)
         super.onDestroy()
     }
@@ -202,6 +216,8 @@ class TimerService : Service() {
     }
 
     private fun stopForegroundAndCleanup() {
+        gunTeardownPending = false
+        handler.removeCallbacks(gunTeardownRunnable)
         handler.removeCallbacks(tickRunnable)
         releaseWakeLock()
         clearPersistedState()
@@ -240,13 +256,19 @@ class TimerService : Service() {
 
     private val engineListener = object : TimerListener {
         override fun onCue(cue: SequenceCue) {
+            // Vibration first, always: audio is best-effort and must never gate the haptic.
             haptic.play(cue.signal, isGun = cue.isGun)
+            tone.playCue(cue.signal)
+            lastCueDurationMs = CueTiming.durationMs(cue.signal, isGun = cue.isGun)
         }
 
         override fun onGun() {
-            // Gun fires: additional long haptic already triggered via onCue
-            // Stop the service after a brief delay so the UI can show "GO!"
-            handler.postDelayed({ stopForegroundAndCleanup() }, GUN_LINGER_MS)
+            // Gun fires: the haptic and tone were already triggered via onCue, which runs first.
+            // Hold the service open for the gun cue's own length before the usual "GO!" linger,
+            // rather than a flat constant: the Scholastic gun is a three-second sustained cue and
+            // a hardcoded delay that happens to match it today would cut the next one short.
+            gunTeardownPending = true
+            handler.postDelayed(gunTeardownRunnable, lastCueDurationMs + GUN_LINGER_MS)
         }
 
         override fun onTick(remainingMs: Long) {
@@ -255,6 +277,7 @@ class TimerService : Service() {
 
         override fun onSync(snappedToMs: Long) {
             haptic.playSync()
+            tone.playBeep()
             persistSnapshot()
         }
 
@@ -306,6 +329,8 @@ class TimerService : Service() {
         private const val PREF_CAPTURED_ELAPSED = "captured_elapsed_ms"
 
         private const val TICK_INTERVAL_MS = 50L
+
+        /** Time the UI keeps showing "GO!" *after* the gun cue itself has finished sounding. */
         private const val GUN_LINGER_MS = 3_000L
 
         fun startIntent(context: Context, sequenceId: String): Intent =
