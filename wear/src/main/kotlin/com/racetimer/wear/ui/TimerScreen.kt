@@ -36,6 +36,7 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.formatCountdown
 
 // ---------------------------------------------------------------------------
 // Background colour states
@@ -191,7 +192,7 @@ private fun CountdownText(remainingMs: Long, state: TimerState) {
     val displayText = when {
         isFinished -> "GO!"
         remainingMs <= 0L && state == TimerState.RUNNING -> "GO!"
-        else -> formatMmSs(remainingMs)
+        else -> formatCountdown(remainingMs)
     }
 
     if (isFinalTen) {
@@ -306,15 +307,4 @@ private fun MessageBanner(message: String, modifier: Modifier = Modifier) {
                 .padding(horizontal = 8.dp, vertical = 3.dp),
         )
     }
-}
-
-// ---------------------------------------------------------------------------
-// Formatting helper
-// ---------------------------------------------------------------------------
-
-internal fun formatMmSs(ms: Long): String {
-    val totalSec = (ms / 1_000L).coerceAtLeast(0L)
-    val min = totalSec / 60
-    val sec = totalSec % 60
-    return "%d:%02d".format(min, sec)
 }

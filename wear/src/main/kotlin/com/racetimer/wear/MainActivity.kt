@@ -23,10 +23,10 @@ import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.formatCountdown
 import com.racetimer.wear.ui.RaceTimerTheme
 import com.racetimer.wear.ui.SequencePickerScreen
 import com.racetimer.wear.ui.TimerScreen
-import com.racetimer.wear.ui.formatMmSs
 
 /**
  * Main entry point for the Wear OS Race Timer app.
@@ -191,7 +191,7 @@ class MainActivity : ComponentActivity() {
         override fun onGun() { /* state refreshed via ticker */ }
         override fun onTick(remainingMs: Long) { /* refreshed below */ }
         override fun onSync(snappedToMs: Long) {
-            val label = "Synced → ${formatMmSs(snappedToMs)}"
+            val label = "Synced → ${formatCountdown(snappedToMs)}"
             uiSyncLabel = label
             uiHandler.postDelayed({ uiSyncLabel = null }, SYNC_LABEL_DURATION_MS)
         }
