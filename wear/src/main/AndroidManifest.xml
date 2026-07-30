@@ -13,6 +13,11 @@
 
     <!-- Declare this is a Wear OS app -->
     <uses-feature android:name="android.hardware.type.watch" />
+    <!-- Audible cue alongside the haptic. Optional: speakerless watches stay vibration-only
+         rather than being filtered out of distribution. -->
+    <uses-feature
+        android:name="android.hardware.audio.output"
+        android:required="false" />
 
     <!-- Indicate standalone operation (no phone companion required) -->
     <application

@@ -53,6 +53,7 @@ class TimerService : Service() {
 
     val engine = TimerEngine(SystemMonotonicClock)
     private lateinit var haptic: HapticManager
+    private lateinit var tone: ToneManager
     private lateinit var prefs: SharedPreferences
 
     /**
@@ -89,6 +90,7 @@ class TimerService : Service() {
     override fun onCreate() {
         super.onCreate()
         haptic = HapticManager(this)
+        tone = ToneManager(this).also { it.prepare() }
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         engine.addListener(engineListener)
     }
@@ -148,6 +150,7 @@ class TimerService : Service() {
     override fun onDestroy() {
         handler.removeCallbacks(tickRunnable)
         releaseWakeLock()
+        tone.release()
         engine.removeListener(engineListener)
         super.onDestroy()
     }
@@ -240,7 +243,9 @@ class TimerService : Service() {
 
     private val engineListener = object : TimerListener {
         override fun onCue(cue: SequenceCue) {
+            // Vibration first, always: the beep is best-effort and must never gate the haptic.
             haptic.play(cue.signal, isGun = cue.isGun)
+            tone.playBeep()
         }
 
         override fun onGun() {
@@ -255,6 +260,7 @@ class TimerService : Service() {
 
         override fun onSync(snappedToMs: Long) {
             haptic.playSync()
+            tone.playBeep()
             persistSnapshot()
         }
 
