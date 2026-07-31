@@ -86,12 +86,17 @@ data class SequenceCue(
  * @param name     Display name shown in the UI.
  * @param cues     All cues sorted in *descending* order of [SequenceCue.offsetMs]
  *                 (earliest/largest offset first, gun last).
+ * @param countUpAfterFinish Whether the engine should keep running as an elapsed-time stopwatch
+ *                 once the gun fires, instead of settling into [TimerState.FINISHED] and resetting.
+ *                 For a race committee (as opposed to a sailor), the gun is not the end of the job —
+ *                 it is the moment race duration starts mattering. See [TimerState.COUNTING_UP].
  * @param totalMs  Total countdown duration = the offset of the first cue.
  */
 data class RaceSequence(
     val id: String,
     val name: String,
     val cues: List<SequenceCue>,
+    val countUpAfterFinish: Boolean = false,
 ) {
     // Computed once at construction rather than on each read: the idle screen reads this every UI
     // refresh, and a getter re-scanned all ~30 cues each time to return a value that cannot change.
@@ -251,6 +256,20 @@ object BuiltInSequences {
         ) + finalMinuteTail + sustainedGun,
     )
 
+    // --- Scholastic / ICSA, race-manager variant ---
+    //
+    // Identical cues to [scholastic] — the Race Committee sails the exact sequence they always
+    // have; a second, separately-tuned copy of the same nine-cue structure would only invite the
+    // two to drift apart. The one difference is what happens after the gun: this variant sets
+    // [countUpAfterFinish], so the engine keeps running as a race-time stopwatch instead of
+    // resetting to idle. See [TimerEngine]'s COUNTING_UP state and TimerService.onGun.
+    val scholasticRaceManager: RaceSequence = RaceSequence(
+        id = "scholastic_race_manager",
+        name = "Scholastic - Race Manager",
+        cues = scholastic.cues,
+        countUpAfterFinish = true,
+    )
+
     // --- Club racing 3-2-1-go ---
     //
     // Carries [finalFiveRun] and nothing else below the minute: club has never had a final-minute
@@ -282,7 +301,7 @@ object BuiltInSequences {
     )
 
     /** All built-in sequences in display order. */
-    val all: List<RaceSequence> = listOf(usSailing, scholastic, club)
+    val all: List<RaceSequence> = listOf(usSailing, scholastic, scholasticRaceManager, club)
 
     /** Build a [Custom] sequence from arbitrary duration and intermediate cues. */
     fun custom(

@@ -186,17 +186,46 @@ class RaceSequenceTest {
 
     @Test fun `club's gun is the only one still on the legacy triple-buzz`() {
         // A gun carrying no sustainedMs is what falls through to the triple-buzz branch in
-        // HapticManager. scholastic and usSailing both state their own 3 s; club has taken on the
-        // final five but nothing else, so its gun must keep the behaviour it has today.
+        // HapticManager. scholastic, usSailing and scholasticRaceManager all state their own 3 s
+        // (the last of these by reusing scholastic's own cue list); club has taken on the final
+        // five but nothing else, so its gun must keep the behaviour it has today.
         val sustained = BuiltInSequences.all
             .flatMap { seq -> seq.cues.map { seq to it } }
             .filter { (_, cue) -> cue.signal.sustainedMs > 0L }
         assertEquals(
-            setOf(BuiltInSequences.scholastic.id, BuiltInSequences.usSailing.id),
+            setOf(
+                BuiltInSequences.scholastic.id,
+                BuiltInSequences.usSailing.id,
+                BuiltInSequences.scholasticRaceManager.id,
+            ),
             sustained.map { it.first.id }.toSet(),
         )
         assertTrue("only a gun may be sustained", sustained.all { it.second.isGun })
         assertEquals(0L, BuiltInSequences.club.cues.first { it.isGun }.signal.sustainedMs)
+    }
+
+    // --- Scholastic Race Manager ------------------------------------------------
+
+    @Test fun `scholasticRaceManager shares scholastic's cues exactly`() {
+        // The countdown a race committee sails must not quietly drift from the one a sailor sails —
+        // this asserts identity, not just equal values, so a future edit to one cannot forget the
+        // other.
+        assertSame(BuiltInSequences.scholastic.cues, BuiltInSequences.scholasticRaceManager.cues)
+    }
+
+    @Test fun `scholasticRaceManager is the only sequence that counts up after the gun`() {
+        // Guards against a future sequence quietly opting in (or scholasticRaceManager quietly
+        // losing the flag) the same way `every sequence doubles the last five seconds` guards the
+        // final-five cadence above.
+        val countUp = BuiltInSequences.all.filter { it.countUpAfterFinish }
+        assertEquals(listOf(BuiltInSequences.scholasticRaceManager), countUp)
+    }
+
+    @Test fun `built-in sequences other than scholasticRaceManager do not count up`() {
+        for (seq in BuiltInSequences.all) {
+            if (seq.id == BuiltInSequences.scholasticRaceManager.id) continue
+            assertFalse("${seq.id} should not set countUpAfterFinish", seq.countUpAfterFinish)
+        }
     }
 
     @Test fun `club has 9 cues`() {

@@ -65,6 +65,8 @@ class MainActivity : ComponentActivity() {
     // Seeded with the loaded sequence's full duration: before Start there is no service to bind
     // to, and showing 0:00 made a fresh launch look like a race that had already finished.
     private var uiRemainingMs by mutableStateOf(BuiltInSequences.usSailing.totalMs)
+    // Only meaningful in TimerState.COUNTING_UP; 0 the rest of the time since nothing reads it.
+    private var uiElapsedMs by mutableStateOf(0L)
     private var uiTimerState by mutableStateOf(TimerState.IDLE)
     private var uiSequenceName by mutableStateOf(BuiltInSequences.usSailing.name)
     private var uiSyncLabel by mutableStateOf<String?>(null)
@@ -128,6 +130,7 @@ class MainActivity : ComponentActivity() {
                     wearComposable(NAV_TIMER) {
                         TimerScreen(
                             remainingMs = uiRemainingMs,
+                            elapsedMs = uiElapsedMs,
                             state = uiTimerState,
                             sequenceName = uiSequenceName,
                             syncLabel = uiSyncLabel,
@@ -237,6 +240,15 @@ class MainActivity : ComponentActivity() {
         if (rawMs <= 0L) 0L else ((rawMs + 999L) / 1_000L) * 1_000L
 
     /**
+     * Round [rawMs] *down* to the whole second [formatElapsed] shows, for the same recomposition
+     * reason as [displayedRemainingMs] — but floored rather than ceiled, because elapsed race time
+     * is a stopwatch reading, not a countdown (see [formatElapsed]'s doc for why that direction
+     * matters).
+     */
+    private fun displayedElapsedMs(rawMs: Long): Long =
+        if (rawMs <= 0L) 0L else (rawMs / 1_000L) * 1_000L
+
+    /**
      * Say out loud that a Start did something other than start.
      *
      * Tapping Start can resume a race that survived process death, or discard one whose gun had
@@ -263,13 +275,20 @@ class MainActivity : ComponentActivity() {
         val engine = timerService?.engine
         if (engine == null || engine.loadedSequence == null) {
             uiRemainingMs = selectedSequence.totalMs
+            uiElapsedMs = 0L
             uiTimerState = TimerState.IDLE
             uiShowResyncPrompt = false
             setScreenOn(false)
             return
         }
-        uiRemainingMs = displayedRemainingMs(engine.remainingMs)
         uiTimerState = engine.currentState
+        if (uiTimerState == TimerState.COUNTING_UP) {
+            // remainingMs stays live and negative past the gun (see its doc) — flip the sign
+            // rather than adding a second engine getter for what is the same number the other way.
+            uiElapsedMs = displayedElapsedMs(-engine.remainingMs)
+        } else {
+            uiRemainingMs = displayedRemainingMs(engine.remainingMs)
+        }
         announceRestoreOutcome()
         // Prompt a re-sync only while a degraded recovery is still running and unconfirmed.
         uiShowResyncPrompt = timerService?.lastRestoreOutcome == RestoreOutcome.DEGRADED &&

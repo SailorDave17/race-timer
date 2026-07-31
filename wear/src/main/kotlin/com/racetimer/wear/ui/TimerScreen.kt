@@ -36,6 +36,7 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.formatCountdown
+import com.racetimer.shared.formatElapsed
 
 // ---------------------------------------------------------------------------
 // Background colour states
@@ -63,6 +64,8 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  * Full-screen glanceable countdown for the Wear OS watch.
  *
  * @param remainingMs    Milliseconds until the gun (may be negative after the gun).
+ * @param elapsedMs      Milliseconds since the gun, meaningful only in [TimerState.COUNTING_UP]
+ *                       (a race-manager sequence's elapsed race time; ignored otherwise).
  * @param state          Current [TimerState] of the engine.
  * @param sequenceName   Name of the loaded sequence shown as a small label.
  * @param syncLabel      Non-null for ~2 s after a sync to flash "Synced → X:XX".
@@ -70,13 +73,14 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  *                       is best-effort, so prompt the sailor to tap Sync against the RC flag.
  * @param message        Non-null to show a transient notice/warning banner (e.g. clock jump).
  * @param onStart        Called when the user taps Start.
- * @param onStop         Called when the user taps Stop.
+ * @param onStop         Called when the user taps Stop, or End Race in [TimerState.COUNTING_UP].
  * @param onSync         Called when the user taps Sync.
  * @param onPickSequence Called when the user taps the sequence name to change it (when not running).
  */
 @Composable
 fun TimerScreen(
     remainingMs: Long,
+    elapsedMs: Long = 0L,
     state: TimerState,
     sequenceName: String,
     syncLabel: String?,
@@ -106,8 +110,10 @@ fun TimerScreen(
             modifier = Modifier.padding(8.dp),
         ) {
 
-            // Sequence name label — tappable to change the sequence when not running
-            val canPick = state != TimerState.RUNNING
+            // Sequence name label — tappable to change the sequence when not running (or counting
+            // up: a race-manager race in progress has just as little business swapping sequences
+            // mid-race as a countdown does).
+            val canPick = state != TimerState.RUNNING && state != TimerState.COUNTING_UP
             Text(
                 text = if (canPick) "$sequenceName  ▾" else sequenceName,
                 style = MaterialTheme.typography.caption1,
@@ -130,8 +136,8 @@ fun TimerScreen(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // The big countdown display
-            CountdownText(remainingMs = remainingMs, state = state)
+            // The big countdown / elapsed-time display
+            CountdownText(remainingMs = remainingMs, elapsedMs = elapsedMs, state = state)
 
             Spacer(modifier = Modifier.height(4.dp))
 
@@ -165,6 +171,12 @@ fun TimerScreen(
                         SecondaryButton(label = "Stop", onClick = onStop)
                     }
                 }
+                // Sync doesn't apply once the gun has fired — there is no committee flag left to
+                // snap to — so this is the one control left, and it takes the wide layout the way
+                // Start does rather than the small paired-button one RUNNING uses.
+                TimerState.COUNTING_UP -> {
+                    EndRaceButton(onClick = onStop)
+                }
             }
         }
 
@@ -183,11 +195,13 @@ fun TimerScreen(
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun CountdownText(remainingMs: Long, state: TimerState) {
+private fun CountdownText(remainingMs: Long, elapsedMs: Long, state: TimerState) {
     val isFinalTen = state == TimerState.RUNNING && remainingMs in 1..10_000L
     val isFinished = state == TimerState.FINISHED
+    val isCountingUp = state == TimerState.COUNTING_UP
 
     val displayText = when {
+        isCountingUp -> formatElapsed(elapsedMs)
         isFinished -> "GO!"
         remainingMs <= 0L && state == TimerState.RUNNING -> "GO!"
         else -> formatCountdown(remainingMs)
@@ -211,9 +225,12 @@ private fun CountdownText(remainingMs: Long, state: TimerState) {
         1f
     }
 
+    // Smaller than the countdown's 52 sp: formatElapsed grows an extra "H:" group past an hour,
+    // and sizing for that up front keeps the readout a constant size rather than shrinking the
+    // instant a race crosses the hour mark.
     Text(
         text = displayText,
-        fontSize = 52.sp,
+        fontSize = if (isCountingUp) 40.sp else 52.sp,
         fontWeight = FontWeight.Bold,
         color = Color.White.copy(alpha = alpha),
         textAlign = TextAlign.Center,
@@ -248,6 +265,32 @@ private fun StartButton(onClick: () -> Unit) {
         Text(
             text = "Start",
             fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+/**
+ * The sole control during [TimerState.COUNTING_UP], sized like [StartButton] for the same reason:
+ * it is the only thing in the column, so it can take the wide layout the RUNNING screen's paired
+ * Sync/Stop buttons can't.
+ */
+@Composable
+private fun EndRaceButton(onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth(0.68f)
+            .height(56.dp),
+        colors = ButtonDefaults.buttonColors(
+            backgroundColor = BG_FINAL_TEN,
+            contentColor = Color.White,
+        ),
+    ) {
+        Text(
+            text = "End Race",
+            fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )

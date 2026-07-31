@@ -62,6 +62,13 @@ enum class TimerState {
     PAUSED,
     /** Sequence complete — gun has fired. */
     FINISHED,
+    /**
+     * Gun has fired for a [RaceSequence.countUpAfterFinish] sequence: the engine keeps running,
+     * anchored to the same gun time, as an elapsed-time stopwatch instead of settling into
+     * [FINISHED]. Ends only when [TimerEngine.stop] is called — there is no automatic teardown,
+     * because unlike a sailor's countdown a race committee's job is not done when the gun fires.
+     */
+    COUNTING_UP,
 }
 
 // ---------------------------------------------------------------------------
@@ -138,9 +145,16 @@ class TimerEngine(
     val currentState: TimerState get() = state
     val loadedSequence: RaceSequence? get() = sequence
 
-    /** Remaining milliseconds to the gun; 0 once finished; negative after the gun. */
+    /**
+     * Remaining milliseconds to the gun; 0 once finished; negative after the gun.
+     *
+     * Stays live (computed from [gunTimeMs], not a stored snapshot) throughout [TimerState.COUNTING_UP]
+     * too, so it keeps counting further negative after the gun rather than freezing at 0 — the
+     * elapsed race time a caller wants is simply `-remainingMs` in that state.
+     */
     val remainingMs: Long
-        get() = if (state == TimerState.RUNNING) gunTimeMs - clock.elapsedMs()
+        get() = if (state == TimerState.RUNNING || state == TimerState.COUNTING_UP)
+            gunTimeMs - clock.elapsedMs()
         else pausedRemainingMs
 
     private var pausedRemainingMs: Long = 0L
@@ -176,7 +190,9 @@ class TimerEngine(
     fun start() {
         val seq = sequence ?: return
         when (state) {
-            TimerState.RUNNING -> return
+            // COUNTING_UP alongside RUNNING: both are an active run already under way, and Start
+            // has nothing to do to either — a race committee mid-race doesn't get a second gun.
+            TimerState.RUNNING, TimerState.COUNTING_UP -> return
             TimerState.PAUSED -> {
                 // Re-anchor gun time to now + remaining
                 gunTimeMs = clock.elapsedMs() + pausedRemainingMs
@@ -207,9 +223,15 @@ class TimerEngine(
         queueCues(seq)
     }
 
-    /** Stop without resetting (sequence position lost). */
+    /**
+     * Stop without resetting (sequence position lost).
+     *
+     * Also how a [TimerState.COUNTING_UP] race ends: there is no separate "end race" call, because
+     * ending a race manager's stopwatch and abandoning a sailor's countdown mid-run are the same
+     * action from the engine's point of view — both give up the current run and return to IDLE.
+     */
     fun stop() {
-        if (state == TimerState.RUNNING || state == TimerState.PAUSED) {
+        if (state == TimerState.RUNNING || state == TimerState.PAUSED || state == TimerState.COUNTING_UP) {
             state = TimerState.IDLE
         }
     }
@@ -304,7 +326,10 @@ class TimerEngine(
      * Fires any pending cues whose time has arrived and notifies the UI listener.
      */
     fun tick() {
-        if (state != TimerState.RUNNING) return
+        // COUNTING_UP included: there are no pendingCues left to fire by the time the engine
+        // reaches it (the gun was the last one), but onTick below still needs driving so the
+        // elapsed-time display keeps refreshing.
+        if (state != TimerState.RUNNING && state != TimerState.COUNTING_UP) return
 
         val now = clock.elapsedMs()
         val remaining = gunTimeMs - now
@@ -317,11 +342,18 @@ class TimerEngine(
                 pendingCues.removeFirst()
                 listeners.forEach { it.onCue(nextCue) }
                 if (nextCue.isGun) {
-                    state = TimerState.FINISHED
-                    // remainingMs reads pausedRemainingMs outside RUNNING, and load() left it at the
-                    // sequence total — so without this the engine reports a full countdown still to
-                    // go the instant the gun fires.
-                    pausedRemainingMs = 0L
+                    if (sequence?.countUpAfterFinish == true) {
+                        // The race is not over — it is starting. remainingMs stays on the live
+                        // gunTimeMs formula (see its getter), so nothing needs freezing here the
+                        // way FINISHED's pausedRemainingMs does below.
+                        state = TimerState.COUNTING_UP
+                    } else {
+                        state = TimerState.FINISHED
+                        // remainingMs reads pausedRemainingMs outside RUNNING/COUNTING_UP, and
+                        // load() left it at the sequence total — so without this the engine reports
+                        // a full countdown still to go the instant the gun fires.
+                        pausedRemainingMs = 0L
+                    }
                     listeners.forEach { it.onGun() }
                 }
             } else {
@@ -329,7 +361,7 @@ class TimerEngine(
             }
         }
 
-        if (state == TimerState.RUNNING) {
+        if (state == TimerState.RUNNING || state == TimerState.COUNTING_UP) {
             listeners.forEach { it.onTick(remaining) }
         }
     }
@@ -355,10 +387,15 @@ class TimerEngine(
         val capturedElapsedMs: Long,
     )
 
-    /** Capture the running state for persistence. Returns null unless [TimerState.RUNNING]. */
+    /**
+     * Capture the running state for persistence. Returns null unless [TimerState.RUNNING] or
+     * [TimerState.COUNTING_UP] — the gun anchor doesn't move once the countdown starts, so the same
+     * snapshot taken pre-gun is exactly what [restore] needs to resume a count-up race too; nothing
+     * has to be re-captured when the gun fires.
+     */
     fun snapshot(): Snapshot? {
         val seq = sequence ?: return null
-        if (state != TimerState.RUNNING) return null
+        if (state != TimerState.RUNNING && state != TimerState.COUNTING_UP) return null
         val nowElapsed = clock.elapsedMs()
         val remaining = gunTimeMs - nowElapsed
         return Snapshot(
@@ -378,6 +415,11 @@ class TimerEngine(
      * trusted verbatim — drift-free and immune to NTP steps ([RestoreOutcome.EXACT]). If it has gone
      * backwards, a reboot occurred; the gun is reconstructed from wall-clock as a best effort and the
      * caller is told the recovery is [RestoreOutcome.DEGRADED] so it can prompt a re-sync.
+     *
+     * For a [RaceSequence.countUpAfterFinish] sequence, a gun that already fired while the process
+     * was dead is not [RestoreOutcome.EXPIRED] the way it is for every other sequence — a race
+     * committee's race is still running whether or not the watch was. Restore resumes straight into
+     * [TimerState.COUNTING_UP] on the same gun anchor instead of discarding it.
      */
     fun restore(seq: RaceSequence, snap: Snapshot): RestoreOutcome {
         load(seq)
@@ -392,6 +434,13 @@ class TimerEngine(
 
         val remaining = gunTimeMs - nowElapsed
         return when {
+            remaining <= 0L && seq.countUpAfterFinish -> {
+                // Nothing left to fire — the gun already sounded, dead process or not.
+                queueCues(seq) { false }
+                state = TimerState.COUNTING_UP
+                captureClockBaseline()
+                if (sameBoot) RestoreOutcome.EXACT else RestoreOutcome.DEGRADED
+            }
             remaining <= 0L -> {
                 state = TimerState.FINISHED
                 pausedRemainingMs = 0L   // see tick(): the gun has fired, nothing is left to run
