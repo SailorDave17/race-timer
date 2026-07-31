@@ -7,6 +7,7 @@ A precise, glanceable start-sequence timer for sailboat racing that runs **stand
 ### Timing Sequences
 - **US Sailing 5-4-1-Go** (RRS 26) — 5-min sequence with Warning, Preparatory, One-minute, and Start signals
 - **Scholastic / ICSA** — 3-min sequence with dense horn-blast cues (3L, 2L, 1L+3S, 1L, 3S, 2S, 1S × 6, 1L-Start)
+- **Scholastic — Race Manager** — the same Scholastic/ICSA opening (3L, 2L, 1L+3S, 1L) for the race committee rather than a sailor, but its own cadence below the minute: 3S/2S/1S at 0:30/0:20/0:10, then single ticks at 0:05 through 0:01 (no 0:50/0:40 warnings, nothing between 0:09 and 0:06, and the final five aren't doubled the way a sailor's countdown doubles them). Once the gun fires it doesn't reset: the watch keeps running as an elapsed-time race clock (up to `H:MM:SS`), the screen is free to sleep, and a foreground service keeps timing in the background until **End Race** is tapped.
 - **Club 3-2-1-Go** — simple 3-min club racing sequence
 - **Custom** *(V1.1 — engine implemented and unit-tested, not yet exposed in the watch UI)* — arbitrary duration with configurable intermediate cues
 
@@ -22,7 +23,7 @@ Tap **Sync** at any point during the countdown to snap to the nearest whole minu
 ### Reliability
 - **Monotonic clock** — anchored to `elapsedRealtimeNanos()`, immune to NTP/wall-clock changes
 - **Foreground service + Ongoing Activity** — countdown survives screen-off and app backgrounding
-- **Keep-screen-on** — display stays on for the full sequence; clears the moment the sequence ends
+- **Keep-screen-on** — display stays on for the full countdown; clears the moment the sequence ends, or the moment the gun fires for **Scholastic — Race Manager**, so its elapsed-time count-up can run with the screen asleep
 - **State persistence** — the running gun time is snapshotted to `SharedPreferences`. A killed process is restored **exactly** (the monotonic anchor survives, immune to NTP). After a device restart the timer is recovered best-effort from wall-clock and prompts you to tap **Sync** to confirm against the flag.
 
 ## Project Structure
@@ -90,7 +91,7 @@ race-timer/
 
 | Phase | Features |
 |-------|---------|
-| **MVP (current)** | Standalone Wear OS app — 3 built-in sequences (US Sailing, Scholastic, Club), Sync, haptics, foreground service, keep-screen-on |
+| **MVP (current)** | Standalone Wear OS app — 4 built-in sequences (US Sailing, Scholastic, Scholastic — Race Manager, Club), Sync, haptics, foreground service, keep-screen-on |
 | V1.1 | Custom sequence UI (engine already implemented), named custom presets, round-down sync toggle, mute/haptics settings, Wear Tile + complication |
 | V1.2 | Android phone companion app (sequence picker, config, countdown mirror) |
 | Later | Rolling/chained starts, mic airhorn auto-sync, OCS/recall handling |

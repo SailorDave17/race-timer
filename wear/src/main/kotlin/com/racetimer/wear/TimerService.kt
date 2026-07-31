@@ -24,6 +24,7 @@ import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.formatCountdown
+import com.racetimer.shared.formatElapsed
 
 /**
  * Foreground service that keeps the [TimerEngine] alive while the screen is off or the
@@ -35,7 +36,9 @@ import com.racetimer.shared.formatCountdown
  * - Post an Ongoing Activity notification so the countdown shows on the watch face /
  *   system UI.
  * - Persist the gun wall-clock time so state survives process death.
- * - Clear the wake lock and stop itself when the sequence ends or is stopped.
+ * - Clear the wake lock and stop itself when the sequence ends or is stopped — except a
+ *   [com.racetimer.shared.RaceSequence.countUpAfterFinish] sequence, whose service instead keeps
+ *   running as an elapsed-time stopwatch past the gun (see [engineListener]'s onGun handling).
  */
 class TimerService : Service() {
 
@@ -85,11 +88,23 @@ class TimerService : Service() {
         override fun run() {
             engine.tick()
             when (engine.currentState) {
-                TimerState.RUNNING -> {
+                // COUNTING_UP keeps the same tick loop as RUNNING — a race-manager sequence's job
+                // isn't done at the gun, and the notification still needs updating (with elapsed
+                // time rather than a countdown; see updateOngoingNotification). pollClockAdjustment
+                // is a no-op outside RUNNING, so calling it here unconditionally is harmless.
+                TimerState.RUNNING, TimerState.COUNTING_UP -> {
                     engine.pollClockAdjustment()
                     handler.postDelayed(this, TICK_INTERVAL_MS)
                     updateOngoingNotification()
                 }
+                // The final elapsed time is frozen (see TimerEngine.endRace) and there are no more
+                // cues or ticks to drive anything — just stop rescheduling. Unlike every other
+                // non-running state this is deliberately *not* torn down here: the whole point of
+                // RACE_ENDED is to keep the notification (and the service, and the activity if it's
+                // still open) showing the final time until the race committee taps Done
+                // (ACTION_STOP). The one explicit notification refresh happens in the ACTION_END_RACE
+                // handler below, since this branch itself won't run again to do it.
+                TimerState.RACE_ENDED -> Unit
                 // The gun leaves the engine FINISHED on the same tick it fires, so tearing down
                 // here would cut the gun cue off within one tick of it starting. When onGun has
                 // already scheduled the teardown, let that one run instead.
@@ -178,12 +193,30 @@ class TimerService : Service() {
                 engine.sync()
                 // The intent can land on a service the system created just to deliver it — the app
                 // was killed, or the race has already ended. There is then nothing to sync and no
-                // countdown to hold open, so don't leave a started service sitting idle.
-                if (engine.currentState != TimerState.RUNNING) stopSelf()
+                // countdown to hold open, so don't leave a started service sitting idle. COUNTING_UP
+                // and RACE_ENDED are excepted: unlike FINISHED/IDLE there *is* something to hold open
+                // in either — an active race, or its just-frozen summary — even though the current UI
+                // never actually sends ACTION_SYNC once the gun has fired (no Sync button is shown
+                // past RUNNING; see TimerScreen).
+                if (engine.currentState != TimerState.RUNNING &&
+                    engine.currentState != TimerState.COUNTING_UP &&
+                    engine.currentState != TimerState.RACE_ENDED
+                ) {
+                    stopSelf()
+                }
+            }
+            ACTION_END_RACE -> {
+                // Freezes the elapsed time and moves to RACE_ENDED (see TimerEngine.endRace) rather
+                // than tearing down — the whole point is to leave the final time on screen for the
+                // race committee to read. The tick loop's RACE_ENDED branch won't post this update
+                // itself (it never runs again after this call), so do it once here.
+                engine.endRace()
+                updateOngoingNotification()
             }
             ACTION_STOP -> {
-                // Also the way out of a restored race the sailor did not want: Stop clears the
-                // snapshot, so the next Start runs the sequence from the top rather than resuming.
+                // Also the way out of a restored race the sailor did not want, or a RACE_ENDED
+                // summary the race committee is done reading: Stop clears the snapshot, so the next
+                // Start runs the sequence from the top rather than resuming.
                 engine.stop()
                 clearPersistedState()
                 stopForegroundAndCleanup()
@@ -218,8 +251,22 @@ class TimerService : Service() {
         )
     }
 
+    /**
+     * The countdown text pre-gun, or the elapsed race time once [TimerState.COUNTING_UP] or
+     * [TimerState.RACE_ENDED] (live in the former, frozen in the latter — `engine.remainingMs`
+     * already reads as frozen there, see its doc) — the one place that distinction is made, so
+     * [startForegroundWithNotification] and [updateOngoingNotification] (and a restore straight
+     * into COUNTING_UP) can't render it two different ways.
+     */
+    private fun currentDisplayText(): String =
+        if (engine.currentState == TimerState.COUNTING_UP || engine.currentState == TimerState.RACE_ENDED) {
+            formatElapsed(-engine.remainingMs)
+        } else {
+            formatCountdown(engine.remainingMs)
+        }
+
     private fun startForegroundWithNotification() {
-        val displayText = formatCountdown(engine.remainingMs)
+        val displayText = currentDisplayText()
         postedNotificationText = displayText
         startForeground(RaceTimerApplication.TIMER_NOTIFICATION_ID, buildNotification(displayText))
     }
@@ -234,7 +281,7 @@ class TimerService : Service() {
      * throttled by the framework regardless.
      */
     private fun updateOngoingNotification() {
-        val displayText = formatCountdown(engine.remainingMs)
+        val displayText = currentDisplayText()
         if (displayText == postedNotificationText) return
         postedNotificationText = displayText
         val nm = getSystemService(NotificationManager::class.java)
@@ -325,11 +372,24 @@ class TimerService : Service() {
 
         override fun onGun() {
             // Gun fires: the haptic and tone were already triggered via onCue, which runs first.
-            // Hold the service open for the gun cue's own length before the usual "GO!" linger,
-            // rather than a flat constant: the Scholastic gun is a three-second sustained cue and
-            // a hardcoded delay that happens to match it today would cut the next one short.
-            gunTeardownPending = true
-            handler.postDelayed(gunTeardownRunnable, lastCueDurationMs + GUN_LINGER_MS)
+            if (engine.loadedSequence?.countUpAfterFinish == true) {
+                // Race-manager mode: the engine has moved straight to COUNTING_UP (see
+                // TimerEngine.tick()) rather than FINISHED, so there is no teardown to schedule —
+                // the service keeps ticking indefinitely until the race committee taps End Race
+                // (ACTION_END_RACE, which freezes the time into RACE_ENDED rather than tearing down;
+                // Done/ACTION_STOP is the actual teardown after that). Elapsed time is read from the
+                // monotonic gun anchor on every tick, not accumulated, so it stays correct regardless
+                // of how coarsely Doze defers this handler once the screen sleeps — the wake lock's
+                // job was to hold cue timing steady through the countdown, and there are no more
+                // cues left to protect, so release it and let the watch sleep.
+                releaseWakeLock()
+            } else {
+                // Hold the service open for the gun cue's own length before the usual "GO!" linger,
+                // rather than a flat constant: the Scholastic gun is a three-second sustained cue and
+                // a hardcoded delay that happens to match it today would cut the next one short.
+                gunTeardownPending = true
+                handler.postDelayed(gunTeardownRunnable, lastCueDurationMs + GUN_LINGER_MS)
+            }
         }
 
         override fun onTick(remainingMs: Long) {
@@ -380,6 +440,7 @@ class TimerService : Service() {
         const val ACTION_START = "com.racetimer.wear.ACTION_START"
         const val ACTION_SYNC = "com.racetimer.wear.ACTION_SYNC"
         const val ACTION_STOP = "com.racetimer.wear.ACTION_STOP"
+        const val ACTION_END_RACE = "com.racetimer.wear.ACTION_END_RACE"
         const val EXTRA_SEQUENCE_ID = "sequence_id"
 
         private const val PREFS_NAME = "race_timer_state"
@@ -405,6 +466,8 @@ class TimerService : Service() {
         fun syncIntent(context: Context): Intent =
             Intent(context, TimerService::class.java).apply { action = ACTION_SYNC }
 
+        fun endRaceIntent(context: Context): Intent =
+            Intent(context, TimerService::class.java).apply { action = ACTION_END_RACE }
 
         fun stopIntent(context: Context): Intent =
             Intent(context, TimerService::class.java).apply { action = ACTION_STOP }

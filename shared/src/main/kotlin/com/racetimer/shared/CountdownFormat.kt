@@ -26,3 +26,24 @@ fun formatCountdown(remainingMs: Long): String {
     val sec = totalSec % 60
     return "%d:%02d".format(min, sec)
 }
+
+/**
+ * Format [elapsedMs] as `M:SS`, or `H:MM:SS` once the elapsed time reaches an hour, for a race's
+ * elapsed time — [TimerState.COUNTING_UP]'s display.
+ *
+ * A stopwatch rounds *down*, the opposite of [formatCountdown]: at 59 980 ms elapsed, "0:59" have
+ * genuinely elapsed and "1:00" has not, so claiming it would be the same premature-second bug
+ * [formatCountdown]'s doc describes, just in the other direction. Unlike a start countdown — which
+ * this codebase's built-in sequences cap under six minutes — a race can run for hours, so minutes
+ * alone would roll over silently past 99; the hour digit is added once it is needed rather than
+ * always, so the common case stays as short as [formatCountdown]'s.
+ *
+ * Non-positive input formats as `0:00`.
+ */
+fun formatElapsed(elapsedMs: Long): String {
+    val totalSec = if (elapsedMs <= 0L) 0L else elapsedMs / 1_000L
+    val hours = totalSec / 3_600
+    val min = (totalSec % 3_600) / 60
+    val sec = totalSec % 60
+    return if (hours > 0L) "%d:%02d:%02d".format(hours, min, sec) else "%d:%02d".format(min, sec)
+}
