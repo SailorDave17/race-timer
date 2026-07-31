@@ -7,7 +7,7 @@ A precise, glanceable start-sequence timer for sailboat racing that runs **stand
 ### Timing Sequences
 - **US Sailing 5-4-1-Go** (RRS 26) — 5-min sequence with Warning, Preparatory, One-minute, and Start signals
 - **Scholastic / ICSA** — 3-min sequence with dense horn-blast cues (3L, 2L, 1L+3S, 1L, 3S, 2S, 1S × 6, 1L-Start)
-- **Scholastic — Race Manager** — the same Scholastic/ICSA countdown, for the race committee rather than a sailor. Once the gun fires it doesn't reset: the watch keeps running as an elapsed-time race clock (up to `H:MM:SS`), the screen is free to sleep, and a foreground service keeps timing in the background until **End Race** is tapped.
+- **Scholastic — Race Manager** — the same Scholastic/ICSA opening (3L, 2L, 1L+3S, 1L) for the race committee rather than a sailor, but its own cadence below the minute: 3S/2S/1S at 0:30/0:20/0:10, then single ticks at 0:05 through 0:01 (no 0:50/0:40 warnings, nothing between 0:09 and 0:06, and the final five aren't doubled the way a sailor's countdown doubles them). Once the gun fires it doesn't reset: the watch keeps running as an elapsed-time race clock (up to `H:MM:SS`), the screen is free to sleep, and a foreground service keeps timing in the background until **End Race** is tapped.
 - **Club 3-2-1-Go** — simple 3-min club racing sequence
 - **Custom** *(V1.1 — engine implemented and unit-tested, not yet exposed in the watch UI)* — arbitrary duration with configurable intermediate cues
 

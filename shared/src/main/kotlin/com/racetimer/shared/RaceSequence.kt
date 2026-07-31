@@ -179,6 +179,63 @@ object BuiltInSequences {
     )
 
     /**
+     * The Scholastic/ICSA sequence's head, 3:00 through 1:00 — the ICSA blast pattern the race
+     * committee actually sounds, and identical for every variant built on it.
+     *
+     * Extracted so [scholastic] and [scholasticRaceManager] cannot drift apart on the part they are
+     * supposed to share; only their tails differ (the race-manager variant uses its own cadence
+     * below the minute, [raceManagerTail], rather than [finalMinuteTail]).
+     */
+    private val scholasticHead: List<SequenceCue> = listOf(
+        SequenceCue(
+            offsetMs = 3 * 60_000L,
+            signal = SignalPattern(longBlasts = 3, label = "3 long"),
+        ),
+        SequenceCue(
+            offsetMs = 2 * 60_000L,
+            signal = SignalPattern(longBlasts = 2, label = "2 long"),
+        ),
+        SequenceCue(
+            offsetMs = 90_000L, // 1:30
+            signal = SignalPattern(longBlasts = 1, shortBlasts = 3, label = "1 long 3 short"),
+        ),
+        SequenceCue(
+            offsetMs = 1 * 60_000L,
+            signal = SignalPattern(longBlasts = 1, label = "1 long"),
+        ),
+    )
+
+    /**
+     * The race-manager tail below the minute: 0:30/0:20/0:10 descending, then single ticks at
+     * 0:05 through 0:01.
+     *
+     * Deliberately its own cadence, not [finalMinuteTail] — no 0:50/0:40 warning ticks, nothing
+     * between 0:09 and 0:06, and the final five are single ticks rather than [finalFiveRun]'s
+     * doubled pair. A race manager is tracking the committee's own countdown by ear, not
+     * cross-checking their own watch against it the way a sailor's final five is for, so the
+     * doubled-pulse "phase change" signal that cadence exists for doesn't apply here.
+     */
+    private val raceManagerTail: List<SequenceCue> = listOf(
+        SequenceCue(
+            offsetMs = 30_000L,
+            signal = SignalPattern(shortBlasts = 3, label = "3 short"),
+        ),
+        SequenceCue(
+            offsetMs = 20_000L,
+            signal = SignalPattern(shortBlasts = 2, label = "2 short"),
+        ),
+        SequenceCue(
+            offsetMs = 10_000L,
+            signal = SignalPattern(shortBlasts = 1, label = "1 short"),
+        ),
+    ) + (5 downTo 1).map { sec ->
+        SequenceCue(
+            offsetMs = sec * 1_000L,
+            signal = SignalPattern(shortBlasts = 1, label = "1 short"),
+        )
+    }
+
+    /**
      * Five one-per-second ticks running *into* the signal at [signalOffsetMs] — 5, 4, 3, 2, 1.
      *
      * These are not signals and must not be heard as ones, so they carry [CueVoice.SYNC]. Their job
@@ -236,37 +293,20 @@ object BuiltInSequences {
     val scholastic: RaceSequence = RaceSequence(
         id = "scholastic",
         name = "Scholastic (ICSA)",
-        cues = listOf(
-            SequenceCue(
-                offsetMs = 3 * 60_000L,
-                signal = SignalPattern(longBlasts = 3, label = "3 long"),
-            ),
-            SequenceCue(
-                offsetMs = 2 * 60_000L,
-                signal = SignalPattern(longBlasts = 2, label = "2 long"),
-            ),
-            SequenceCue(
-                offsetMs = 90_000L, // 1:30
-                signal = SignalPattern(longBlasts = 1, shortBlasts = 3, label = "1 long 3 short"),
-            ),
-            SequenceCue(
-                offsetMs = 1 * 60_000L,
-                signal = SignalPattern(longBlasts = 1, label = "1 long"),
-            ),
-        ) + finalMinuteTail + sustainedGun,
+        cues = scholasticHead + finalMinuteTail + sustainedGun,
     )
 
     // --- Scholastic / ICSA, race-manager variant ---
     //
-    // Identical cues to [scholastic] — the Race Committee sails the exact sequence they always
-    // have; a second, separately-tuned copy of the same nine-cue structure would only invite the
-    // two to drift apart. The one difference is what happens after the gun: this variant sets
-    // [countUpAfterFinish], so the engine keeps running as a race-time stopwatch instead of
-    // resetting to idle. See [TimerEngine]'s COUNTING_UP state and TimerService.onGun.
+    // Shares [scholasticHead] with [scholastic] — the Race Committee sails the same 3:00-to-1:00
+    // opening either way — but takes its own cadence below the minute ([raceManagerTail], not
+    // [finalMinuteTail]) and sets [countUpAfterFinish], so the engine keeps running as a race-time
+    // stopwatch after the gun instead of resetting to idle. See [TimerEngine]'s COUNTING_UP state
+    // and TimerService.onGun.
     val scholasticRaceManager: RaceSequence = RaceSequence(
         id = "scholastic_race_manager",
         name = "Scholastic - Race Manager",
-        cues = scholastic.cues,
+        cues = scholasticHead + raceManagerTail + sustainedGun,
         countUpAfterFinish = true,
     )
 
