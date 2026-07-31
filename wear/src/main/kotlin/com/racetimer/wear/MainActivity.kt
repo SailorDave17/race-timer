@@ -33,7 +33,8 @@ import com.racetimer.wear.ui.TimerScreen
  *
  * Responsibilities:
  * - Bind to [TimerService] so the countdown keeps running when the app is backgrounded.
- * - Keep the screen on while a sequence is running (FLAG_KEEP_SCREEN_ON).
+ * - Keep the screen on while a sequence is running, and while a just-ended race-manager summary is
+ *   on screen (FLAG_KEEP_SCREEN_ON).
  * - Drive the Compose UI by polling the engine state every [UI_REFRESH_MS].
  * - Handle Start / Sync / Stop actions by dispatching to the service.
  */
@@ -139,6 +140,7 @@ class MainActivity : ComponentActivity() {
                             onStart = { handleStart() },
                             onStop = { handleStop() },
                             onSync = { handleSync() },
+                            onEndRace = { handleEndRace() },
                             onPickSequence = { navController.navigate(NAV_PICKER) },
                         )
                     }
@@ -186,6 +188,10 @@ class MainActivity : ComponentActivity() {
 
     private fun handleStop() {
         startService(TimerService.stopIntent(this))
+    }
+
+    private fun handleEndRace() {
+        startService(TimerService.endRaceIntent(this))
     }
 
     private fun handleSync() {
@@ -282,9 +288,11 @@ class MainActivity : ComponentActivity() {
             return
         }
         uiTimerState = engine.currentState
-        if (uiTimerState == TimerState.COUNTING_UP) {
+        if (uiTimerState == TimerState.COUNTING_UP || uiTimerState == TimerState.RACE_ENDED) {
             // remainingMs stays live and negative past the gun (see its doc) — flip the sign
             // rather than adding a second engine getter for what is the same number the other way.
+            // In RACE_ENDED that value is frozen (see TimerEngine.endRace), so this keeps reading
+            // the same final elapsed time on every poll rather than needing its own held-value state.
             uiElapsedMs = displayedElapsedMs(-engine.remainingMs)
         } else {
             uiRemainingMs = displayedRemainingMs(engine.remainingMs)
@@ -294,8 +302,13 @@ class MainActivity : ComponentActivity() {
         uiShowResyncPrompt = timerService?.lastRestoreOutcome == RestoreOutcome.DEGRADED &&
             engine.currentState == TimerState.RUNNING &&
             !resyncAcknowledged
-        // Manage keep-screen-on
-        setScreenOn(engine.currentState == TimerState.RUNNING)
+        // Manage keep-screen-on. RACE_ENDED is included alongside RUNNING: the whole point of that
+        // state is to hold the final race time up for the race committee to read, and letting the
+        // screen sleep the instant they tap End Race would defeat it. Unlike RUNNING this has no
+        // wake-lock backing it (see TimerService.onGun — released at the gun, on purpose), so it
+        // only holds the screen while the activity itself is in the foreground; backgrounding still
+        // lets it sleep, same as it always could between taps.
+        setScreenOn(engine.currentState == TimerState.RUNNING || engine.currentState == TimerState.RACE_ENDED)
     }
 
     companion object {

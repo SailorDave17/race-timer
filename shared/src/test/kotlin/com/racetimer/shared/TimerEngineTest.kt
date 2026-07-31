@@ -391,6 +391,91 @@ class TimerEngineTest {
         assertNotNull(engine.snapshot())
     }
 
+    // --- End Race / RACE_ENDED ---------------------------------------------------
+
+    @Test fun `endRace freezes elapsed time and moves to RACE_ENDED`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        fakeNow += 45_000L  // 45s into the race
+
+        engine.endRace()
+        assertEquals(TimerState.RACE_ENDED, engine.currentState)
+        assertEquals(-45_000L, engine.remainingMs)
+    }
+
+    @Test fun `remainingMs stays frozen during RACE_ENDED even as time passes`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        fakeNow += 45_000L
+        engine.endRace()
+
+        val frozen = engine.remainingMs
+        fakeNow += 60_000L  // a minute passes while the summary is on screen
+        assertEquals("elapsed time must not keep advancing once frozen", frozen, engine.remainingMs)
+    }
+
+    @Test fun `endRace is a no-op outside COUNTING_UP`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        // Still RUNNING — the gun hasn't fired yet.
+        engine.endRace()
+        assertEquals(TimerState.RUNNING, engine.currentState)
+    }
+
+    @Test fun `endRace is a no-op from IDLE`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.endRace()
+        assertEquals(TimerState.IDLE, engine.currentState)
+    }
+
+    @Test fun `stop dismisses a RACE_ENDED summary back to IDLE`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        engine.endRace()
+        assertEquals(TimerState.RACE_ENDED, engine.currentState)
+
+        engine.stop()
+        assertEquals(TimerState.IDLE, engine.currentState)
+    }
+
+    @Test fun `tick is a no-op during RACE_ENDED`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        engine.endRace()
+        val ticksAtEnd = ticks.size
+
+        fakeNow += 5_000L
+        engine.tick()
+        assertEquals("RACE_ENDED has nothing left to tick for", ticksAtEnd, ticks.size)
+    }
+
+    @Test fun `snapshot returns null during RACE_ENDED - not worth persisting`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        engine.endRace()
+        assertNull(engine.snapshot())
+    }
+
+    @Test fun `dismissing RACE_ENDED via stop shows the full duration again, not 0-00`() {
+        // Regression: stop() left pausedRemainingMs on endRace()'s frozen (negative) elapsed value,
+        // so the idle screen right after Done read "0:00" (remainingMs clamps negative to that)
+        // instead of the sequence's full countdown, ready for the next race.
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        fakeNow += 45_000L
+        engine.endRace()
+
+        engine.stop()
+        assertEquals(TimerState.IDLE, engine.currentState)
+        assertEquals(BuiltInSequences.scholasticRaceManager.totalMs, engine.remainingMs)
+    }
+
     @Test fun `restore after the gun resumes COUNTING_UP for a count-up sequence, not EXPIRED`() {
         engine.load(BuiltInSequences.scholasticRaceManager)
         engine.start()

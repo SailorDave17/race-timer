@@ -49,7 +49,9 @@ private val BG_FINISHED = Color(0xFF005000)    // dark green — gun fired
 
 /** Pick the background colour for the given [remainingMs] and [state]. */
 private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = when {
-    state == TimerState.FINISHED -> BG_FINISHED
+    // Both read as "this run is complete" — RACE_ENDED is a race committee's equivalent of the
+    // gun having fired, just held open for review instead of lingering for a few seconds.
+    state == TimerState.FINISHED || state == TimerState.RACE_ENDED -> BG_FINISHED
     state != TimerState.RUNNING  -> BG_NORMAL
     remainingMs <= 10_000L       -> BG_FINAL_TEN
     remainingMs <= 60_000L       -> BG_ONE_MINUTE
@@ -64,8 +66,8 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  * Full-screen glanceable countdown for the Wear OS watch.
  *
  * @param remainingMs    Milliseconds until the gun (may be negative after the gun).
- * @param elapsedMs      Milliseconds since the gun, meaningful only in [TimerState.COUNTING_UP]
- *                       (a race-manager sequence's elapsed race time; ignored otherwise).
+ * @param elapsedMs      Milliseconds since the gun — live in [TimerState.COUNTING_UP], frozen at
+ *                       the final race time in [TimerState.RACE_ENDED]; ignored otherwise.
  * @param state          Current [TimerState] of the engine.
  * @param sequenceName   Name of the loaded sequence shown as a small label.
  * @param syncLabel      Non-null for ~2 s after a sync to flash "Synced → X:XX".
@@ -73,8 +75,9 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  *                       is best-effort, so prompt the sailor to tap Sync against the RC flag.
  * @param message        Non-null to show a transient notice/warning banner (e.g. clock jump).
  * @param onStart        Called when the user taps Start.
- * @param onStop         Called when the user taps Stop, or End Race in [TimerState.COUNTING_UP].
+ * @param onStop         Called when the user taps Stop, or Done in [TimerState.RACE_ENDED].
  * @param onSync         Called when the user taps Sync.
+ * @param onEndRace      Called when the user taps End Race in [TimerState.COUNTING_UP].
  * @param onPickSequence Called when the user taps the sequence name to change it (when not running).
  */
 @Composable
@@ -89,6 +92,7 @@ fun TimerScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onSync: () -> Unit,
+    onEndRace: () -> Unit = {},
     onPickSequence: () -> Unit = {},
 ) {
     val targetBg = backgroundColorFor(remainingMs, state)
@@ -110,10 +114,11 @@ fun TimerScreen(
             modifier = Modifier.padding(8.dp),
         ) {
 
-            // Sequence name label — tappable to change the sequence when not running (or counting
-            // up: a race-manager race in progress has just as little business swapping sequences
-            // mid-race as a countdown does).
-            val canPick = state != TimerState.RUNNING && state != TimerState.COUNTING_UP
+            // Sequence name label — tappable to change the sequence when not running, counting up,
+            // or reviewing a just-ended race: none of those have any business swapping sequences.
+            val canPick = state != TimerState.RUNNING &&
+                state != TimerState.COUNTING_UP &&
+                state != TimerState.RACE_ENDED
             Text(
                 text = if (canPick) "$sequenceName  ▾" else sequenceName,
                 style = MaterialTheme.typography.caption1,
@@ -175,7 +180,13 @@ fun TimerScreen(
                 // snap to — so this is the one control left, and it takes the wide layout the way
                 // Start does rather than the small paired-button one RUNNING uses.
                 TimerState.COUNTING_UP -> {
-                    EndRaceButton(onClick = onStop)
+                    EndRaceButton(onClick = onEndRace)
+                }
+                // The final time is on screen to be read, not acted on — Done is the only control,
+                // and deliberately not styled like End Race's alarm-red: there is nothing left to
+                // warn about here, just a way to move on once the race committee is ready to.
+                TimerState.RACE_ENDED -> {
+                    DoneButton(onClick = onStop)
                 }
             }
         }
@@ -198,10 +209,12 @@ fun TimerScreen(
 private fun CountdownText(remainingMs: Long, elapsedMs: Long, state: TimerState) {
     val isFinalTen = state == TimerState.RUNNING && remainingMs in 1..10_000L
     val isFinished = state == TimerState.FINISHED
-    val isCountingUp = state == TimerState.COUNTING_UP
+    // Same elapsed-time display in both: live while COUNTING_UP, frozen once RACE_ENDED (elapsedMs
+    // itself carries that distinction — see the frozen-getter note on TimerEngine.remainingMs).
+    val showsElapsed = state == TimerState.COUNTING_UP || state == TimerState.RACE_ENDED
 
     val displayText = when {
-        isCountingUp -> formatElapsed(elapsedMs)
+        showsElapsed -> formatElapsed(elapsedMs)
         isFinished -> "GO!"
         remainingMs <= 0L && state == TimerState.RUNNING -> "GO!"
         else -> formatCountdown(remainingMs)
@@ -230,7 +243,7 @@ private fun CountdownText(remainingMs: Long, elapsedMs: Long, state: TimerState)
     // instant a race crosses the hour mark.
     Text(
         text = displayText,
-        fontSize = if (isCountingUp) 40.sp else 52.sp,
+        fontSize = if (showsElapsed) 40.sp else 52.sp,
         fontWeight = FontWeight.Bold,
         color = Color.White.copy(alpha = alpha),
         textAlign = TextAlign.Center,
@@ -291,6 +304,33 @@ private fun EndRaceButton(onClick: () -> Unit) {
         Text(
             text = "End Race",
             fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+/**
+ * The sole control during [TimerState.RACE_ENDED], sized like [StartButton] and [EndRaceButton]
+ * for the same "only thing in the column" reason. Uses [StartButton]'s yellow rather than a new
+ * colour: tapping Done is a step back toward Start, not a warning, and the background is already
+ * carrying the "this run is complete" signal (see [backgroundColorFor]).
+ */
+@Composable
+private fun DoneButton(onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth(0.68f)
+            .height(56.dp),
+        colors = ButtonDefaults.buttonColors(
+            backgroundColor = Color(0xFFFFD700),
+            contentColor = Color(0xFF1A1A2E),
+        ),
+    ) {
+        Text(
+            text = "Done",
+            fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )

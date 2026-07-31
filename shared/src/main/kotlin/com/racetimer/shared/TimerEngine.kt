@@ -10,7 +10,9 @@
  *  2. Call [start] to begin the countdown.
  *  3. Poll [remainingMs] (or observe via a coroutine loop / Handler) to update the UI.
  *  4. Call [sync] to snap to the nearest whole minute at any time while running.
- *  5. Call [stop] / [reset] to cancel.
+ *  5. Call [stop] / [reset] to cancel. For a [RaceSequence.countUpAfterFinish] sequence, call
+ *     [endRace] once the gun has fired to freeze the elapsed time for review, then [stop] to
+ *     dismiss it.
  *
  * The engine is deliberately pure (no Android UI dependencies) so it can be unit-tested
  * without a device.  The [clock] parameter lets tests inject a fake clock.
@@ -65,10 +67,17 @@ enum class TimerState {
     /**
      * Gun has fired for a [RaceSequence.countUpAfterFinish] sequence: the engine keeps running,
      * anchored to the same gun time, as an elapsed-time stopwatch instead of settling into
-     * [FINISHED]. Ends only when [TimerEngine.stop] is called — there is no automatic teardown,
-     * because unlike a sailor's countdown a race committee's job is not done when the gun fires.
+     * [FINISHED]. Ends via [TimerEngine.endRace] — there is no automatic teardown, because unlike
+     * a sailor's countdown a race committee's job is not done when the gun fires.
      */
     COUNTING_UP,
+    /**
+     * A [COUNTING_UP] race has been manually ended (see [TimerEngine.endRace]): the final elapsed
+     * time is frozen so the race committee can read it, rather than snapping straight back to
+     * [IDLE] the way ending any other run does. [TimerEngine.stop] moves on to [IDLE] once they're
+     * done looking.
+     */
+    RACE_ENDED,
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +159,9 @@ class TimerEngine(
      *
      * Stays live (computed from [gunTimeMs], not a stored snapshot) throughout [TimerState.COUNTING_UP]
      * too, so it keeps counting further negative after the gun rather than freezing at 0 — the
-     * elapsed race time a caller wants is simply `-remainingMs` in that state.
+     * elapsed race time a caller wants is simply `-remainingMs` in that state. [TimerState.RACE_ENDED]
+     * is the one exception: [endRace] freezes this value at the moment it's called, so a caller reads
+     * the same final elapsed time no matter how much later they ask.
      */
     val remainingMs: Long
         get() = if (state == TimerState.RUNNING || state == TimerState.COUNTING_UP)
@@ -192,7 +203,10 @@ class TimerEngine(
         when (state) {
             // COUNTING_UP alongside RUNNING: both are an active run already under way, and Start
             // has nothing to do to either — a race committee mid-race doesn't get a second gun.
-            TimerState.RUNNING, TimerState.COUNTING_UP -> return
+            // RACE_ENDED too: there is no Start control while a summary is on screen (only Done),
+            // so this only matters defensively — but starting fresh out from under an unread
+            // summary would be a worse surprise than simply doing nothing.
+            TimerState.RUNNING, TimerState.COUNTING_UP, TimerState.RACE_ENDED -> return
             TimerState.PAUSED -> {
                 // Re-anchor gun time to now + remaining
                 gunTimeMs = clock.elapsedMs() + pausedRemainingMs
@@ -226,14 +240,40 @@ class TimerEngine(
     /**
      * Stop without resetting (sequence position lost).
      *
-     * Also how a [TimerState.COUNTING_UP] race ends: there is no separate "end race" call, because
-     * ending a race manager's stopwatch and abandoning a sailor's countdown mid-run are the same
-     * action from the engine's point of view — both give up the current run and return to IDLE.
+     * Also how a [TimerState.RACE_ENDED] summary is dismissed: once the race committee is done
+     * reading the final time, this is the same "give up the current run state, return to IDLE"
+     * action it always is for [TimerState.RUNNING] or [TimerState.PAUSED].
      */
     fun stop() {
-        if (state == TimerState.RUNNING || state == TimerState.PAUSED || state == TimerState.COUNTING_UP) {
+        if (state == TimerState.RUNNING || state == TimerState.PAUSED ||
+            state == TimerState.COUNTING_UP || state == TimerState.RACE_ENDED
+        ) {
             state = TimerState.IDLE
+            // remainingMs reads pausedRemainingMs outside RUNNING/COUNTING_UP (see its getter), and
+            // stopping from RACE_ENDED (or PAUSED) leaves it holding a frozen mid-run value —
+            // endRace()'s elapsed reading, or pause()'s countdown position. Without this, the idle
+            // screen right after dismissing a race summary read "0:00" instead of the sequence's
+            // full duration: Stop should leave the engine ready for a fresh countdown, not stuck
+            // showing the last run's number.
+            sequence?.let { pausedRemainingMs = it.totalMs }
         }
+    }
+
+    /**
+     * End a [TimerState.COUNTING_UP] race: freezes the current elapsed time and moves to
+     * [TimerState.RACE_ENDED] so the final race duration stays on screen for the race committee to
+     * read, rather than [stop] snapping straight back to [TimerState.IDLE]. Call [stop] afterward
+     * (e.g. a "Done" tap) once they're finished reviewing it.
+     *
+     * No-op outside [TimerState.COUNTING_UP] — there is nothing to freeze if a race isn't running.
+     */
+    fun endRace() {
+        if (state != TimerState.COUNTING_UP) return
+        // remainingMs reads pausedRemainingMs outside RUNNING/COUNTING_UP (see its getter) — capture
+        // the live value now so the frozen reading is the elapsed time at the moment of the tap, not
+        // whatever pausedRemainingMs last held (stale, from load()).
+        pausedRemainingMs = gunTimeMs - clock.elapsedMs()
+        state = TimerState.RACE_ENDED
     }
 
     /**
@@ -391,7 +431,9 @@ class TimerEngine(
      * Capture the running state for persistence. Returns null unless [TimerState.RUNNING] or
      * [TimerState.COUNTING_UP] — the gun anchor doesn't move once the countdown starts, so the same
      * snapshot taken pre-gun is exactly what [restore] needs to resume a count-up race too; nothing
-     * has to be re-captured when the gun fires.
+     * has to be re-captured when the gun fires. [TimerState.RACE_ENDED] is deliberately not
+     * snapshotted: it is a brief, dismissible review screen, not state worth surviving process
+     * death for — a restore during that window just comes back to IDLE.
      */
     fun snapshot(): Snapshot? {
         val seq = sequence ?: return null
