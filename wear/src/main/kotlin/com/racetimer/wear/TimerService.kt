@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
@@ -31,7 +32,9 @@ import com.racetimer.shared.formatElapsed
  * app is backgrounded.
  *
  * Responsibilities:
- * - Run the engine's [TimerEngine.tick] loop every TICK_INTERVAL_MS (≈50 ms).
+ * - Drive the engine's [TimerEngine.tick] two ways: on each cue's own boundary via [cueRunnable],
+ *   which is what makes a cue land when it is due, and every TICK_INTERVAL_MS (≈50 ms) via
+ *   [tickRunnable], which refreshes the display and backstops the first.
  * - Keep a [PowerManager.WakeLock] (PARTIAL) so the CPU stays awake for ticks.
  * - Post an Ongoing Activity notification so the countdown shows on the watch face /
  *   system UI.
@@ -87,6 +90,7 @@ class TimerService : Service() {
     private val tickRunnable = object : Runnable {
         override fun run() {
             engine.tick()
+            scheduleNextCue()
             when (engine.currentState) {
                 // COUNTING_UP keeps the same tick loop as RUNNING — a race-manager sequence's job
                 // isn't done at the gun, and the notification still needs updating (with elapsed
@@ -111,6 +115,24 @@ class TimerService : Service() {
                 else -> if (!gunTeardownPending) stopForegroundAndCleanup()
             }
         }
+    }
+
+    /**
+     * Wakes the engine exactly when the next cue is due, rather than letting [tickRunnable] find it
+     * on its next poll.
+     *
+     * [tickRunnable] alone put every cue up to [TICK_INTERVAL_MS] late, at random — measured on an
+     * SM-R925U (#58), one-second cue spacing came out between 923 and 1096 ms, about half of that
+     * from poll granularity. The countdown itself was never wrong: [TimerEngine] reads a monotonic
+     * anchor, so the cue's *intended* time is exact and only the moment of noticing it was coarse.
+     *
+     * The poll stays, as a backstop and to drive the display. Both paths call [TimerEngine.tick],
+     * which dequeues under its own guard, so whichever arrives first fires the cue and the other
+     * finds nothing to do — there is no double-fire.
+     */
+    private val cueRunnable = Runnable {
+        engine.tick()
+        scheduleNextCue()
     }
 
     /** How long the cue that fired most recently occupies the wrist and speaker. */
@@ -191,6 +213,9 @@ class TimerService : Service() {
             }
             ACTION_SYNC -> {
                 engine.sync()
+                // A snap re-anchors the gun and re-queues the unfired cues, so whatever was armed is
+                // now aimed at the wrong moment.
+                scheduleNextCue()
                 // The intent can land on a service the system created just to deliver it — the app
                 // was killed, or the race has already ended. There is then nothing to sync and no
                 // countdown to hold open, so don't leave a started service sitting idle. COUNTING_UP
@@ -232,6 +257,7 @@ class TimerService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(tickRunnable)
+        handler.removeCallbacks(cueRunnable)
         releaseWakeLock()
         tone.release()
         engine.removeListener(engineListener)
@@ -274,8 +300,10 @@ class TimerService : Service() {
     /**
      * Re-post the ongoing notification, but only when the countdown it renders has actually changed.
      *
-     * The tick loop runs at [TICK_INTERVAL_MS] because cues need that resolution; the notification
-     * shows M:SS, which yields one new value per second. Posting on every tick meant roughly 6 000
+     * The tick loop runs at [TICK_INTERVAL_MS] — no longer because cues need that resolution, since
+     * [cueRunnable] now lands each cue on its own boundary, but because it drives the display and
+     * backstops a missed wake-up. The notification shows M:SS, which yields one new value per
+     * second. Posting on every tick meant roughly 6 000
      * binder round-trips to NotificationManagerService per race with 19 of every 20 re-rendering a
      * string identical to the one already on screen — and a package enqueueing at that rate gets
      * throttled by the framework regardless.
@@ -322,6 +350,7 @@ class TimerService : Service() {
         gunTeardownPending = false
         handler.removeCallbacks(gunTeardownRunnable)
         handler.removeCallbacks(tickRunnable)
+        handler.removeCallbacks(cueRunnable)
         releaseWakeLock()
         clearPersistedState()
         postedNotificationText = null
@@ -358,6 +387,26 @@ class TimerService : Service() {
     private fun scheduleTickLoop() {
         handler.removeCallbacks(tickRunnable)
         handler.post(tickRunnable)
+    }
+
+    /**
+     * (Re)arm [cueRunnable] for the next cue boundary. Safe to call redundantly.
+     *
+     * Must run after anything that moves the queue or the anchor — a start, a [TimerEngine.sync]
+     * re-queue, a restore, or a tick that fired something — because all of those change which cue is
+     * next and when. [TimerEngine.msUntilNextCue] returns null once there is nothing left, which
+     * leaves nothing armed.
+     *
+     * The conversion is monotonic-to-uptime and the two clocks diverge in deep sleep, where
+     * `elapsedRealtime` keeps counting and `uptimeMillis` does not. That is safe here for the same
+     * reason [tickRunnable]'s `postDelayed` already was: the countdown holds a partial wake lock, so
+     * the device is not suspending while cues are pending. If one were ever missed anyway, the poll
+     * still catches it on its next pass — which is the other reason to keep the poll.
+     */
+    private fun scheduleNextCue() {
+        handler.removeCallbacks(cueRunnable)
+        val dueInMs = engine.msUntilNextCue() ?: return
+        handler.postAtTime(cueRunnable, SystemClock.uptimeMillis() + dueInMs.coerceAtLeast(0L))
     }
 
     // --- Engine listener ------------------------------------------------------

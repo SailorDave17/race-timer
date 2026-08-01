@@ -507,6 +507,100 @@ class TimerEngineTest {
         assertEquals(TimerState.IDLE, engine2.currentState)
     }
 
+    // --- Cue scheduling (msUntilNextCue) --------------------------------------
+    //
+    // These back TimerService.scheduleNextCue, which exists so a cue lands on its boundary instead
+    // of being found by the next poll. A wrong answer here is a cue fired at the wrong time, which
+    // is the one thing this app cannot get wrong — so the boundary cases get their own tests.
+
+    @Test fun `msUntilNextCue is null before the countdown starts`() {
+        engine.load(BuiltInSequences.usSailing)
+        assertNull(engine.msUntilNextCue())
+    }
+
+    @Test fun `msUntilNextCue counts down to the first cue`() {
+        val seq = BuiltInSequences.usSailing
+        engine.load(seq)
+        engine.start()
+
+        // The first cue sits at the top of the sequence, so it is due immediately.
+        assertEquals(0L, engine.msUntilNextCue())
+
+        // Once it has fired, the next one is the sync run into 4:00 — five ticks ahead of it.
+        engine.tick()
+        val next = engine.msUntilNextCue()!!
+        assertTrue("Expected a positive wait, was $next", next > 0L)
+        assertEquals(seq.totalMs - (4 * 60_000L + 5_000L), next)
+    }
+
+    @Test fun `msUntilNextCue goes negative rather than clamping when a cue is overdue`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        engine.tick()                     // clear the cue due at t=0
+
+        val dueIn = engine.msUntilNextCue()!!
+        fakeNow += dueIn + 250L           // sleep straight past the next boundary
+
+        // The caller clamps; the engine reports the truth, so a late wake-up is visible rather than
+        // looking like a cue that is due right now.
+        assertEquals(-250L, engine.msUntilNextCue())
+    }
+
+    @Test fun `waiting msUntilNextCue then ticking fires the cue, and not before`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        engine.tick()                     // clear the cue due at t=0
+        cues.clear()
+
+        val wait = engine.msUntilNextCue()!!
+
+        fakeNow += wait - 1L
+        engine.tick()
+        assertTrue("Cue fired 1 ms early", cues.isEmpty())
+
+        fakeNow += 1L
+        engine.tick()
+        assertEquals(1, cues.size)
+    }
+
+    @Test fun `msUntilNextCue re-anchors after a sync`() {
+        engine.load(BuiltInSequences.scholastic)
+        engine.start()
+        engine.tick()                     // clear the cue due at t=0
+        cues.clear()
+
+        fakeNow += 40_000L                // 2:20 remaining; snaps down to 2:00
+        engine.sync()
+
+        // Snapping onto 2:00 puts the 2:00 cue exactly on the boundary, so it is due at once. The
+        // pre-sync answer was 60 s out against the old anchor — a caller that did not re-read after
+        // the sync would sit on that stale wait and sound the cue 40 s late.
+        assertEquals(0L, engine.msUntilNextCue())
+        engine.tick()
+        assertEquals(1, cues.size)
+    }
+
+    @Test fun `msUntilNextCue is null once the gun has fired`() {
+        val seq = BuiltInSequences.usSailing
+        engine.load(seq)
+        engine.start()
+        advanceTo(seq.totalMs + 1_000L)
+
+        assertTrue("Expected the gun to have fired", gunFired)
+        assertNull(engine.msUntilNextCue())
+    }
+
+    @Test fun `msUntilNextCue is null while paused`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        engine.tick()
+        engine.pause()
+
+        // Nothing should be armed against a countdown that is not running — the anchor is stale and
+        // scheduling on it would fire a cue during the pause.
+        assertNull(engine.msUntilNextCue())
+    }
+
     // --- Helper ---------------------------------------------------------------
 
     /** Advance fake clock in 100 ms steps, calling tick() each step. */

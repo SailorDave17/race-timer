@@ -27,7 +27,22 @@ internal object CueTiming {
     /** Sound and buzz time of one short blast. */
     const val SHORT_ON = 150L
 
-    /** Silence after a short blast. */
+    /**
+     * Silence after a short blast.
+     *
+     * Both this and [LONG_OFF] were widened during #58 — to 250 and 400 — while `3 short` and
+     * `3 long` were reported running together, and then put back once the real cause was found: the
+     * audio output closing between blasts and charging a ~54 ms restart to whichever one followed a
+     * close (see [ToneManager]'s keep-alive generator). The cues were uneven, not tight, and widening
+     * the gap was treating the symptom.
+     *
+     * Worth knowing before reaching for this again: it cannot be widened far. The doubled ticks of
+     * the final five seconds are `2 short` cues one second apart, and they only carry their meaning
+     * while the gap *inside* a pair stays clearly shorter than the gap *between* pairs — that change
+     * of shape is the whole message of the last five seconds. The two gaps work out at
+     * `SHORT_OFF - 10` and `690 - SHORT_OFF`, so they converge around 350 and the last five seconds
+     * collapse into ten evenly-spaced beeps.
+     */
     const val SHORT_OFF = 150L
 
     /**

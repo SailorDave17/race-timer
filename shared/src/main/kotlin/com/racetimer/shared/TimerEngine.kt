@@ -362,8 +362,34 @@ class TimerEngine(
     }
 
     /**
-     * Must be called periodically (e.g. every 100 ms from a coroutine or Handler).
+     * Milliseconds until the next pending cue is due, or null when there is nothing left to fire.
+     *
+     * Exists so a caller can *schedule* [tick] against a cue boundary rather than discovering the
+     * boundary by polling. Polling costs a cue up to one poll interval of lateness, at random, on
+     * every cue: measured on an SM-R925U (#58), cue-to-cue spacing that should have been 1000 ms
+     * came out anywhere from 923 to 1096 ms, and roughly half of that spread is the 50 ms poll
+     * granularity alone. Cue timing is the whole product here — a sailor starts on it — so the
+     * boundary is worth hitting exactly rather than within a poll.
+     *
+     * The value may be zero or negative when a cue is already due; a caller scheduling on it should
+     * clamp rather than treat that as an error. Callers must re-read it after anything that changes
+     * the queue or the anchor — [start], [sync], [restore], and each [tick] that fires something.
+     *
+     * Deliberately does *not* make the engine self-scheduling: it stays pure and clock-injected so
+     * it can be tested without a device, and the caller keeps ownership of its own looper.
+     */
+    fun msUntilNextCue(): Long? {
+        if (state != TimerState.RUNNING) return null
+        val next = pendingCues.firstOrNull() ?: return null
+        return (gunTimeMs - next.offsetMs) - clock.elapsedMs()
+    }
+
+    /**
      * Fires any pending cues whose time has arrived and notifies the UI listener.
+     *
+     * Drive this from [msUntilNextCue] so each cue lands on its boundary. A periodic call is still
+     * worth keeping alongside that as a backstop — it is what refreshes the display, and it recovers
+     * the cue if a scheduled wake-up is ever missed — but it must not be the only thing firing cues.
      */
     fun tick() {
         // COUNTING_UP included: there are no pendingCues left to fire by the time the engine
