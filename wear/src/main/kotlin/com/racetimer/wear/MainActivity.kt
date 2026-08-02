@@ -25,7 +25,9 @@ import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.discardedOnStartRemainingMs
+import com.racetimer.shared.forcesMaxBrightness
 import com.racetimer.shared.formatCountdown
+import com.racetimer.shared.keepsScreenOn
 import com.racetimer.shared.resumeOfferRemainingMs
 import com.racetimer.wear.ui.CustomDurationScreen
 import com.racetimer.wear.ui.DEFAULT_CUSTOM_MINUTES
@@ -39,7 +41,8 @@ import com.racetimer.wear.ui.TimerScreen
  * Responsibilities:
  * - Bind to [TimerService] so the countdown keeps running when the app is backgrounded.
  * - Keep the screen on while a sequence is running, and while a just-ended race-manager summary is
- *   on screen (FLAG_KEEP_SCREEN_ON).
+ *   on screen (FLAG_KEEP_SCREEN_ON), and drive the panel to full brightness for the states that need
+ *   to be readable in direct sunlight. Both rules live in `shared/` — see [applyDisplayPolicy].
  * - Drive the Compose UI by polling the engine state every [UI_REFRESH_MS].
  * - Handle Start / Sync / Stop actions by dispatching to the service.
  */
@@ -168,9 +171,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // --- Keep-screen-on management --------------------------------------------
+    // --- Display management ----------------------------------------------------
 
     private var screenOnActive = false
+    private var maxBrightnessActive = false
+
+    /**
+     * Apply both display rules for [state] together, from the one place that knows the state.
+     *
+     * They are separate rules — [keepsScreenOn] and [forcesMaxBrightness] disagree on
+     * [TimerState.FINISHED], deliberately — but they must never be applied at different moments or
+     * from different branches, which is why they are read here rather than at two call sites.
+     */
+    private fun applyDisplayPolicy(state: TimerState) {
+        setScreenOn(keepsScreenOn(state))
+        setMaxBrightness(forcesMaxBrightness(state))
+    }
 
     private fun setScreenOn(on: Boolean) {
         if (on == screenOnActive) return
@@ -179,6 +195,33 @@ class MainActivity : ComponentActivity() {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    /**
+     * Drive the panel to maximum brightness, or hand it back to the system (#65).
+     *
+     * A **window** override (`WindowManager.LayoutParams.screenBrightness`), not the system setting.
+     * That choice is the whole of AC 2 and AC 3: the alternative — writing
+     * `Settings.System.SCREEN_BRIGHTNESS` — needs `WRITE_SETTINGS`, changes the watch globally, and
+     * leaves it pinned bright if this process dies mid-race, so "restore the previous brightness"
+     * would become a promise the app cannot keep. A window override has nothing to restore. It applies
+     * only while this window is the visible one and evaporates with the activity, so the system's own
+     * brightness — whatever the sailor or the ambient sensor had it at — is untouched throughout and is
+     * simply back in charge the moment [BRIGHTNESS_OVERRIDE_NONE] is set here.
+     *
+     * Mirrors [setScreenOn] down to the idempotence guard: both are window state, both are scoped to
+     * the foreground, and neither needs undoing in `onStop`.
+     */
+    private fun setMaxBrightness(on: Boolean) {
+        if (on == maxBrightnessActive) return
+        maxBrightnessActive = on
+        window.attributes = window.attributes.apply {
+            screenBrightness = if (on) {
+                WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL
+            } else {
+                WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
         }
     }
 
@@ -559,7 +602,9 @@ class MainActivity : ComponentActivity() {
             // Suppressed once the sailor has answered: they have committed, the race is already being
             // discarded, and a warning about it is no longer something they can act on.
             uiDiscardWarning = if (resumeAnswered) null else discardWarning()
-            setScreenOn(false)
+            // Every way a sequence ends — Stop, the post-gun teardown, Done — lands here, so this is
+            // also the single point at which the brightness override is handed back (#65 AC 3).
+            applyDisplayPolicy(TimerState.IDLE)
             return
         }
         // A race the engine is actually running outranks a saved one: it has already been answered.
@@ -579,13 +624,10 @@ class MainActivity : ComponentActivity() {
         uiShowResyncPrompt = timerService?.lastRestoreOutcome == RestoreOutcome.DEGRADED &&
             engine.currentState == TimerState.RUNNING &&
             !resyncAcknowledged
-        // Manage keep-screen-on. RACE_ENDED is included alongside RUNNING: the whole point of that
-        // state is to hold the final race time up for the race committee to read, and letting the
-        // screen sleep the instant they tap End Race would defeat it. Unlike RUNNING this has no
-        // wake-lock backing it (see TimerService.onGun — released at the gun, on purpose), so it
-        // only holds the screen while the activity itself is in the foreground; backgrounding still
-        // lets it sleep, same as it always could between taps.
-        setScreenOn(engine.currentState == TimerState.RUNNING || engine.currentState == TimerState.RACE_ENDED)
+        // Keep-screen-on and the max-brightness override, both keyed off the engine state. The rules
+        // and the reasoning behind each state now live in `shared/ScreenPolicy.kt`, where the JVM
+        // suite can assert them — including the one state the two rules deliberately disagree on.
+        applyDisplayPolicy(engine.currentState)
     }
 
     companion object {
