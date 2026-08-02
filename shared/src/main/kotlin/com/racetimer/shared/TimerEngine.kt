@@ -494,11 +494,7 @@ class TimerEngine(
         val nowElapsed = clock.elapsedMs()
         val sameBoot = nowElapsed >= snap.capturedElapsedMs
 
-        gunTimeMs = if (sameBoot) {
-            snap.gunElapsedMs                              // exact: monotonic domain intact
-        } else {
-            nowElapsed + (snap.gunWallMs - wallClock.nowMs())  // degraded: wall-clock reconstruction
-        }
+        gunTimeMs = gunTimeFromSnapshot(snap, nowElapsed, wallClock.nowMs())
 
         val remaining = gunTimeMs - nowElapsed
         return when {
@@ -525,6 +521,44 @@ class TimerEngine(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Snapshot helpers (pure, testable)
+//
+// Extracted from TimerEngine.restore rather than copied out of it, and called by it, so a caller
+// that wants to know what a snapshot holds *without* committing to it cannot drift from what
+// restoring actually does. The drift would be silent and one-directional: a preview that disagrees
+// with the restore shows a sailor one number and then starts them on another.
+// ---------------------------------------------------------------------------
+
+/**
+ * The monotonic gun time [snap] restores to, given current readings of both clocks.
+ *
+ * Reboot detection is [TimerEngine.restore]'s: `elapsedRealtime` only ever increases within a boot
+ * and resets to zero across one, so a current reading that has not gone backwards proves the
+ * monotonic gun time is still valid — and it is then preferred, because it is immune to the NTP
+ * steps the wall-clock reconstruction is exposed to.
+ */
+fun gunTimeFromSnapshot(snap: TimerEngine.Snapshot, nowElapsedMs: Long, nowWallMs: Long): Long =
+    if (nowElapsedMs >= snap.capturedElapsedMs) {
+        snap.gunElapsedMs                              // exact: monotonic domain intact
+    } else {
+        nowElapsedMs + (snap.gunWallMs - nowWallMs)    // degraded: wall-clock reconstruction
+    }
+
+/**
+ * What [TimerEngine.restore] would put on the clock, computed without restoring anything.
+ *
+ * Lets the pre-start screen offer "Resume" against the number resuming will actually give, rather
+ * than against the sequence's full duration — which is what it used to show, so a saved race read
+ * 8:00 on screen and then resumed at 6:00 the instant it was tapped.
+ *
+ * Negative once the saved gun has passed. That is not automatically a spent race: for a
+ * [RaceSequence.countUpAfterFinish] sequence it is the elapsed race time, negated, and restoring
+ * resumes the count-up (see [TimerEngine.restore]). Callers must decide with the sequence in hand.
+ */
+fun remainingFromSnapshot(snap: TimerEngine.Snapshot, nowElapsedMs: Long, nowWallMs: Long): Long =
+    gunTimeFromSnapshot(snap, nowElapsedMs, nowWallMs) - nowElapsedMs
 
 // ---------------------------------------------------------------------------
 // Sync helper (pure, testable)

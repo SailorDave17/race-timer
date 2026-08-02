@@ -343,48 +343,77 @@ object BuiltInSequences {
     /** All built-in sequences in display order. */
     val all: List<RaceSequence> = listOf(usSailing, scholastic, scholasticRaceManager, club)
 
-    /** Build a [Custom] sequence from arbitrary duration and intermediate cues. */
-    fun custom(
-        totalSeconds: Long,
-        intermediateCueOffsetsSec: List<Long> = listOf(60, 30, 10),
-        name: String = "Custom ${totalSeconds / 60}:${(totalSeconds % 60).toString().padStart(2, '0')}",
-    ): RaceSequence {
-        val cues = mutableListOf<SequenceCue>()
+    // -----------------------------------------------------------------------
+    // Custom sequence
+    // -----------------------------------------------------------------------
 
-        // Start cue (the gun)
-        cues += SequenceCue(
-            offsetMs = 0L,
-            signal = SignalPattern(longBlasts = 1, shortBlasts = 3, label = "Start"),
-            isGun = true,
-        )
+    /** The shortest custom race: one whole minute, which is [finalMinuteTail] and nothing above it. */
+    const val CUSTOM_MIN_MINUTES = 1
 
-        // Intermediate cues
-        intermediateCueOffsetsSec
-            .filter { it in 1 until totalSeconds }
-            .forEach { sec ->
-                val min = sec / 60
-                val s = sec % 60
-                cues += SequenceCue(
-                    offsetMs = sec * 1_000L,
-                    signal = SignalPattern(shortBlasts = 1, label = "${min}:${s.toString().padStart(2, '0')}"),
-                )
-            }
+    private const val CUSTOM_ID_PREFIX = "custom_"
+    private const val CUSTOM_ID_SUFFIX = "m"
 
-        // Final 5-second individual ticks, doubled like every other sequence's. Added after the
-        // intermediate cues so the `distinctBy` below still resolves an offset collision the same way
-        // it always has: a caller-supplied intermediate at 0:05 keeps its own pattern.
-        cues += finalFiveRun.filter { it.offsetMs < totalSeconds * 1_000L }
+    /**
+     * The id a [custom] sequence of [totalMinutes] carries.
+     *
+     * The duration is *inside* the id on purpose: it is the only thing persistence stores about the
+     * chosen sequence (see [TimerEngine.Snapshot.sequenceId]), so encoding the minutes there is what
+     * lets [resolve] rebuild the exact same race after process death. Anything not derivable from
+     * this string cannot survive a kill.
+     */
+    fun customId(totalMinutes: Int): String = "$CUSTOM_ID_PREFIX$totalMinutes$CUSTOM_ID_SUFFIX"
 
-        // Warning cue at the top
-        cues += SequenceCue(
-            offsetMs = totalSeconds * 1_000L,
-            signal = SignalPattern(longBlasts = 1, label = "Start in ${totalSeconds / 60}:${(totalSeconds % 60).toString().padStart(2, '0')}"),
-        )
+    /** The whole-minute duration encoded in [id], or null if [id] is not a well-formed custom id. */
+    fun customMinutes(id: String): Int? {
+        if (!id.startsWith(CUSTOM_ID_PREFIX) || !id.endsWith(CUSTOM_ID_SUFFIX)) return null
+        val minutes = id
+            .substring(CUSTOM_ID_PREFIX.length, id.length - CUSTOM_ID_SUFFIX.length)
+            .toIntOrNull() ?: return null
+        return if (minutes >= CUSTOM_MIN_MINUTES) minutes else null
+    }
 
+    /**
+     * The sequence a persisted [id] names, or null when nothing answers to it.
+     *
+     * Nullable deliberately. The obvious alternative — falling back to a default — is what made a
+     * saved Custom race come back as a US Sailing one: `custom_8m` is not in [all], so a lookup that
+     * substitutes on miss reports success while running the wrong duration and the wrong cues. A null
+     * forces the caller to decide, and to say so on screen (see `docs/message-surface.md`).
+     */
+    fun resolve(id: String): RaceSequence? =
+        all.firstOrNull { it.id == id } ?: customMinutes(id)?.let { custom(it) }
+
+    /**
+     * A race of [totalMinutes] whole minutes, counted down in the Scholastic/ICSA voice.
+     *
+     * One long blast on every whole minute from the top down to and including 1:00, then
+     * [finalMinuteTail] and the [sustainedGun] below it — so the part of the countdown a sailor
+     * actually races to is bit-for-bit the Scholastic tail, and only the length above the minute is
+     * the sailor's own. Nothing here is a new voice: the minute cue is the same `1 long` Scholastic
+     * sounds at 1:00, which is why an unfamiliar duration still sounds like a sequence the sailor
+     * already knows.
+     *
+     * A 1-minute race is therefore one long blast at 1:00, the tail, and the gun — the minimum, and
+     * the reason [CUSTOM_MIN_MINUTES] is 1 rather than 0: below a minute there is no minute cue left
+     * to sound and the tail itself would be truncated.
+     *
+     * [totalMinutes] is clamped rather than rejected. The picker already enforces the minimum, so a
+     * smaller value can only arrive from a malformed persisted id — and on a watch about to time a
+     * race, a one-minute countdown is a better answer than an exception. (That path is guarded too:
+     * [customMinutes] returns null rather than clamping, so [resolve] rejects the id outright.)
+     */
+    fun custom(totalMinutes: Int): RaceSequence {
+        val minutes = totalMinutes.coerceAtLeast(CUSTOM_MIN_MINUTES)
+        val minuteCues = (minutes downTo 1).map { minute ->
+            SequenceCue(
+                offsetMs = minute * 60_000L,
+                signal = SignalPattern(longBlasts = 1, label = "1 long — $minute:00"),
+            )
+        }
         return RaceSequence(
-            id = "custom_${totalSeconds}s",
-            name = name,
-            cues = cues.distinctBy { it.offsetMs }.sortedByDescending { it.offsetMs },
+            id = customId(minutes),
+            name = "Custom $minutes:00",
+            cues = minuteCues + finalMinuteTail + sustainedGun,
         )
     }
 }
