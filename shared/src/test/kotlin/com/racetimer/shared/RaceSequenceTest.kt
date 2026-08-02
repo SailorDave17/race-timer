@@ -186,17 +186,96 @@ class RaceSequenceTest {
 
     @Test fun `club's gun is the only one still on the legacy triple-buzz`() {
         // A gun carrying no sustainedMs is what falls through to the triple-buzz branch in
-        // HapticManager. scholastic and usSailing both state their own 3 s; club has taken on the
-        // final five but nothing else, so its gun must keep the behaviour it has today.
+        // HapticManager. scholastic, usSailing and scholasticRaceManager all state their own 3 s
+        // (the last of these by sharing scholastic's sustainedGun cue); club has taken on the final
+        // five but nothing else, so its gun must keep the behaviour it has today.
         val sustained = BuiltInSequences.all
             .flatMap { seq -> seq.cues.map { seq to it } }
             .filter { (_, cue) -> cue.signal.sustainedMs > 0L }
         assertEquals(
-            setOf(BuiltInSequences.scholastic.id, BuiltInSequences.usSailing.id),
+            setOf(
+                BuiltInSequences.scholastic.id,
+                BuiltInSequences.usSailing.id,
+                BuiltInSequences.scholasticRaceManager.id,
+            ),
             sustained.map { it.first.id }.toSet(),
         )
         assertTrue("only a gun may be sustained", sustained.all { it.second.isGun })
         assertEquals(0L, BuiltInSequences.club.cues.first { it.isGun }.signal.sustainedMs)
+    }
+
+    // --- Scholastic Race Manager ------------------------------------------------
+
+    @Test fun `scholasticRaceManager shares scholastic's head through 1 minute`() {
+        // The 3:00-to-1:00 opening a race committee sails must not quietly drift from a sailor's —
+        // this asserts identity of the shared cues, not just equal values, so a future edit to one
+        // cannot forget the other.
+        val headOffsets = setOf(3 * 60_000L, 2 * 60_000L, 90_000L, 1 * 60_000L)
+        val scholasticHead = BuiltInSequences.scholastic.cues.filter { it.offsetMs in headOffsets }
+        val raceManagerHead = BuiltInSequences.scholasticRaceManager.cues.filter { it.offsetMs in headOffsets }
+        assertEquals(4, scholasticHead.size)
+        for ((a, b) in scholasticHead.zip(raceManagerHead)) {
+            assertSame(a, b)
+        }
+    }
+
+    @Test fun `scholasticRaceManager's tail differs from scholastic's below the minute`() {
+        // The race-manager cadence below 1:00 is deliberately its own — see raceManagerTail's doc in
+        // RaceSequence.kt for why. This is the guard that a future edit to finalMinuteTail (shared by
+        // scholastic and usSailing) doesn't silently start applying here too.
+        fun tailOf(seq: RaceSequence) = seq.cues.filter { it.offsetMs in 1L..59_000L }
+        assertNotEquals(tailOf(BuiltInSequences.scholastic), tailOf(BuiltInSequences.scholasticRaceManager))
+    }
+
+    @Test fun `scholasticRaceManager tail matches the requested race-manager cadence`() {
+        assertPattern(BuiltInSequences.scholasticRaceManager, 30_000L, longBlasts = 0, shortBlasts = 3)
+        assertPattern(BuiltInSequences.scholasticRaceManager, 20_000L, longBlasts = 0, shortBlasts = 2)
+        assertPattern(BuiltInSequences.scholasticRaceManager, 10_000L, longBlasts = 0, shortBlasts = 1)
+        for (sec in 5L downTo 1L) {
+            assertPattern(BuiltInSequences.scholasticRaceManager, sec * 1_000L, longBlasts = 0, shortBlasts = 1)
+        }
+    }
+
+    @Test fun `scholasticRaceManager has no ticks between 0-09 and 0-06, unlike scholastic`() {
+        // Deliberate gap, not an oversight: the requested cadence jumps straight from 0:10 to 0:05.
+        val gap = BuiltInSequences.scholasticRaceManager.cues.filter { it.offsetMs in 6_000L..9_000L }
+        assertEquals(emptyList<SequenceCue>(), gap)
+    }
+
+    @Test fun `scholasticRaceManager has no 0-50 or 0-40 warning ticks, unlike scholastic`() {
+        val warnings = BuiltInSequences.scholasticRaceManager.cues.filter { it.offsetMs in setOf(50_000L, 40_000L) }
+        assertEquals(emptyList<SequenceCue>(), warnings)
+    }
+
+    @Test fun `scholasticRaceManager has 13 cues`() {
+        // 4 head cues (3:00, 2:00, 1:30, 1:00) + 3 (0:30, 0:20, 0:10) + 5 (0:05..0:01) + the gun.
+        assertEquals(13, BuiltInSequences.scholasticRaceManager.cues.size)
+    }
+
+    @Test fun `scholasticRaceManager cues are sorted descending and unique`() {
+        val offsets = BuiltInSequences.scholasticRaceManager.cues.map { it.offsetMs }
+        assertEquals(offsets.sortedDescending(), offsets)
+        assertEquals("no offset may fire twice", offsets.size, offsets.distinct().size)
+    }
+
+    @Test fun `scholasticRaceManager totalMs is still 3 minutes`() {
+        // The tail changed, not the head — the pre-start UI still shows the same 3:00 duration.
+        assertEquals(3 * 60_000L, BuiltInSequences.scholasticRaceManager.totalMs)
+    }
+
+    @Test fun `scholasticRaceManager is the only sequence that counts up after the gun`() {
+        // Guards against a future sequence quietly opting in (or scholasticRaceManager quietly
+        // losing the flag) the same way `every sequence doubles the last five seconds` guards the
+        // final-five cadence above.
+        val countUp = BuiltInSequences.all.filter { it.countUpAfterFinish }
+        assertEquals(listOf(BuiltInSequences.scholasticRaceManager), countUp)
+    }
+
+    @Test fun `built-in sequences other than scholasticRaceManager do not count up`() {
+        for (seq in BuiltInSequences.all) {
+            if (seq.id == BuiltInSequences.scholasticRaceManager.id) continue
+            assertFalse("${seq.id} should not set countUpAfterFinish", seq.countUpAfterFinish)
+        }
     }
 
     @Test fun `club has 9 cues`() {
@@ -230,11 +309,16 @@ class RaceSequenceTest {
         }
     }
 
-    @Test fun `every sequence doubles the last five seconds`() {
+    @Test fun `every sequence doubles the last five seconds, except scholasticRaceManager`() {
         // Iterated over `all` plus a custom rather than asserted per sequence: the point of this
         // cadence is that it is universal, so a sequence added later must not be able to opt out
         // quietly. If a new sequence lands without the final five, this is what should catch it.
-        val sequences = BuiltInSequences.all + BuiltInSequences.custom(totalSeconds = 180L)
+        //
+        // scholasticRaceManager is a deliberate, requested exception — see raceManagerTail's doc in
+        // RaceSequence.kt and `scholasticRaceManager tail matches the requested race-manager cadence`
+        // below, which pins down what it uses instead (single ticks, not doubled).
+        val sequences = (BuiltInSequences.all - BuiltInSequences.scholasticRaceManager) +
+            BuiltInSequences.custom(totalMinutes = 3)
         for (seq in sequences) {
             for (sec in 5L downTo 1L) {
                 val offset = sec * 1_000L
@@ -249,28 +333,107 @@ class RaceSequenceTest {
         }
     }
 
+    // --- Custom sequence ------------------------------------------------------
+
     @Test fun `custom sequence has correct totalMs`() {
-        val seq = BuiltInSequences.custom(totalSeconds = 360L)
-        assertEquals(360_000L, seq.totalMs)
+        val seq = BuiltInSequences.custom(totalMinutes = 6)
+        assertEquals(6 * 60_000L, seq.totalMs)
     }
 
     @Test fun `custom sequence contains gun at 0`() {
-        val seq = BuiltInSequences.custom(totalSeconds = 120L)
+        val seq = BuiltInSequences.custom(totalMinutes = 2)
         assertTrue(seq.cues.any { it.isGun && it.offsetMs == 0L })
     }
 
     @Test fun `custom sequence cues are sorted descending`() {
-        val seq = BuiltInSequences.custom(totalSeconds = 300L)
+        val seq = BuiltInSequences.custom(totalMinutes = 5)
         val offsets = seq.cues.map { it.offsetMs }
         assertEquals(offsets.sortedDescending(), offsets)
     }
 
-    @Test fun `custom sequence excludes intermediate cues outside range`() {
-        // 90s total; intermediate cues at 60, 30, 10 — all within range
-        val seq = BuiltInSequences.custom(totalSeconds = 90L, intermediateCueOffsetsSec = listOf(60, 30, 10))
-        assertTrue(seq.cues.any { it.offsetMs == 60_000L })
-        assertTrue(seq.cues.any { it.offsetMs == 30_000L })
-        assertTrue(seq.cues.any { it.offsetMs == 10_000L })
+    @Test fun `custom sounds one long blast on every whole minute down to 1 00`() {
+        val seq = BuiltInSequences.custom(totalMinutes = 8)
+        for (minute in 8 downTo 1) {
+            assertPattern(seq, minute * 60_000L, longBlasts = 1, shortBlasts = 0)
+        }
+    }
+
+    @Test fun `custom has no cue above its own duration`() {
+        val seq = BuiltInSequences.custom(totalMinutes = 4)
+        assertEquals(4 * 60_000L, seq.cues.maxOf { it.offsetMs })
+    }
+
+    @Test fun `custom below the minute is the scholastic tail, cue for cue`() {
+        // The whole point of the re-spec: below 1:00 a Custom race must be indistinguishable from
+        // Scholastic, so an unfamiliar duration still ends in a cadence the sailor already races to.
+        val custom = BuiltInSequences.custom(totalMinutes = 7).cues.filter { it.offsetMs < 60_000L }
+        val scholastic = BuiltInSequences.scholastic.cues.filter { it.offsetMs < 60_000L }
+        assertEquals(scholastic, custom)
+    }
+
+    @Test fun `custom ends in the sustained gun, not a blast count`() {
+        val gun = BuiltInSequences.custom(totalMinutes = 3).cues.last()
+        assertTrue("last cue must be the gun", gun.isGun)
+        assertEquals(0L, gun.offsetMs)
+        assertEquals(3_000L, gun.signal.sustainedMs)
+        assertEquals(0, gun.signal.longBlasts)
+        assertEquals(0, gun.signal.shortBlasts)
+    }
+
+    @Test fun `a one-minute custom race is one long blast plus the scholastic tail`() {
+        // The documented minimum, spelled out in full rather than by property: 1:00 is the one
+        // duration where the minute cues and the tail meet with nothing in between, so it is the
+        // case most likely to lose or double a cue if the composition changes.
+        val seq = BuiltInSequences.custom(totalMinutes = 1)
+        assertEquals(60_000L, seq.totalMs)
+
+        val expected = listOf(
+            SequenceCue(60_000L, SignalPattern(longBlasts = 1, label = "1 long — 1:00")),
+        ) + BuiltInSequences.scholastic.cues.filter { it.offsetMs < 60_000L }
+        assertEquals(expected, seq.cues)
+    }
+
+    @Test fun `custom clamps to the one-minute minimum rather than throwing`() {
+        // Only reachable from a malformed persisted id — the picker enforces the minimum. A watch
+        // about to time a race is the wrong place to raise.
+        for (minutes in listOf(0, -1, Int.MIN_VALUE)) {
+            val seq = BuiltInSequences.custom(totalMinutes = minutes)
+            assertEquals("custom($minutes)", 60_000L, seq.totalMs)
+            assertEquals("custom($minutes)", BuiltInSequences.customId(1), seq.id)
+        }
+    }
+
+    // --- Resolving a sequence by id (the restore path) ------------------------
+
+    @Test fun `resolve returns every built-in by its own id`() {
+        for (seq in BuiltInSequences.all) {
+            assertSame(seq.id, seq, BuiltInSequences.resolve(seq.id))
+        }
+    }
+
+    @Test fun `resolve rebuilds a custom sequence from its id alone`() {
+        // The restore path in full: the id is the only thing persistence keeps about the chosen
+        // sequence, so if this does not reproduce the race, a killed process cannot come back as
+        // itself. Before this existed the lookup searched `all`, missed, and silently substituted
+        // US Sailing — wrong duration, wrong cues, no error.
+        for (minutes in listOf(1, 2, 8, 45, 120)) {
+            val original = BuiltInSequences.custom(totalMinutes = minutes)
+            val restored = BuiltInSequences.resolve(original.id)
+            assertEquals("custom $minutes restored", original, restored)
+        }
+    }
+
+    @Test fun `resolve returns null rather than substituting for an id nothing answers to`() {
+        for (id in listOf("", "custom_", "custom_m", "custom_0m", "custom_-3m", "custom_8", "custom_8s",
+                          "custom_eightm", "us_sailing", "scholastic_2")) {
+            assertNull("'$id' must not resolve", BuiltInSequences.resolve(id))
+        }
+    }
+
+    @Test fun `custom name and id both carry the chosen duration`() {
+        val seq = BuiltInSequences.custom(totalMinutes = 12)
+        assertEquals("Custom 12:00", seq.name)
+        assertEquals(12, BuiltInSequences.customMinutes(seq.id))
     }
 
     /** Assert the scholastic cue at [offsetMs] is exactly the given blast pattern. */

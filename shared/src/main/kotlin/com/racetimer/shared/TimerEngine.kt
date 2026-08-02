@@ -10,7 +10,9 @@
  *  2. Call [start] to begin the countdown.
  *  3. Poll [remainingMs] (or observe via a coroutine loop / Handler) to update the UI.
  *  4. Call [sync] to snap to the nearest whole minute at any time while running.
- *  5. Call [stop] / [reset] to cancel.
+ *  5. Call [stop] / [reset] to cancel. For a [RaceSequence.countUpAfterFinish] sequence, call
+ *     [endRace] once the gun has fired to freeze the elapsed time for review, then [stop] to
+ *     dismiss it.
  *
  * The engine is deliberately pure (no Android UI dependencies) so it can be unit-tested
  * without a device.  The [clock] parameter lets tests inject a fake clock.
@@ -62,6 +64,20 @@ enum class TimerState {
     PAUSED,
     /** Sequence complete — gun has fired. */
     FINISHED,
+    /**
+     * Gun has fired for a [RaceSequence.countUpAfterFinish] sequence: the engine keeps running,
+     * anchored to the same gun time, as an elapsed-time stopwatch instead of settling into
+     * [FINISHED]. Ends via [TimerEngine.endRace] — there is no automatic teardown, because unlike
+     * a sailor's countdown a race committee's job is not done when the gun fires.
+     */
+    COUNTING_UP,
+    /**
+     * A [COUNTING_UP] race has been manually ended (see [TimerEngine.endRace]): the final elapsed
+     * time is frozen so the race committee can read it, rather than snapping straight back to
+     * [IDLE] the way ending any other run does. [TimerEngine.stop] moves on to [IDLE] once they're
+     * done looking.
+     */
+    RACE_ENDED,
 }
 
 // ---------------------------------------------------------------------------
@@ -138,9 +154,18 @@ class TimerEngine(
     val currentState: TimerState get() = state
     val loadedSequence: RaceSequence? get() = sequence
 
-    /** Remaining milliseconds to the gun; 0 once finished; negative after the gun. */
+    /**
+     * Remaining milliseconds to the gun; 0 once finished; negative after the gun.
+     *
+     * Stays live (computed from [gunTimeMs], not a stored snapshot) throughout [TimerState.COUNTING_UP]
+     * too, so it keeps counting further negative after the gun rather than freezing at 0 — the
+     * elapsed race time a caller wants is simply `-remainingMs` in that state. [TimerState.RACE_ENDED]
+     * is the one exception: [endRace] freezes this value at the moment it's called, so a caller reads
+     * the same final elapsed time no matter how much later they ask.
+     */
     val remainingMs: Long
-        get() = if (state == TimerState.RUNNING) gunTimeMs - clock.elapsedMs()
+        get() = if (state == TimerState.RUNNING || state == TimerState.COUNTING_UP)
+            gunTimeMs - clock.elapsedMs()
         else pausedRemainingMs
 
     private var pausedRemainingMs: Long = 0L
@@ -148,12 +173,24 @@ class TimerEngine(
     fun addListener(l: TimerListener) { listeners += l }
     fun removeListener(l: TimerListener) { listeners -= l }
 
+    /**
+     * Rebuild [pendingCues] from [seq] in firing order (largest offset first, gun last).
+     *
+     * [keep] selects the cues that have not yet fired. It defaults to all of them, which is right
+     * whenever the countdown is starting from the top; the two mid-run requeues ([sync] and
+     * [restore]) pass their own predicate, and they deliberately differ at the boundary — see each
+     * call site for why.
+     */
+    private fun queueCues(seq: RaceSequence, keep: (SequenceCue) -> Boolean = { true }) {
+        pendingCues = ArrayDeque(seq.cues.filter(keep).sortedByDescending { it.offsetMs })
+    }
+
     /** Load a sequence and reset the engine to IDLE. */
     fun load(seq: RaceSequence) {
         sequence = seq
         state = TimerState.IDLE
         pausedRemainingMs = seq.totalMs
-        pendingCues = ArrayDeque(seq.cues.sortedByDescending { it.offsetMs })
+        queueCues(seq)
     }
 
     /**
@@ -164,7 +201,12 @@ class TimerEngine(
     fun start() {
         val seq = sequence ?: return
         when (state) {
-            TimerState.RUNNING -> return
+            // COUNTING_UP alongside RUNNING: both are an active run already under way, and Start
+            // has nothing to do to either — a race committee mid-race doesn't get a second gun.
+            // RACE_ENDED too: there is no Start control while a summary is on screen (only Done),
+            // so this only matters defensively — but starting fresh out from under an unread
+            // summary would be a worse surprise than simply doing nothing.
+            TimerState.RUNNING, TimerState.COUNTING_UP, TimerState.RACE_ENDED -> return
             TimerState.PAUSED -> {
                 // Re-anchor gun time to now + remaining
                 gunTimeMs = clock.elapsedMs() + pausedRemainingMs
@@ -172,7 +214,7 @@ class TimerEngine(
                 captureClockBaseline()
             }
             TimerState.IDLE, TimerState.FINISHED -> {
-                pendingCues = ArrayDeque(seq.cues.sortedByDescending { it.offsetMs })
+                queueCues(seq)
                 gunTimeMs = clock.elapsedMs() + seq.totalMs
                 state = TimerState.RUNNING
                 captureClockBaseline()
@@ -192,14 +234,46 @@ class TimerEngine(
         val seq = sequence ?: return
         state = TimerState.IDLE
         pausedRemainingMs = seq.totalMs
-        pendingCues = ArrayDeque(seq.cues.sortedByDescending { it.offsetMs })
+        queueCues(seq)
     }
 
-    /** Stop without resetting (sequence position lost). */
+    /**
+     * Stop without resetting (sequence position lost).
+     *
+     * Also how a [TimerState.RACE_ENDED] summary is dismissed: once the race committee is done
+     * reading the final time, this is the same "give up the current run state, return to IDLE"
+     * action it always is for [TimerState.RUNNING] or [TimerState.PAUSED].
+     */
     fun stop() {
-        if (state == TimerState.RUNNING || state == TimerState.PAUSED) {
+        if (state == TimerState.RUNNING || state == TimerState.PAUSED ||
+            state == TimerState.COUNTING_UP || state == TimerState.RACE_ENDED
+        ) {
             state = TimerState.IDLE
+            // remainingMs reads pausedRemainingMs outside RUNNING/COUNTING_UP (see its getter), and
+            // stopping from RACE_ENDED (or PAUSED) leaves it holding a frozen mid-run value —
+            // endRace()'s elapsed reading, or pause()'s countdown position. Without this, the idle
+            // screen right after dismissing a race summary read "0:00" instead of the sequence's
+            // full duration: Stop should leave the engine ready for a fresh countdown, not stuck
+            // showing the last run's number.
+            sequence?.let { pausedRemainingMs = it.totalMs }
         }
+    }
+
+    /**
+     * End a [TimerState.COUNTING_UP] race: freezes the current elapsed time and moves to
+     * [TimerState.RACE_ENDED] so the final race duration stays on screen for the race committee to
+     * read, rather than [stop] snapping straight back to [TimerState.IDLE]. Call [stop] afterward
+     * (e.g. a "Done" tap) once they're finished reviewing it.
+     *
+     * No-op outside [TimerState.COUNTING_UP] — there is nothing to freeze if a race isn't running.
+     */
+    fun endRace() {
+        if (state != TimerState.COUNTING_UP) return
+        // remainingMs reads pausedRemainingMs outside RUNNING/COUNTING_UP (see its getter) — capture
+        // the live value now so the frozen reading is the elapsed time at the moment of the tap, not
+        // whatever pausedRemainingMs last held (stale, from load()).
+        pausedRemainingMs = gunTimeMs - clock.elapsedMs()
+        state = TimerState.RACE_ENDED
     }
 
     /**
@@ -245,12 +319,9 @@ class TimerEngine(
         // Re-queue only cues that have NOT already fired. A cue at offset O fires when the countdown
         // reaches O, so anything with O >= the pre-snap remaining is already spent; re-adding it (the
         // old `<= snapped` bug) double-fired a horn whenever a sync rounded up onto a fired boundary.
+        // Strictly `<` for that reason, unlike restore's `<=`: here the boundary cue has fired.
         val seq = sequence ?: return
-        pendingCues = ArrayDeque(
-            seq.cues
-                .filter { it.offsetMs < remaining }
-                .sortedByDescending { it.offsetMs }
-        )
+        queueCues(seq) { it.offsetMs < remaining }
 
         listeners.forEach { it.onSync(snapped) }
     }
@@ -291,11 +362,40 @@ class TimerEngine(
     }
 
     /**
-     * Must be called periodically (e.g. every 100 ms from a coroutine or Handler).
+     * Milliseconds until the next pending cue is due, or null when there is nothing left to fire.
+     *
+     * Exists so a caller can *schedule* [tick] against a cue boundary rather than discovering the
+     * boundary by polling. Polling costs a cue up to one poll interval of lateness, at random, on
+     * every cue: measured on an SM-R925U (#58), cue-to-cue spacing that should have been 1000 ms
+     * came out anywhere from 923 to 1096 ms, and roughly half of that spread is the 50 ms poll
+     * granularity alone. Cue timing is the whole product here — a sailor starts on it — so the
+     * boundary is worth hitting exactly rather than within a poll.
+     *
+     * The value may be zero or negative when a cue is already due; a caller scheduling on it should
+     * clamp rather than treat that as an error. Callers must re-read it after anything that changes
+     * the queue or the anchor — [start], [sync], [restore], and each [tick] that fires something.
+     *
+     * Deliberately does *not* make the engine self-scheduling: it stays pure and clock-injected so
+     * it can be tested without a device, and the caller keeps ownership of its own looper.
+     */
+    fun msUntilNextCue(): Long? {
+        if (state != TimerState.RUNNING) return null
+        val next = pendingCues.firstOrNull() ?: return null
+        return (gunTimeMs - next.offsetMs) - clock.elapsedMs()
+    }
+
+    /**
      * Fires any pending cues whose time has arrived and notifies the UI listener.
+     *
+     * Drive this from [msUntilNextCue] so each cue lands on its boundary. A periodic call is still
+     * worth keeping alongside that as a backstop — it is what refreshes the display, and it recovers
+     * the cue if a scheduled wake-up is ever missed — but it must not be the only thing firing cues.
      */
     fun tick() {
-        if (state != TimerState.RUNNING) return
+        // COUNTING_UP included: there are no pendingCues left to fire by the time the engine
+        // reaches it (the gun was the last one), but onTick below still needs driving so the
+        // elapsed-time display keeps refreshing.
+        if (state != TimerState.RUNNING && state != TimerState.COUNTING_UP) return
 
         val now = clock.elapsedMs()
         val remaining = gunTimeMs - now
@@ -308,7 +408,18 @@ class TimerEngine(
                 pendingCues.removeFirst()
                 listeners.forEach { it.onCue(nextCue) }
                 if (nextCue.isGun) {
-                    state = TimerState.FINISHED
+                    if (sequence?.countUpAfterFinish == true) {
+                        // The race is not over — it is starting. remainingMs stays on the live
+                        // gunTimeMs formula (see its getter), so nothing needs freezing here the
+                        // way FINISHED's pausedRemainingMs does below.
+                        state = TimerState.COUNTING_UP
+                    } else {
+                        state = TimerState.FINISHED
+                        // remainingMs reads pausedRemainingMs outside RUNNING/COUNTING_UP, and
+                        // load() left it at the sequence total — so without this the engine reports
+                        // a full countdown still to go the instant the gun fires.
+                        pausedRemainingMs = 0L
+                    }
                     listeners.forEach { it.onGun() }
                 }
             } else {
@@ -316,7 +427,7 @@ class TimerEngine(
             }
         }
 
-        if (state == TimerState.RUNNING) {
+        if (state == TimerState.RUNNING || state == TimerState.COUNTING_UP) {
             listeners.forEach { it.onTick(remaining) }
         }
     }
@@ -342,10 +453,17 @@ class TimerEngine(
         val capturedElapsedMs: Long,
     )
 
-    /** Capture the running state for persistence. Returns null unless [TimerState.RUNNING]. */
+    /**
+     * Capture the running state for persistence. Returns null unless [TimerState.RUNNING] or
+     * [TimerState.COUNTING_UP] — the gun anchor doesn't move once the countdown starts, so the same
+     * snapshot taken pre-gun is exactly what [restore] needs to resume a count-up race too; nothing
+     * has to be re-captured when the gun fires. [TimerState.RACE_ENDED] is deliberately not
+     * snapshotted: it is a brief, dismissible review screen, not state worth surviving process
+     * death for — a restore during that window just comes back to IDLE.
+     */
     fun snapshot(): Snapshot? {
         val seq = sequence ?: return null
-        if (state != TimerState.RUNNING) return null
+        if (state != TimerState.RUNNING && state != TimerState.COUNTING_UP) return null
         val nowElapsed = clock.elapsedMs()
         val remaining = gunTimeMs - nowElapsed
         return Snapshot(
@@ -365,30 +483,37 @@ class TimerEngine(
      * trusted verbatim — drift-free and immune to NTP steps ([RestoreOutcome.EXACT]). If it has gone
      * backwards, a reboot occurred; the gun is reconstructed from wall-clock as a best effort and the
      * caller is told the recovery is [RestoreOutcome.DEGRADED] so it can prompt a re-sync.
+     *
+     * For a [RaceSequence.countUpAfterFinish] sequence, a gun that already fired while the process
+     * was dead is not [RestoreOutcome.EXPIRED] the way it is for every other sequence — a race
+     * committee's race is still running whether or not the watch was. Restore resumes straight into
+     * [TimerState.COUNTING_UP] on the same gun anchor instead of discarding it.
      */
     fun restore(seq: RaceSequence, snap: Snapshot): RestoreOutcome {
         load(seq)
         val nowElapsed = clock.elapsedMs()
         val sameBoot = nowElapsed >= snap.capturedElapsedMs
 
-        gunTimeMs = if (sameBoot) {
-            snap.gunElapsedMs                              // exact: monotonic domain intact
-        } else {
-            nowElapsed + (snap.gunWallMs - wallClock.nowMs())  // degraded: wall-clock reconstruction
-        }
+        gunTimeMs = gunTimeFromSnapshot(snap, nowElapsed, wallClock.nowMs())
 
         val remaining = gunTimeMs - nowElapsed
         return when {
+            remaining <= 0L && seq.countUpAfterFinish -> {
+                // Nothing left to fire — the gun already sounded, dead process or not.
+                queueCues(seq) { false }
+                state = TimerState.COUNTING_UP
+                captureClockBaseline()
+                if (sameBoot) RestoreOutcome.EXACT else RestoreOutcome.DEGRADED
+            }
             remaining <= 0L -> {
                 state = TimerState.FINISHED
+                pausedRemainingMs = 0L   // see tick(): the gun has fired, nothing is left to run
                 RestoreOutcome.EXPIRED
             }
             else -> {
-                pendingCues = ArrayDeque(
-                    seq.cues
-                        .filter { it.offsetMs <= remaining }
-                        .sortedByDescending { it.offsetMs }
-                )
+                // `<=`, unlike sync's strict `<`: nothing fired while the process was dead, so a cue
+                // sitting exactly on `remaining` is still to come and tick() should sound it at once.
+                queueCues(seq) { it.offsetMs <= remaining }
                 state = TimerState.RUNNING
                 captureClockBaseline()
                 if (sameBoot) RestoreOutcome.EXACT else RestoreOutcome.DEGRADED
@@ -396,6 +521,44 @@ class TimerEngine(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Snapshot helpers (pure, testable)
+//
+// Extracted from TimerEngine.restore rather than copied out of it, and called by it, so a caller
+// that wants to know what a snapshot holds *without* committing to it cannot drift from what
+// restoring actually does. The drift would be silent and one-directional: a preview that disagrees
+// with the restore shows a sailor one number and then starts them on another.
+// ---------------------------------------------------------------------------
+
+/**
+ * The monotonic gun time [snap] restores to, given current readings of both clocks.
+ *
+ * Reboot detection is [TimerEngine.restore]'s: `elapsedRealtime` only ever increases within a boot
+ * and resets to zero across one, so a current reading that has not gone backwards proves the
+ * monotonic gun time is still valid — and it is then preferred, because it is immune to the NTP
+ * steps the wall-clock reconstruction is exposed to.
+ */
+fun gunTimeFromSnapshot(snap: TimerEngine.Snapshot, nowElapsedMs: Long, nowWallMs: Long): Long =
+    if (nowElapsedMs >= snap.capturedElapsedMs) {
+        snap.gunElapsedMs                              // exact: monotonic domain intact
+    } else {
+        nowElapsedMs + (snap.gunWallMs - nowWallMs)    // degraded: wall-clock reconstruction
+    }
+
+/**
+ * What [TimerEngine.restore] would put on the clock, computed without restoring anything.
+ *
+ * Lets the pre-start screen offer "Resume" against the number resuming will actually give, rather
+ * than against the sequence's full duration — which is what it used to show, so a saved race read
+ * 8:00 on screen and then resumed at 6:00 the instant it was tapped.
+ *
+ * Negative once the saved gun has passed. That is not automatically a spent race: for a
+ * [RaceSequence.countUpAfterFinish] sequence it is the elapsed race time, negated, and restoring
+ * resumes the count-up (see [TimerEngine.restore]). Callers must decide with the sequence in hand.
+ */
+fun remainingFromSnapshot(snap: TimerEngine.Snapshot, nowElapsedMs: Long, nowWallMs: Long): Long =
+    gunTimeFromSnapshot(snap, nowElapsedMs, nowWallMs) - nowElapsedMs
 
 // ---------------------------------------------------------------------------
 // Sync helper (pure, testable)
