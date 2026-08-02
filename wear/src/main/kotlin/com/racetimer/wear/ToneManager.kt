@@ -9,6 +9,7 @@ import android.os.HandlerThread
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
+import com.racetimer.shared.CueTiming
 import com.racetimer.shared.CueVoice
 import com.racetimer.shared.SignalPattern
 

@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import com.racetimer.shared.CueTiming
 import com.racetimer.shared.CueVoice
 import com.racetimer.shared.SignalPattern
 

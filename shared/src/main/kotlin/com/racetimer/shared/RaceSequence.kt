@@ -15,7 +15,7 @@ package com.racetimer.shared
  * What a cue is *for*, which decides how it sounds and feels rather than how many blasts it has.
  *
  * [SignalPattern] counts blasts and states durations; it has no way to say "this one is a different
- * kind of thing". The voice is that axis. Both channels read it — see `CueTiming` on the wear side —
+ * kind of thing". The voice is that axis. Both channels read it — see [CueTiming] —
  * so a voice that is easy to pick out by ear is equally easy to pick out by feel, which is the whole
  * point on a watch that may be muted or have no speaker at all.
  */
