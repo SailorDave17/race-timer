@@ -1,5 +1,11 @@
 [versions]
-agp = "8.2.2"
+# 8.6 is the floor for `compileSdk = 35`, which #69 needs before the 2026-08-31 Wear OS
+# target-API deadline. Kotlin stays at 1.9.22 so `composeOptions.kotlinCompilerExtensionVersion`
+# (1.5.8, pinned to exactly this Kotlin) keeps working — see the note on `kotlin` below.
+agp = "8.6.1"
+# Held deliberately. Kotlin 2.x replaces `composeOptions` with the
+# `org.jetbrains.kotlin.plugin.compose` Gradle plugin and switches on K2, which is a real upgrade
+# but a separate one. Stacking it on a deadline-driven AGP bump mixes two failure modes.
 kotlin = "1.9.22"
 coreKtx = "1.12.0"
 composeBom = "2024.02.00"
