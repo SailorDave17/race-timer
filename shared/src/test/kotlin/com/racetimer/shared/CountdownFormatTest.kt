@@ -103,4 +103,35 @@ class CountdownFormatTest {
         assertEquals("0:05", firedAt[5_000L])
         assertEquals("0:01", firedAt[1_000L])
     }
+
+    // --- formatElapsed ----------------------------------------------------------
+
+    @Test fun `elapsed whole seconds format exactly`() {
+        assertEquals("0:00", formatElapsed(0L))
+        assertEquals("0:01", formatElapsed(1_000L))
+        assertEquals("0:30", formatElapsed(30_000L))
+        assertEquals("1:00", formatElapsed(60_000L))
+    }
+
+    @Test fun `partial seconds round down, the opposite of formatCountdown`() {
+        // A stopwatch must not claim a second that has not fully elapsed yet.
+        assertEquals("0:59", formatElapsed(59_999L))
+        assertEquals("0:00", formatElapsed(999L))
+        assertEquals("1:00", formatElapsed(60_001L))
+    }
+
+    @Test fun `non-positive elapsed formats as zero`() {
+        assertEquals("0:00", formatElapsed(-1L))
+        assertEquals("0:00", formatElapsed(-5_000L))
+    }
+
+    @Test fun `minutes roll over to the next hour digit only once an hour has passed`() {
+        assertEquals("59:59", formatElapsed(59 * 60_000L + 59_000L))
+        assertEquals("1:00:00", formatElapsed(60 * 60_000L))
+        assertEquals("1:00:01", formatElapsed(60 * 60_000L + 1_000L))
+    }
+
+    @Test fun `hours accumulate past the first`() {
+        assertEquals("2:05:09", formatElapsed(2 * 3_600_000L + 5 * 60_000L + 9_000L))
+    }
 }

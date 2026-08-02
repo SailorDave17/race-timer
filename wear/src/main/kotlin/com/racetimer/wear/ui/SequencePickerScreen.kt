@@ -22,13 +22,16 @@ import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.RaceSequence
 
 /**
- * Screen that lets the user pick a built-in race sequence before starting.
+ * Screen that lets the user pick a race sequence before starting.
  *
  * @param onSequenceSelected  Called with the chosen [RaceSequence] when the user taps it.
+ * @param onCustomSelected    Called when the user taps Custom, which has no duration yet — it needs
+ *                            [CustomDurationScreen] before there is a sequence to select.
  */
 @Composable
 fun SequencePickerScreen(
     onSequenceSelected: (RaceSequence) -> Unit,
+    onCustomSelected: () -> Unit = {},
 ) {
     ScalingLazyColumn(modifier = Modifier.fillMaxWidth()) {
         item {
@@ -43,13 +46,19 @@ fun SequencePickerScreen(
             )
         }
         items(BuiltInSequences.all) { sequence ->
-            SequenceChip(sequence = sequence, onClick = { onSequenceSelected(sequence) })
+            SequenceChip(label = sequence.name, onClick = { onSequenceSelected(sequence) })
+        }
+        // Last, and the only entry that does not select anything on tap: every other chip names a
+        // sequence that already exists, while this one has to be given a duration first. The
+        // trailing "…" is what says so before the tap rather than after it.
+        item {
+            SequenceChip(label = "Custom…", onClick = onCustomSelected)
         }
     }
 }
 
 @Composable
-private fun SequenceChip(sequence: RaceSequence, onClick: () -> Unit) {
+private fun SequenceChip(label: String, onClick: () -> Unit) {
     Chip(
         modifier = Modifier
             .fillMaxWidth()
@@ -57,7 +66,7 @@ private fun SequenceChip(sequence: RaceSequence, onClick: () -> Unit) {
         onClick = onClick,
         label = {
             Text(
-                text = sequence.name,
+                text = label,
                 fontSize = 13.sp,
                 color = Color.White,
             )

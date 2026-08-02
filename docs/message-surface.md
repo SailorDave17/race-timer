@@ -54,7 +54,7 @@ action (Tier 3).
 
 ## Tier 1 — Transient banner (shipped)
 
-`MessageBanner` in [TimerScreen.kt:293](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L293),
+`MessageBanner` in [TimerScreen.kt:299](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L299),
 driven by the `message: String?` parameter.
 
 | | |
@@ -62,9 +62,9 @@ driven by the `message: String?` parameter.
 | Position | `Alignment.TopCenter` of the root `Box`, 2 dp top padding — outside the centred `Column`, so it cannot push the readout |
 | Type | 11 sp, `TextAlign.Center`, amber `#FFB74D` |
 | Backing | `#CC3A2A00` (80 % opaque dark amber), 8 dp rounded corners, 8 × 3 dp padding |
-| Lifetime | Set `uiMessage`, cleared by `uiHandler.postDelayed` after `MESSAGE_DURATION_MS` = 3 s |
+| Lifetime | `showTransientMessage` sets `uiMessage`; `uiHandler.postDelayed` clears it after `MESSAGE_DURATION_MS` = 3 s |
 | Interaction | None. Not tappable, not dismissible, does not block anything |
-| Consumers | One: `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady" ([MainActivity.kt:199](../wear/src/main/kotlin/com/racetimer/wear/MainActivity.kt#L199)) |
+| Consumers | Three, all via `showTransientMessage` ([MainActivity.kt:217](../wear/src/main/kotlin/com/racetimer/wear/MainActivity.kt#L217)): `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady"; `announceRestoreOutcome` → "Resumed race in progress" (`EXACT`) and "Old race ended — starting fresh" (`EXPIRED`) |
 
 The scrim is what makes this work on all four backgrounds. Computed WCAG contrast for `#FFB74D` on the
 composited banner background:
@@ -90,7 +90,7 @@ before they can follow; that is Tier 3.
 
 **Nothing implements this yet.** There is no permission check, no `POST_NOTIFICATIONS` handling, and no
 foreground-service failure path anywhere in `wear/`; `handleStart` calls `startForegroundService` and
-assumes it works ([MainActivity.kt:169](../wear/src/main/kotlin/com/racetimer/wear/MainActivity.kt#L169)).
+assumes it works ([MainActivity.kt:179](../wear/src/main/kotlin/com/racetimer/wear/MainActivity.kt#L179)).
 The three `catch (e: RuntimeException)` blocks in `ToneManager.kt` swallow tone failures silently. This
 section defines what #13 builds.
 
@@ -117,7 +117,7 @@ occupies, and Start is not on screen to be tapped.
     │   silent               │
     └───────────────────────┘
 
-      [ Settings ]  [ Reset ]     ← Start replaced by the remedy action
+        [ Settings ]              ← Start replaced by the remedy action
 ```
 
 | | |
@@ -128,7 +128,7 @@ occupies, and Start is not on screen to be tapped.
 | Type | `caption1`, amber `#FFB74D`, centre-aligned, **max 3 lines** |
 | Contrast | ≥ 11 : 1 on every background state (computed) — the 90 % scrim makes the background nearly irrelevant |
 | Primary button | Labelled by the **remedy**, not the problem: "Settings", "Grant", "Retry". Never "OK" |
-| Secondary button | Reset stays available |
+| Secondary button | None. The pre-start screen has exactly one control ([#55](https://github.com/SailorDave17/race-timer/issues/55) removed Reset), and the remedy takes its place |
 | Start | **Absent**, not disabled. A greyed Start on a watch invites repeated taps |
 | Dismissal | **None.** Clears only when the precondition passes |
 | Re-check | On `onResume` (returning from a Settings intent) and on tapping the primary button |
@@ -146,7 +146,7 @@ screen turning off) has no usable degraded mode and stays hard-blocked.
 ## Tier 3 — Persistent status line (shipped)
 
 The `showResyncPrompt` line at
-[TimerScreen.kt:123-132](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L123-L132) —
+[TimerScreen.kt:120-129](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L120-L129) —
 "Recovered — tap Sync to confirm", `caption2` bold, `#FFC107`, directly under the sequence name. It
 persists until the sailor taps Sync, because it asks for an action a 3 s banner could not.
 
@@ -195,6 +195,8 @@ Tier assignments so #13 does not have to re-litigate each one:
 | Vibration unavailable | 3 | "No haptics — watch the screen" | none |
 | Battery saver active | 3 | "Battery saver — sound may be cut" | none |
 | Wall-clock jump | 1 | "Clock changed — countdown held steady" | none — **shipped** |
+| Exact recovery (race resumed) | 1 | "Resumed race in progress" | none — **shipped** |
+| Spent snapshot discarded | 1 | "Old race ended — starting fresh" | none — **shipped** |
 | Degraded recovery | 3 | "Recovered — tap Sync to confirm" | Sync — **shipped** |
 
 Copy is a starting point, not fixed — all of it is untested on a wrist in sun.

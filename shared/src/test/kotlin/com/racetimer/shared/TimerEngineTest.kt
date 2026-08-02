@@ -240,14 +240,150 @@ class TimerEngineTest {
     // --- Custom sequence ------------------------------------------------------
 
     @Test fun `custom 6-minute sequence has correct totalMs`() {
-        val seq = BuiltInSequences.custom(totalSeconds = 360L)
+        val seq = BuiltInSequences.custom(totalMinutes = 6)
         assertEquals(360_000L, seq.totalMs)
     }
 
     @Test fun `custom sequence gun cue at 0`() {
-        val seq = BuiltInSequences.custom(totalSeconds = 120L)
+        val seq = BuiltInSequences.custom(totalMinutes = 2)
         val gun = seq.cues.first { it.isGun }
         assertEquals(0L, gun.offsetMs)
+    }
+
+    @Test fun `custom sequence runs its whole cue list in order`() {
+        val seq = BuiltInSequences.custom(totalMinutes = 2)
+        engine.load(seq)
+        engine.start()
+        // One tick per cue boundary, walked from the top: this is the sequence as the sailor hears
+        // it, not as the list declares it.
+        for (cue in seq.cues) {
+            fakeNow = seq.totalMs - cue.offsetMs
+            engine.tick()
+        }
+        assertEquals(seq.cues, cues)
+        assertTrue(gunFired)
+    }
+
+    @Test fun `a one-minute custom race still fires its minute cue and the whole tail`() {
+        val seq = BuiltInSequences.custom(totalMinutes = 1)
+        engine.load(seq)
+        engine.start()
+        // The minute cue is due the instant the countdown starts at 1:00, so it must not be skipped
+        // as "already past" the way a cue above the total would be.
+        engine.tick()
+        assertEquals(listOf(60_000L), cues.map { it.offsetMs })
+
+        fakeNow += 60_000L
+        engine.tick()
+        assertEquals(seq.cues, cues)
+        assertTrue(gunFired)
+    }
+
+    // --- Restoring a custom race ----------------------------------------------
+
+    @Test fun `a custom race restores as itself from its persisted id`() {
+        // The failure this guards is silent: a custom id is not in BuiltInSequences.all, so a
+        // lookup that falls back to a default resumed the race at US Sailing's duration and cues
+        // with nothing on screen to say so. Restoring through the same id the snapshot carries is
+        // the whole of the fix, so it is what the test drives.
+        engine.load(BuiltInSequences.custom(totalMinutes = 8))
+        engine.start()
+        fakeNow += 90_000L
+        fakeWall += 90_000L
+        val snap = engine.snapshot()!!
+
+        // A fresh engine on the same boot — the process died, the clocks did not.
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        val resolved = BuiltInSequences.resolve(snap.sequenceId)
+        assertNotNull("custom id must resolve", resolved)
+        val outcome = revived.restore(resolved!!, snap)
+
+        assertEquals(RestoreOutcome.EXACT, outcome)
+        assertEquals(BuiltInSequences.custom(totalMinutes = 8).id, resolved.id)
+        assertEquals(8 * 60_000L, resolved.totalMs)
+        assertEquals(390_000L, revived.remainingMs) // 8:00 less the 1:30 that elapsed
+    }
+
+    @Test fun `a restored custom race sounds only the cues it has not passed`() {
+        engine.load(BuiltInSequences.custom(totalMinutes = 3))
+        engine.start()
+        fakeNow += 100_000L // 1:40 remaining: the 3:00 and 2:00 cues are spent
+        fakeWall += 100_000L
+        val snap = engine.snapshot()!!
+
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        revived.addListener(listener)
+        revived.restore(BuiltInSequences.resolve(snap.sequenceId)!!, snap)
+
+        fakeNow += 100_000L // run it out past the gun
+        revived.tick()
+        assertEquals(
+            // 1:20 was left at the kill, so 3:00 and 2:00 are spent and must not sound again.
+            BuiltInSequences.custom(totalMinutes = 3).cues
+                .filter { it.offsetMs <= 80_000L }
+                .map { it.offsetMs },
+            cues.map { it.offsetMs },
+        )
+    }
+
+    // --- Previewing a snapshot without restoring it ---------------------------
+
+    @Test fun `remainingFromSnapshot agrees with what restore actually does`() {
+        // The whole reason this helper exists: the pre-start screen shows the sailor a number and
+        // then a tap has to deliver it. If these two ever disagree, Resume becomes a lie — which is
+        // exactly the bug the offer was added to fix, in a new place.
+        engine.load(BuiltInSequences.custom(totalMinutes = 8))
+        engine.start()
+        fakeNow += 137_000L
+        fakeWall += 137_000L
+        val snap = engine.snapshot()!!
+
+        val previewed = remainingFromSnapshot(snap, fakeNow, fakeWall)
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        revived.restore(BuiltInSequences.resolve(snap.sequenceId)!!, snap)
+
+        assertEquals(revived.remainingMs, previewed)
+        assertEquals(343_000L, previewed) // 8:00 less 2:17
+    }
+
+    @Test fun `remainingFromSnapshot keeps counting down as the clock runs on`() {
+        // The saved gun is fixed in the monotonic domain, so it keeps approaching whether or not the
+        // app is open. A preview captured once and held would sit frozen while the race ran away.
+        engine.load(BuiltInSequences.scholastic)
+        engine.start()
+        val snap = engine.snapshot()!!
+
+        assertEquals(180_000L, remainingFromSnapshot(snap, fakeNow, fakeWall))
+        assertEquals(120_000L, remainingFromSnapshot(snap, fakeNow + 60_000L, fakeWall + 60_000L))
+        assertEquals(0L, remainingFromSnapshot(snap, fakeNow + 180_000L, fakeWall + 180_000L))
+    }
+
+    @Test fun `remainingFromSnapshot goes negative past the gun of a count-up race`() {
+        // Not a spent race — for a race-manager sequence the gun is where the job starts, and the
+        // negated value is the elapsed race time the pre-start preview shows instead of a countdown.
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        val snap = engine.snapshot()!!
+
+        val remaining = remainingFromSnapshot(snap, fakeNow + 300_000L, fakeWall + 300_000L)
+        assertEquals(-120_000L, remaining)          // 3:00 sequence, 5:00 later
+        assertEquals(120_000L, -remaining)          // 2:00 of race elapsed
+    }
+
+    @Test fun `remainingFromSnapshot falls back to wall-clock across a reboot`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        fakeNow += 30_000L
+        fakeWall += 30_000L
+        val snap = engine.snapshot()!!
+
+        // A reboot: the monotonic clock resets to near zero while the wall clock keeps running.
+        val afterRebootElapsed = 5_000L
+        val afterRebootWall = fakeWall + 20_000L
+        assertTrue("reboot must look like a backwards monotonic step", afterRebootElapsed < snap.capturedElapsedMs)
+
+        // 3:00 sequence, 30 s spent before the kill and 20 s of real time lost to the reboot.
+        assertEquals(130_000L, remainingFromSnapshot(snap, afterRebootElapsed, afterRebootWall))
     }
 
     // --- State restoration ----------------------------------------------------
@@ -317,6 +453,288 @@ class TimerEngineTest {
         val outcome = engine2.restore(BuiltInSequences.club, snap)
         assertEquals(RestoreOutcome.EXPIRED, outcome)
         assertEquals(TimerState.FINISHED, engine2.currentState)
+        assertEquals(0L, engine2.remainingMs)
+    }
+
+    // --- Remaining time once the gun has fired --------------------------------
+
+    @Test fun `remainingMs is zero after the gun fires`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        advanceTo(BuiltInSequences.club.totalMs + 1_000L)
+
+        // Outside RUNNING the getter reports the paused position, which load() had seeded with the
+        // sequence total — so a FINISHED engine used to claim a whole countdown was still to come.
+        assertEquals(TimerState.FINISHED, engine.currentState)
+        assertEquals(0L, engine.remainingMs)
+    }
+
+    // --- Count-up (race-manager) -----------------------------------------------
+
+    @Test fun `gun cue transitions to COUNTING_UP for a count-up sequence`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs + 1_000L)
+        assertEquals(TimerState.COUNTING_UP, engine.currentState)
+        assertTrue(gunFired)
+    }
+
+    @Test fun `a non-count-up sequence still lands on FINISHED, unaffected by COUNTING_UP existing`() {
+        engine.load(BuiltInSequences.scholastic)
+        engine.start()
+        advanceTo(BuiltInSequences.scholastic.totalMs + 1_000L)
+        assertEquals(TimerState.FINISHED, engine.currentState)
+    }
+
+    @Test fun `remainingMs keeps counting further negative through COUNTING_UP`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        assertEquals(TimerState.COUNTING_UP, engine.currentState)
+
+        val atGun = engine.remainingMs
+        fakeNow += 90_000L  // 90s into the race
+        // -remainingMs is the elapsed time a caller displays; it must have grown by exactly the
+        // wall time that passed, the same monotonic-anchor guarantee the countdown relies on.
+        assertEquals(atGun - 90_000L, engine.remainingMs)
+    }
+
+    @Test fun `onTick keeps firing every tick during COUNTING_UP`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        val ticksAtGun = ticks.size
+
+        fakeNow += 500L
+        engine.tick()
+        assertTrue("onTick must still fire post-gun for a count-up sequence", ticks.size > ticksAtGun)
+    }
+
+    @Test fun `stop ends a count-up race and returns to IDLE`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        assertEquals(TimerState.COUNTING_UP, engine.currentState)
+
+        engine.stop()
+        assertEquals(TimerState.IDLE, engine.currentState)
+    }
+
+    @Test fun `snapshot is available during COUNTING_UP`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        assertNotNull(engine.snapshot())
+    }
+
+    // --- End Race / RACE_ENDED ---------------------------------------------------
+
+    @Test fun `endRace freezes elapsed time and moves to RACE_ENDED`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        fakeNow += 45_000L  // 45s into the race
+
+        engine.endRace()
+        assertEquals(TimerState.RACE_ENDED, engine.currentState)
+        assertEquals(-45_000L, engine.remainingMs)
+    }
+
+    @Test fun `remainingMs stays frozen during RACE_ENDED even as time passes`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        fakeNow += 45_000L
+        engine.endRace()
+
+        val frozen = engine.remainingMs
+        fakeNow += 60_000L  // a minute passes while the summary is on screen
+        assertEquals("elapsed time must not keep advancing once frozen", frozen, engine.remainingMs)
+    }
+
+    @Test fun `endRace is a no-op outside COUNTING_UP`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        // Still RUNNING — the gun hasn't fired yet.
+        engine.endRace()
+        assertEquals(TimerState.RUNNING, engine.currentState)
+    }
+
+    @Test fun `endRace is a no-op from IDLE`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.endRace()
+        assertEquals(TimerState.IDLE, engine.currentState)
+    }
+
+    @Test fun `stop dismisses a RACE_ENDED summary back to IDLE`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        engine.endRace()
+        assertEquals(TimerState.RACE_ENDED, engine.currentState)
+
+        engine.stop()
+        assertEquals(TimerState.IDLE, engine.currentState)
+    }
+
+    @Test fun `tick is a no-op during RACE_ENDED`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        engine.endRace()
+        val ticksAtEnd = ticks.size
+
+        fakeNow += 5_000L
+        engine.tick()
+        assertEquals("RACE_ENDED has nothing left to tick for", ticksAtEnd, ticks.size)
+    }
+
+    @Test fun `snapshot returns null during RACE_ENDED - not worth persisting`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        engine.endRace()
+        assertNull(engine.snapshot())
+    }
+
+    @Test fun `dismissing RACE_ENDED via stop shows the full duration again, not 0-00`() {
+        // Regression: stop() left pausedRemainingMs on endRace()'s frozen (negative) elapsed value,
+        // so the idle screen right after Done read "0:00" (remainingMs clamps negative to that)
+        // instead of the sequence's full countdown, ready for the next race.
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        advanceTo(BuiltInSequences.scholasticRaceManager.totalMs)
+        fakeNow += 45_000L
+        engine.endRace()
+
+        engine.stop()
+        assertEquals(TimerState.IDLE, engine.currentState)
+        assertEquals(BuiltInSequences.scholasticRaceManager.totalMs, engine.remainingMs)
+    }
+
+    @Test fun `restore after the gun resumes COUNTING_UP for a count-up sequence, not EXPIRED`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        val snap = engine.snapshot()!!  // pre-gun snapshot; the gun anchor never moves
+
+        // Kill the process well past the gun - the race committee's race is still running.
+        fakeNow += BuiltInSequences.scholasticRaceManager.totalMs + 120_000L
+        fakeWall += BuiltInSequences.scholasticRaceManager.totalMs + 120_000L
+
+        val engine2 = TimerEngine(fakeClock, fakeWallClock)
+        val outcome = engine2.restore(BuiltInSequences.scholasticRaceManager, snap)
+
+        assertEquals(RestoreOutcome.EXACT, outcome)
+        assertEquals(TimerState.COUNTING_UP, engine2.currentState)
+        // 120s have elapsed since the gun; remainingMs is the negative of that.
+        assertEquals(-120_000L, engine2.remainingMs, 1L)
+    }
+
+    @Test fun `restored count-up race can still be stopped`() {
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        val snap = engine.snapshot()!!
+        fakeNow += BuiltInSequences.scholasticRaceManager.totalMs + 60_000L
+        fakeWall += BuiltInSequences.scholasticRaceManager.totalMs + 60_000L
+
+        val engine2 = TimerEngine(fakeClock, fakeWallClock)
+        engine2.restore(BuiltInSequences.scholasticRaceManager, snap)
+        engine2.stop()
+        assertEquals(TimerState.IDLE, engine2.currentState)
+    }
+
+    // --- Cue scheduling (msUntilNextCue) --------------------------------------
+    //
+    // These back TimerService.scheduleNextCue, which exists so a cue lands on its boundary instead
+    // of being found by the next poll. A wrong answer here is a cue fired at the wrong time, which
+    // is the one thing this app cannot get wrong — so the boundary cases get their own tests.
+
+    @Test fun `msUntilNextCue is null before the countdown starts`() {
+        engine.load(BuiltInSequences.usSailing)
+        assertNull(engine.msUntilNextCue())
+    }
+
+    @Test fun `msUntilNextCue counts down to the first cue`() {
+        val seq = BuiltInSequences.usSailing
+        engine.load(seq)
+        engine.start()
+
+        // The first cue sits at the top of the sequence, so it is due immediately.
+        assertEquals(0L, engine.msUntilNextCue())
+
+        // Once it has fired, the next one is the sync run into 4:00 — five ticks ahead of it.
+        engine.tick()
+        val next = engine.msUntilNextCue()!!
+        assertTrue("Expected a positive wait, was $next", next > 0L)
+        assertEquals(seq.totalMs - (4 * 60_000L + 5_000L), next)
+    }
+
+    @Test fun `msUntilNextCue goes negative rather than clamping when a cue is overdue`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        engine.tick()                     // clear the cue due at t=0
+
+        val dueIn = engine.msUntilNextCue()!!
+        fakeNow += dueIn + 250L           // sleep straight past the next boundary
+
+        // The caller clamps; the engine reports the truth, so a late wake-up is visible rather than
+        // looking like a cue that is due right now.
+        assertEquals(-250L, engine.msUntilNextCue())
+    }
+
+    @Test fun `waiting msUntilNextCue then ticking fires the cue, and not before`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        engine.tick()                     // clear the cue due at t=0
+        cues.clear()
+
+        val wait = engine.msUntilNextCue()!!
+
+        fakeNow += wait - 1L
+        engine.tick()
+        assertTrue("Cue fired 1 ms early", cues.isEmpty())
+
+        fakeNow += 1L
+        engine.tick()
+        assertEquals(1, cues.size)
+    }
+
+    @Test fun `msUntilNextCue re-anchors after a sync`() {
+        engine.load(BuiltInSequences.scholastic)
+        engine.start()
+        engine.tick()                     // clear the cue due at t=0
+        cues.clear()
+
+        fakeNow += 40_000L                // 2:20 remaining; snaps down to 2:00
+        engine.sync()
+
+        // Snapping onto 2:00 puts the 2:00 cue exactly on the boundary, so it is due at once. The
+        // pre-sync answer was 60 s out against the old anchor — a caller that did not re-read after
+        // the sync would sit on that stale wait and sound the cue 40 s late.
+        assertEquals(0L, engine.msUntilNextCue())
+        engine.tick()
+        assertEquals(1, cues.size)
+    }
+
+    @Test fun `msUntilNextCue is null once the gun has fired`() {
+        val seq = BuiltInSequences.usSailing
+        engine.load(seq)
+        engine.start()
+        advanceTo(seq.totalMs + 1_000L)
+
+        assertTrue("Expected the gun to have fired", gunFired)
+        assertNull(engine.msUntilNextCue())
+    }
+
+    @Test fun `msUntilNextCue is null while paused`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        engine.tick()
+        engine.pause()
+
+        // Nothing should be armed against a countdown that is not running — the anchor is stale and
+        // scheduling on it would fire a cue during the pause.
+        assertNull(engine.msUntilNextCue())
     }
 
     // --- Helper ---------------------------------------------------------------
