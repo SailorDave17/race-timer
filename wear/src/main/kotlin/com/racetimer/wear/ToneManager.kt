@@ -2,15 +2,21 @@ package com.racetimer.wear
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.media.ToneGenerator
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
+import java.util.concurrent.ConcurrentHashMap
 import com.racetimer.shared.CueTiming
 import com.racetimer.shared.CueVoice
+import com.racetimer.shared.CueWaveform
 import com.racetimer.shared.SignalPattern
 
 /**
@@ -18,96 +24,146 @@ import com.racetimer.shared.SignalPattern
  *
  * A cue's tones land on the same blast boundaries as its vibration — both channels read
  * [CueTiming] — so three long blasts are three tones against three buzzes, aligned, rather than one
- * beep laid over a pattern the ear cannot resolve. A cue carrying [SignalPattern.sustainedMs] plays
- * as a single continuous tone of that length.
+ * beep laid over a pattern the ear cannot resolve.
  *
- * Tones are generated with [ToneGenerator] rather than a sound asset: there is nothing to decode, so
- * a cue starts sounding well inside the perceptual sync window with the vibration firing alongside
- * it, and there is no asset to ship or hold in memory.
+ * ### One submission per cue, not one call per blast (#61)
  *
- * ### Why the later blasts are clocked off the main thread
+ * The whole cue — every tone and every silence between them — is rendered to PCM by [CueWaveform]
+ * and written to a single [AudioTrack] in one piece. That mirrors what [HapticManager] has always
+ * done with `VibrationEffect.createWaveform`, and it is what finally makes the two channels agree.
  *
- * The two channels of a cue are delivered by mechanisms with very different timing guarantees.
- * [HapticManager] submits the whole pattern as one `VibrationEffect.createWaveform` call and the
- * vibrator service runs it on its own timeline, so its blast-to-blast spacing cannot drift. Audio
- * has no equivalent — each blast is a separate [ToneGenerator.startTone] call that something has to
- * clock.
+ * The path this replaced called [ToneGenerator.startTone] once per blast. `startTone`'s duration is
+ * a *cap* rather than a length: measured on an SM-R925U, 60 ms delivered 80 ms, 150 ms delivered
+ * 160 ms, and 500 ms delivered 512 ms five times and 520 ms once **in the same race**. Every tone
+ * therefore ran past the buzz beside it and ate the silence that followed, in the same direction
+ * every time. Neither cheap fix survived measurement — the CDMA and DTMF families overshoot a short
+ * request identically, so swapping tone family bought nothing, and a call that returns two different
+ * lengths from identical arguments cannot be padded.
  *
- * That something used to be the main Looper, which is also recomposing the timer screen on every
- * tick. Blasts now go to a dedicated [HandlerThread] at [Process.THREAD_PRIORITY_URGENT_AUDIO] that
- * nothing else posts to, scheduled with [Handler.postAtTime] against one base captured when the cue
- * fired. Measured on an SM-R925U under recomposition (#58), that holds a blast to **1–5 ms** of its
- * intended offset on both the 750 ms beat of `3 long` and the 300 ms beat of `3 short`.
+ * A sample is a sample, so a rendered buffer has no such freedom. The blast lengths are asserted
+ * against [CueTiming] in `CueWaveformTest`, in a module CI runs.
  *
- * ### Every blast, including the first — and why [LEAD_IN_MS] exists
+ * A second, quieter benefit: the beat *inside* a cue no longer depends on this class getting
+ * scheduled. The old path woke a thread on every blast boundary and was only as even as those
+ * wake-ups; a cue is now clocked by the audio hardware off one buffer. What scheduling still decides
+ * is when the cue *starts*, which shifts it as a whole — the far more forgiving error.
  *
- * The first blast used to run inline on the caller's thread while the rest were posted. Two
- * measurements killed that, in order, and both are worth keeping because the second one contradicts
- * what the first appeared to show.
+ * ### One track for the race, not one per cue
  *
- * The inline version was adopted because posting blast 0 made it *dispatch* late — it is due the
- * instant it is posted, so it has to wake an idle thread, where every later blast is already queued
- * against a thread that is awake by the time it comes due:
+ * The track is built once, in [prepare], and reused. That is not tidiness: building one per cue was
+ * measured on an SM-R925U at **89-182 ms** of `getOutputForAttr` / `releaseOutput` round trips per
+ * cue, against 1-30 ms for the path it replaced. A cue's audio would have trailed its buzz by a
+ * fifth of a second — inaudible as a *timing* error, but plainly audible as the tone answering the
+ * buzz rather than arriving with it, which is the thing [LEAD_IN_MS] exists to prevent.
  *
- * ```
- * blast=0   lateMs: 1, 2, 5, 30, 11, 3, 3, 4, 16, 2, 2, 2, 1     max 30
- * blast>=1  lateMs: 1, 1, 1, 2, 2, 5                              max  5
- * ```
+ * So the expensive parts happen off the deadline. The track is created before the race, the buffer
+ * is written during [LEAD_IN_MS], and the only thing waiting on a clock is [AudioTrack.play].
  *
- * Running it inline drove that to `lateMs=0`. But dispatch is not sound. Listened to on hardware,
- * the inline version was *audibly* uneven — on `3 short` the first two blasts sat closer together
- * than the last, and on `3 long` the first two ran into each other — while the log said the three
- * dispatches were 400 / 400 ms and 900 / 900 ms apart to within 2 ms. The thread ids in that same
- * log are what gives it away: blast 0 went out from the main thread, blasts 1..n from this one. The
- * main thread is recomposing the timer screen, so its binder call into the audio server reaches the
- * speaker later than the same call from an idle [Process.THREAD_PRIORITY_URGENT_AUDIO] thread. Blast
- * 0 *sounds* late and closes up the first interval, and no amount of dispatch accuracy shows it.
+ * `MODE_STREAM` rather than `MODE_STATIC`, given the track has to be reused: a static track is
+ * written once and replayed, which cannot express a different cue each time. The underrun risk that
+ * normally argues against streaming does not apply here, because the whole cue is written before
+ * playback starts rather than fed in as it drains.
  *
- * So every blast now takes the identical path, and [LEAD_IN_MS] buys back what the inline version
- * was really for: with the whole cue scheduled a few tens of milliseconds out, blast 0 is queued
- * ahead of time exactly like its successors rather than racing a thread wake-up. Uniformity is the
- * point — a cue that is a few ms late as a whole is inaudible, where a cue whose first interval is
- * short is exactly what a sailor reported hearing.
+ * It brings one trap with it, and it is the kind that ships: a streaming track does not start when
+ * `play()` is called, it starts when the buffer reaches a *start threshold* that defaults to the
+ * whole buffer. Get that wrong and every call succeeds, the track reports itself as playing, and no
+ * sound comes out. See `armStartThreshold`.
  *
- * Dispatch lateness is measurable rather than assumed: enable it with
- * `adb shell setprop log.tag.ToneManager DEBUG` and each blast logs its intended offset from the
- * start of the cue against how late it actually ran. Note what that does and does not cover — it
- * measures when [ToneGenerator.startTone] was *called*, never when sound emerged, which is the whole
- * reason the inline version's `lateMs=0` was so misleading. Anything about audible evenness has to
- * be confirmed on a wrist.
+ * ### Why the cue is still clocked off the main thread
  *
- * Audio is best-effort by design. A watch may have no speaker at all, and [ToneGenerator] throws
- * when the platform cannot hand out an audio track. Every failure path here logs and returns, so the
- * caller's vibration is never blocked by a broken tone.
+ * Everything runs on a dedicated [HandlerThread] at [Process.THREAD_PRIORITY_URGENT_AUDIO] that
+ * nothing else posts to, because the main Looper is recomposing the timer screen on every tick and
+ * its binder calls into the audio server reach the speaker later than an idle thread's. That was
+ * measured under #58 and it cost a whole build to learn: dispatch accuracy is not sound, and the
+ * version reporting `lateMs=0` was the one that sounded worst.
+ *
+ * Timing is measurable rather than assumed: `adb shell setprop log.tag.ToneManager DEBUG` logs how
+ * late each cue started and how long its preparation took. Note what that does and does not cover —
+ * it measures when [AudioTrack.play] was *called*, never when sound emerged. Anything about audible
+ * evenness has to be confirmed on a wrist.
+ *
+ * Audio is best-effort by design. A watch may have no speaker at all, and the audio stack can refuse
+ * to hand out a track. Every failure path here logs and returns, so the caller's vibration is never
+ * blocked by a broken tone.
  */
 class ToneManager(context: Context) {
 
     private val appContext = context.applicationContext
 
-    /** Guards [toneGenerator] and [initFailed], which [startTone] reaches from two threads. */
-    private val generatorLock = Any()
+    /** Guards [track] and [keepAliveGenerator], which teardown and the tone thread both reach. */
+    private val audioLock = Any()
 
-    /** Null until the first successful init, and again after an init failure or [release]. */
-    private var toneGenerator: ToneGenerator? = null
+    /** The one track every cue is played through. Null until [prepare], and again after [release]. */
+    private var track: AudioTrack? = null
+
+    /** Samples [track] can hold, so a cue too long for it is split rather than truncated. */
+    private var trackCapacitySamples = 0
+
+    /** Tail of a cue too long to prefill, written once playback has made room. */
+    private var pendingSamples: ShortArray? = null
+
+    private var pendingFrom = 0
 
     /**
-     * A second generator, at volume zero, whose only job is to keep the audio output open.
+     * Rendered PCM per cue shape, so a cue is never synthesised on its own deadline. See [warmUp].
      *
-     * The platform closes the output when it goes idle, and re-opening it costs ~54 ms of
-     * `startOutput` plus speaker routing before any sound can flow — measured on an SM-R925U from
-     * `APM_AudioPolicyManager: startOutput` to `audio_hw_playback: transited to Ready` (#58). That
-     * cost lands on whichever blast happens to follow a close, which is not a fixed blast: within one
-     * `3 short` cue, blast 0 and blast 2 each paid it and blast 1 did not, turning a dispatched
-     * 400 / 400 ms beat into an audible 346 / 454 ms. A sailor hears the first two blasts crowding
-     * the third.
+     * Written by the render thread and read by the tone thread, hence the concurrent map. A race has
+     * a handful of distinct shapes and each holds a few hundred kilobytes at most, so this is bounded
+     * by the sequence rather than by the number of cues in it — the ten one-second ticks of a final
+     * minute share a single buffer.
+     */
+    private val cueBuffers = ConcurrentHashMap<CueShape, ShortArray>()
+
+    /** The feedback beep, which carries no [SignalPattern] and so needs its own slot. */
+    @Volatile private var beepBuffer: ShortArray? = null
+
+    /**
+     * Where [warmUp] does its synthesising — deliberately *not* the tone thread.
      *
-     * Holding a silent tone open for the race removes the close, so no blast pays for a restart and
-     * the dispatched beat is the beat that sounds. It costs keeping the output powered while a race
-     * runs — which the service is already holding a wake lock through.
+     * Rendering a race's cues takes a couple of seconds on this hardware, dominated by the
+     * three-second gun. Run on the tone thread, that work sits in the same queue as the cues and the
+     * first cue of the race lands behind all of it: **measured at 1510 ms late**, against a first cue
+     * that is due the instant the engine starts. Cancelling the warm-up instead would only move the
+     * cost back onto the cues.
+     *
+     * So the two run in parallel and the tone thread never renders anything it can avoid. A cue that
+     * arrives before its buffer is ready renders inline and is merely as slow as it used to be,
+     * rather than blocked.
+     *
+     * Default priority rather than `THREAD_PRIORITY_BACKGROUND`, which would be the obvious choice
+     * and is wrong: Android puts background-priority threads in a cgroup with a small share of a
+     * core, and the warm-up is racing the first cues of a race. It sits below the tone thread's
+     * [Process.THREAD_PRIORITY_URGENT_AUDIO] either way.
+     */
+    @Volatile private var renderThread: HandlerThread? = null
+
+    @Volatile private var renderHandler: Handler? = null
+
+    /**
+     * A [ToneGenerator] at volume zero whose only job is to keep the audio output open.
+     *
+     * Kept from #58 rather than removed with the rest of the `ToneGenerator` path, and the reasoning
+     * changed with the fix rather than disappearing. The platform closes the output when it goes
+     * idle and charges ~54 ms of `startOutput` plus speaker routing to whatever plays next — measured
+     * on an SM-R925U from `APM_AudioPolicyManager: startOutput` to
+     * `audio_hw_playback: transited to Ready`.
+     *
+     * What that cost used to do was land on an unpredictable *blast inside* a cue: within one
+     * `3 short`, blast 0 and blast 2 each paid it and blast 1 did not, turning a dispatched
+     * 400 / 400 ms beat into an audible 346 / 454 ms. One buffer per cue removes that outright — a
+     * cue cannot pay a restart in its middle.
+     *
+     * It would still land on the *start* of a cue, and the gaps between cues run to 60 s in the
+     * Scholastic sequence. Left in place because ~54 ms of delay on a cue a sailor is timing a start
+     * off is worth more than the power saved, and because #61 is not the issue in which to retire a
+     * fix that was verified by ear on the water.
+     *
+     * Re-armed *after* a cue has started rather than before it, so its own cost cannot land on the
+     * cue it is there to protect.
      */
     private var keepAliveGenerator: ToneGenerator? = null
 
-    /** Set once the constructor has thrown, so a dead audio stack isn't retried on every cue. */
+    /** Set once the audio stack has refused, so a dead one isn't retried on every cue. */
     private var initFailed = false
 
     /** The cue-audio thread and its handler, or null before first use and after [release] runs. */
@@ -118,175 +174,385 @@ class ToneManager(context: Context) {
     /** Uptime the current cue's audio finishes, so [release] can wait out its real tail. */
     @Volatile private var soundingUntilMs = 0L
 
-    private val releaseRunnable = Runnable { releaseGeneratorAndQuit() }
+    /** True while the track holds no queued audio, so a load can skip the pause-and-flush IPC. */
+    private var trackIsEmpty = false
+
+    /** Playback head when the current cue started, so its delivered frames can be counted. */
+    private var headAtCueStart = 0
+
+    private val releaseRunnable = Runnable { releaseAudioAndQuit() }
+
+    /** Marks the messages belonging to a cue, so cancelling one cannot cancel [warmUp]. */
+    private val cueToken = Any()
 
     private val hasAudioOutput: Boolean =
         appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_AUDIO_OUTPUT)
 
     /**
-     * Build the audio track ahead of the first cue. Without this the allocation lands on whichever
-     * cue sounds first, delaying that one cue behind its vibration. Also starts the tone thread, so
-     * the first cue does not pay for that either.
+     * The output's own sample rate.
+     *
+     * Read from the device rather than assumed, and used unchanged, because anything else would be
+     * resampled on the way out — and a resampler is exactly the kind of thing that would quietly put
+     * back the rounding this fix removed. 48 kHz on the SM-R925U.
+     */
+    private val sampleRateHz: Int =
+        try {
+            AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_ALARM)
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Native output rate unavailable; falling back to $FALLBACK_SAMPLE_RATE_HZ", e)
+            FALLBACK_SAMPLE_RATE_HZ
+        }
+
+    /**
+     * Build the track and open the audio output ahead of the first cue.
+     *
+     * Without this, both costs land on whichever cue sounds first — and the first cue of a race
+     * fires within a couple of hundred milliseconds of the service starting, so it is the least
+     * affordable place to put them.
      */
     fun prepare() {
         obtainHandler().post {
-            obtainGenerator()
-            // Before the first cue rather than with it: the very first cue of a race fires within a
-            // couple of hundred ms of the service starting, and opening the output is exactly the
-            // cost this is here to avoid paying on a blast.
+            synchronized(audioLock) { obtainTrackLocked() }
             armKeepAlive()
+            beepBuffer()
         }
     }
 
     /**
-     * Play [pattern] as tones on its blast boundaries.
+     * Render every cue of the sequence about to run, before it runs.
      *
-     * Returns immediately. The first blast sounds inline — [ToneGenerator.startTone] hands the tone
-     * to the audio server rather than blocking for its duration — and the rest are handed to the
-     * tone thread.
+     * Rendering is not free on a watch. Measured on an SM-R925U on the tone thread, a 400 ms cue took
+     * **27 ms when the thread had a core to itself and 861 ms when it did not** — and the moment it
+     * does not is precisely the start of a race, with the service starting and the timer screen
+     * composing for the first time. Left on the cue's own path that put the first cues of a race
+     * hundreds of milliseconds behind their buzz.
      *
-     * The cue's timing base is read here, on the caller's thread, so it is the moment the cue fired
-     * — the same moment [HapticManager.play] submitted the vibration.
+     * So it happens once, here, and a cue then costs a map lookup and a buffer write. Call this as
+     * soon as the sequence is known and before the race starts. Rendering in cue order matters: the
+     * first cue of a race is due the instant the engine starts, so it is the one with the least time
+     * to spare and the one that must be rendered first.
+     *
+     * Safe to call repeatedly — a pattern already rendered is not rendered again — and safe to skip,
+     * since [playCue] still renders on demand for anything missing.
+     */
+    fun warmUp(patterns: List<SignalPattern>) {
+        obtainRenderHandler().post {
+            for (pattern in patterns) cueFor(pattern)
+        }
+    }
+
+    /**
+     * Play [pattern] as one rendered cue.
+     *
+     * Returns immediately. The cue's timing base is read here, on the caller's thread, so it is the
+     * moment the cue fired — the same moment [HapticManager.play] submitted the vibration.
      */
     fun playCue(pattern: SignalPattern) {
         val baseMs = SystemClock.uptimeMillis()
-        val blasts = blastsOf(pattern)
-        if (blasts.isEmpty()) return
-
-        val handler = obtainHandler()
-        // Drops the previous cue's unsounded blasts and any pending teardown in one call, from
-        // whichever thread got here; Handler's queue is synchronized where this class is not.
-        handler.removeCallbacksAndMessages(null)
-
-        // Re-armed every cue so it cannot lapse mid-race between two widely spaced cues.
-        handler.postAtTime({ armKeepAlive() }, baseMs)
-
-        val startAtMs = baseMs + LEAD_IN_MS
-        var offsetMs = 0L
-        for ((index, blast) in blasts.withIndex()) {
-            val intendedOffsetMs = offsetMs
-            handler.postAtTime(
-                {
-                    logDispatch(index, intendedOffsetMs, startAtMs)
-                    startTone(blast.toneType, blast.onMs)
-                },
-                startAtMs + intendedOffsetMs,
-            )
-            offsetMs += blast.onMs + blast.offMs
-        }
-        soundingUntilMs = startAtMs + offsetMs
+        val durationMs = CueTiming.durationMs(pattern)
+        if (durationMs <= 0L) return
+        submit(baseMs, durationMs) { cueFor(pattern) }
     }
 
     /**
      * Play a single feedback beep, for events that carry no blast pattern — a sync snap, say.
      */
     fun playBeep() {
-        val startAtMs = SystemClock.uptimeMillis() + LEAD_IN_MS
-        val handler = obtainHandler()
-        handler.removeCallbacksAndMessages(null)
-        // On the tone thread like every blast, though a lone beep has no beat to keep: it is the
-        // last thing that would otherwise call into the audio server from the main thread.
-        handler.postAtTime({ startTone(BLAST_TONE, BEEP_MS) }, startAtMs)
-        soundingUntilMs = startAtMs + BEEP_MS
+        val baseMs = SystemClock.uptimeMillis()
+        submit(baseMs, BEEP_MS) { beepBuffer() }
     }
 
     /**
      * Release the audio track and stop the tone thread. Call from the owner's teardown; the next
      * [playCue] rebuilds both on demand.
      *
-     * The gun cue sounds and the timer service then tears down on the same tick, and
-     * [ToneGenerator.release] cuts playback off mid-tone — so while a cue is still sounding, the
-     * teardown waits out whatever is left *of that cue*, not of a fixed beep length. The gun is a
-     * three-second sustained tone: a constant here would be wrong by most of it, and it is the one
-     * cue a sailor most needs to hear in full.
+     * The gun cue sounds and the timer service then tears down on the same tick, and releasing the
+     * track cuts playback off mid-tone — so while a cue is still sounding, the teardown waits out
+     * whatever is left *of that cue*, not of a fixed beep length. The gun is a three-second sustained
+     * tone: a constant here would be wrong by most of it, and it is the one cue a sailor most needs
+     * to hear in full.
      */
     fun release() {
         val handler = toneHandler ?: return
         handler.post {
-            val live = synchronized(generatorLock) {
+            val live = synchronized(audioLock) {
                 initFailed = false
-                toneGenerator != null
+                track != null || keepAliveGenerator != null
             }
             val tailMs = soundingUntilMs - SystemClock.uptimeMillis()
             if (live && tailMs > 0L) {
                 handler.postDelayed(releaseRunnable, tailMs)
             } else {
                 handler.removeCallbacksAndMessages(null)
-                releaseGeneratorAndQuit()
+                releaseAudioAndQuit()
             }
         }
     }
 
     // --- Internals ------------------------------------------------------------
 
-    /** One tone of a cue: [onMs] of sound, then [offMs] of silence before the next. */
-    private data class Blast(val toneType: Int, val onMs: Int, val offMs: Long)
+    /**
+     * What makes two cues sound the same.
+     *
+     * Deliberately *not* [SignalPattern] itself. That carries a [SignalPattern.label] for the UI,
+     * which is part of its `equals` and has no effect whatever on the audio — so keying the cache on
+     * the pattern rendered the identical 60 ms tick five separate times in one warm-up, once per
+     * label, and left the race paying for renders it already had.
+     */
+    private data class CueShape(
+        val longBlasts: Int,
+        val shortBlasts: Int,
+        val sustainedMs: Long,
+        val voice: CueVoice,
+    )
 
-    private fun blastsOf(pattern: SignalPattern): List<Blast> {
-        if (pattern.sustainedMs > 0L) {
-            return listOf(Blast(SUSTAINED_TONE, pattern.sustainedMs.toInt(), 0L))
+    private fun shapeOf(pattern: SignalPattern) = CueShape(
+        longBlasts = pattern.longBlasts,
+        shortBlasts = pattern.shortBlasts,
+        sustainedMs = pattern.sustainedMs,
+        voice = pattern.voice,
+    )
+
+    /**
+     * The rendered buffer for [pattern], synthesising it on first use.
+     */
+    private fun cueFor(pattern: SignalPattern): ShortArray {
+        val shape = shapeOf(pattern)
+        cueBuffers[shape]?.let { return it }
+        // Reached from both the render thread and, on a miss, the tone thread. Rendering the same
+        // shape twice is wasted work rather than a fault, so this races harmlessly.
+        val rendered = timedRender { CueWaveform.render(pattern, sampleRateHz) }
+        return cueBuffers.putIfAbsent(shape, rendered) ?: rendered
+    }
+
+    /** The rendered feedback beep, synthesising it on first use. */
+    private fun beepBuffer(): ShortArray =
+        beepBuffer ?: timedRender { CueWaveform.renderBeep(BEEP_MS, sampleRateHz) }
+            .also { beepBuffer = it }
+
+    /**
+     * Render and, under debug logging, report what it cost.
+     *
+     * Worth keeping visible: this number is the reason [warmUp] exists, and it varies by more than an
+     * order of magnitude with how contended the thread is, so a future change that quietly moves a
+     * render back onto the cue path would otherwise only show up as a cue that sounds late.
+     */
+    private inline fun timedRender(render: () -> ShortArray): ShortArray {
+        if (!Log.isLoggable(TAG, Log.DEBUG)) return render()
+        val startedAtMs = SystemClock.uptimeMillis()
+        return render().also {
+            Log.d(TAG, "rendered ${it.size} samples in ${SystemClock.uptimeMillis() - startedAtMs}ms")
         }
-        // The voice picks the tone and the boundaries together. A sync tick is a different pitch on
-        // a shorter beat than any blast, which is what stops a sailor hearing it as a signal.
-        val tone = when (pattern.voice) {
-            CueVoice.SYNC -> SYNC_TONE
-            CueVoice.BLAST -> BLAST_TONE
-        }
-        val blasts = mutableListOf<Blast>()
-        repeat(pattern.longBlasts) {
-            blasts += Blast(
-                tone,
-                CueTiming.onMs(pattern, long = true).toInt(),
-                CueTiming.offMs(pattern, long = true),
-            )
-        }
-        repeat(pattern.shortBlasts) {
-            blasts += Blast(
-                tone,
-                CueTiming.onMs(pattern, long = false).toInt(),
-                CueTiming.offMs(pattern, long = false),
-            )
-        }
-        return blasts
     }
 
     /**
-     * Report how far a blast's dispatch missed its intended position in the cue.
+     * Render [pcm], load it into the track, and start it [LEAD_IN_MS] after [baseMs].
      *
-     * Off unless someone asks for it: `adb shell setprop log.tag.ToneManager DEBUG`. This is the
-     * measurement that tells a late *schedule* apart from a long *tone*; the second one is not
-     * visible from here at all and has to be read from delivered `AudioTrack` frames.
+     * Three posts, and the ordering is the whole point. The render and the buffer write go out
+     * immediately so they run *during* the lead-in. [AudioTrack.play] is queued on the deadline as
+     * its own message rather than nested inside the preparation, so that preparation running long
+     * delays the cue by its overrun rather than by its whole duration. Re-arming the keep-alive goes
+     * *after* the cue, where its cost cannot reach the cue it protects.
+     *
+     * A [Handler] runs its queue in time order, so the deadline message cannot overtake the
+     * preparation message that is already due.
      */
-    private fun logDispatch(index: Int, intendedOffsetMs: Long, baseMs: Long) {
-        if (!Log.isLoggable(TAG, Log.DEBUG)) return
-        val actualOffsetMs = SystemClock.uptimeMillis() - baseMs
-        Log.d(
-            TAG,
-            "blast=$index intendedOffsetMs=$intendedOffsetMs actualOffsetMs=$actualOffsetMs " +
-                "lateMs=${actualOffsetMs - intendedOffsetMs}",
+    private fun submit(baseMs: Long, durationMs: Long, pcm: () -> ShortArray) {
+        val handler = obtainHandler()
+        // Drops the previous cue's pending play in one call, from whichever thread got here;
+        // Handler's queue is synchronized where this class is not.
+        //
+        // Scoped to [cueToken] rather than clearing the queue outright, because [warmUp]'s rendering
+        // sits on the same queue and a blanket clear would cancel it — leaving every cue of the race
+        // to synthesise itself on its own deadline, which is the exact cost warmUp exists to avoid.
+        handler.removeCallbacksAndMessages(cueToken)
+
+        val startAtMs = baseMs + LEAD_IN_MS
+        soundingUntilMs = startAtMs + durationMs
+
+        handler.postAtTime({ loadTrack(pcm) }, cueToken, SystemClock.uptimeMillis())
+        handler.postAtTime({ startTrack(startAtMs) }, cueToken, startAtMs)
+        // Housekeeping for the *next* cue, deliberately done once this one has finished sounding.
+        // The keep-alive is re-armed here so it cannot lapse mid-race between two widely spaced cues,
+        // and the track is reset here because `pause` and `flush` are round trips to the audio server
+        // — 50-130 ms of them, measured — which is more than the whole of [LEAD_IN_MS] and would
+        // otherwise land between a cue firing and its sound starting.
+        //
+        // [CUE_TAIL_MARGIN_MS] past the cue's nominal end, not on it: the hardware is still draining
+        // buffered audio at that point, and flushing into the tail would clip the end off a cue —
+        // which for the gun would be the worst possible thing to shorten.
+        handler.postAtTime(
+            {
+                logDelivered()
+                armKeepAlive()
+                resetTrack()
+            },
+            cueToken,
+            startAtMs + durationMs + CUE_TAIL_MARGIN_MS,
         )
     }
 
     /**
-     * Sound one blast. Reached from the caller's thread for the first blast of a cue and from the
-     * tone thread for the rest, hence the lock — and the lock is held across [startTone] itself
-     * rather than just the lookup, because [releaseGenerator] running in between would leave this
-     * calling into a freed native object. Contention is a non-issue in practice: blasts within a cue
-     * are at least [CueTiming.SYNC_OFF] apart and `startTone` hands off to the audio server rather
-     * than blocking for the tone's duration.
+     * Render the cue and hand it to the track, ready for [AudioTrack.play] on the deadline.
+     *
+     * `pause` then `flush` rather than `stop`: it discards whatever the previous cue left without
+     * tearing the output port down, which is the expensive part and the reason this class keeps one
+     * track for the whole race.
      */
-    private fun startTone(toneType: Int, durationMs: Int) = synchronized(generatorLock) {
-        val generator = obtainGeneratorLocked() ?: return
+    private fun loadTrack(pcm: () -> ShortArray): Unit = synchronized(audioLock) {
+        val startedAtMs = SystemClock.uptimeMillis()
+        val audioTrack = obtainTrackLocked() ?: return
+        val samples = pcm()
+        if (samples.isEmpty()) return
+
+        pendingSamples = null
+        pendingFrom = 0
         try {
-            if (!generator.startTone(toneType, durationMs)) {
-                Log.w(TAG, "startTone returned false; blast dropped for this cue")
+            // Skipped whenever [resetTrack] already emptied the track when the previous cue ended,
+            // which is the normal case and the whole reason it is done there. Still needed when a cue
+            // is cancelled mid-flight by the next one, because that skips the housekeeping — and
+            // writing onto an unflushed track would append this cue to the tail of the last one.
+            if (!trackIsEmpty) {
+                if (audioTrack.playState != AudioTrack.PLAYSTATE_STOPPED) audioTrack.pause()
+                audioTrack.flush()
             }
-        } catch (e: RuntimeException) {
-            // The generator can be torn down underneath us (audio server restart, resource
-            // reclaim). Drop it so the next cue rebuilds one instead of reusing a dead handle.
-            Log.e(TAG, "startTone failed, discarding tone generator", e)
-            releaseGeneratorLocked()
+            trackIsEmpty = false
+
+            // A cue longer than the buffer is written in two halves, the second once playback has
+            // made room. No built-in cue reaches this - the three-second gun is the longest and the
+            // buffer holds MAX_PREFILL_MS - but a sustained cue's length is data, and a silently
+            // truncated gun would be the worst possible way to find that out.
+            val prefill = minOf(samples.size, trackCapacitySamples)
+            val written = audioTrack.write(samples, 0, prefill)
+            if (written <= 0) {
+                Log.w(TAG, "AudioTrack write returned $written; cue dropped")
+                return
+            }
+            if (written < samples.size) {
+                pendingSamples = samples
+                pendingFrom = written
+            }
+            armStartThreshold(audioTrack, written)
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "AudioTrack load failed, discarding track", e)
+            releaseTrackLocked()
+            return
         }
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "loaded ${samples.size} samples in ${SystemClock.uptimeMillis() - startedAtMs}ms")
+        }
+    }
+
+    /**
+     * Make the track start on the cue we just wrote, rather than waiting for a full buffer.
+     *
+     * This is the subtlest thing in the class and it fails **silently**, so it is worth stating
+     * plainly. A `MODE_STREAM` track does not begin mixing the moment [AudioTrack.play] is called: it
+     * waits until the buffer holds a *start threshold* of frames, which defaults to the whole buffer.
+     * The buffer here is [MAX_PREFILL_MS] so that any cue fits in one write, so a 400 ms cue filled
+     * a tenth of it and the mixer waited for the rest forever.
+     *
+     * What that looks like from outside is the worst kind of bug: `play()` returns cleanly, the track
+     * reports `PLAYSTATE_PLAYING`, nothing throws, nothing logs — and **no sound comes out**. It was
+     * caught by reading [AudioTrack.getPlaybackHeadPosition], which sat at 0 half a second after
+     * playback was supposed to have started. Before that it was caught by a person listening, which
+     * is the only reason it was caught at all.
+     *
+     * On API 31+ the threshold is simply set to what was written. Below that the setter does not
+     * exist, so the buffer is topped up with silence instead until it reaches the default threshold —
+     * the same effect, at the cost of a larger write. `minSdk` is 30, so that path is real and not
+     * theoretical, even though the watch this was developed on is API 36.
+     */
+    private fun armStartThreshold(audioTrack: AudioTrack, writtenSamples: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                audioTrack.startThresholdInFrames = writtenSamples
+                return
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "Start threshold rejected; padding with silence instead", e)
+            }
+        }
+        var remaining = trackCapacitySamples - writtenSamples
+        if (remaining <= 0) return
+        val silence = ShortArray(minOf(remaining, SILENCE_CHUNK_SAMPLES))
+        while (remaining > 0) {
+            val chunk = minOf(remaining, silence.size)
+            val written = audioTrack.write(silence, 0, chunk)
+            if (written <= 0) return
+            remaining -= written
+        }
+    }
+
+    /**
+     * Stop the track and empty it, once a cue has finished sounding.
+     *
+     * Purely so the next cue's load does not have to. See the posting in [submit] for why that
+     * matters — this is IPC, and it costs more than the lead-in it would otherwise eat.
+     */
+    private fun resetTrack(): Unit = synchronized(audioLock) {
+        val audioTrack = track ?: return
+        try {
+            if (audioTrack.playState != AudioTrack.PLAYSTATE_STOPPED) audioTrack.pause()
+            audioTrack.flush()
+            trackIsEmpty = true
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "AudioTrack reset failed", e)
+        }
+        return
+    }
+
+    /** Start the loaded cue, and log how far its start missed [startAtMs]. */
+    private fun startTrack(startAtMs: Long): Unit = synchronized(audioLock) {
+        val audioTrack = track ?: return
+        try {
+            audioTrack.play()
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "AudioTrack play failed, discarding track", e)
+            releaseTrackLocked()
+            return
+        }
+        logDispatch(startAtMs, audioTrack)
+
+        val remainder = pendingSamples ?: return
+        pendingSamples = null
+        // Blocking, on the tone thread, and only for a cue longer than the buffer. Playback is
+        // already under way by here, so the write drains as it goes.
+        try {
+            audioTrack.write(remainder, pendingFrom, remainder.size - pendingFrom)
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "Tail write failed; cue truncated", e)
+        }
+        return
+    }
+
+    /**
+     * Report how far the cue's start missed its deadline.
+     *
+     * Off unless someone asks for it: `adb shell setprop log.tag.ToneManager DEBUG`. Worth less than
+     * it was before #61 — a late start shifts the whole cue, where the old per-blast version of this
+     * was measuring the thing that could distort one. Kept because it is still the only way to tell a
+     * late cue from a late *race*, and because it is what caught the per-cue track build.
+     */
+    private fun logDispatch(startAtMs: Long, audioTrack: AudioTrack) {
+        if (!Log.isLoggable(TAG, Log.DEBUG)) return
+        Log.d(TAG, "cue lateMs=${SystemClock.uptimeMillis() - startAtMs} rateHz=$sampleRateHz")
+        headAtCueStart = audioTrack.playbackHeadPosition
+    }
+
+    /**
+     * Report the frames the hardware actually consumed for the cue just finished.
+     *
+     * This is the measurement #61 asks for — delivered frames against the output rate — and the only
+     * one here that can tell a cue that *sounded* from a cue that was merely submitted. Everything
+     * else in this class reports on calls that returned cleanly, which a stalled track also does.
+     *
+     * Must be read before [resetTrack], because `flush` returns the playback head to zero.
+     */
+    private fun logDelivered() {
+        if (!Log.isLoggable(TAG, Log.DEBUG)) return
+        val head = synchronized(audioLock) { track?.playbackHeadPosition } ?: return
+        val delivered = head - headAtCueStart
+        Log.d(TAG, "delivered $delivered frames = ${delivered * 1000L / sampleRateHz}ms")
     }
 
     /**
@@ -304,22 +570,82 @@ class ToneManager(context: Context) {
         return Handler(thread.looper).also { toneHandler = it }
     }
 
-    private fun obtainGenerator(): ToneGenerator? =
-        synchronized(generatorLock) { obtainGeneratorLocked() }
+    /** The render thread's handler, starting the thread if it is not running. See [renderThread]. */
+    @Synchronized
+    private fun obtainRenderHandler(): Handler {
+        renderHandler?.let { return it }
+        val thread = HandlerThread(RENDER_THREAD_NAME, Process.THREAD_PRIORITY_DEFAULT)
+        thread.start()
+        renderThread = thread
+        return Handler(thread.looper).also { renderHandler = it }
+    }
+
+    /** Call with [audioLock] held. */
+    private fun obtainTrackLocked(): AudioTrack? {
+        track?.let { return it }
+        if (initFailed) return null
+
+        if (!hasAudioOutput) {
+            Log.w(TAG, "No audio output on this device; running vibration-only")
+            initFailed = true
+            return null
+        }
+
+        val minBytes = AudioTrack.getMinBufferSize(
+            sampleRateHz,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        val prefillBytes = (MAX_PREFILL_MS * sampleRateHz / 1000L).toInt() * BYTES_PER_SAMPLE
+        val bufferBytes = maxOf(prefillBytes, if (minBytes > 0) minBytes else 0)
+
+        return try {
+            AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        // USAGE_ALARM so the cue carries outdoors: on Wear it is the loudest stream
+                        // and the one users leave up for alerts, unlike media or notification.
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRateHz)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build(),
+                )
+                .setBufferSizeInBytes(bufferBytes)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+                .also {
+                    it.setVolume(AudioTrack.getMaxVolume())
+                    trackCapacitySamples = bufferBytes / BYTES_PER_SAMPLE
+                    track = it
+                }
+        } catch (e: RuntimeException) {
+            // UnsupportedOperationException from the builder, IllegalStateException from a stack
+            // that is mid-restart. Vibration still carries the cue.
+            Log.e(TAG, "AudioTrack unavailable; running vibration-only", e)
+            initFailed = true
+            null
+        }
+    }
 
     /**
      * (Re)start the silent tone that holds the audio output open. See [keepAliveGenerator].
      *
      * Best-effort like everything else here: a device with no usable audio stack simply runs
-     * vibration-only, and a failure to hold the output open costs evenness, not the cue.
+     * vibration-only, and a failure to hold the output open costs a cue's start latency, not the cue.
      */
     private fun armKeepAlive() {
-        synchronized(generatorLock) {
+        synchronized(audioLock) {
             if (!hasAudioOutput) return
             val generator = keepAliveGenerator ?: try {
                 ToneGenerator(AudioManager.STREAM_ALARM, 0).also { keepAliveGenerator = it }
             } catch (e: RuntimeException) {
-                Log.w(TAG, "Keep-alive generator unavailable; blasts may sound uneven", e)
+                Log.w(TAG, "Keep-alive generator unavailable; cues may start late", e)
                 return
             }
             try {
@@ -330,37 +656,29 @@ class ToneManager(context: Context) {
         }
     }
 
-    /** Call with [generatorLock] held. */
-    private fun obtainGeneratorLocked(): ToneGenerator? {
-        toneGenerator?.let { return it }
-        if (initFailed) return null
-
-        if (!hasAudioOutput) {
-            Log.w(TAG, "No audio output on this device; running vibration-only")
-            initFailed = true
-            return null
+    /** Call with [audioLock] held. */
+    private fun releaseTrackLocked() {
+        val audioTrack = track ?: return
+        try {
+            if (audioTrack.state == AudioTrack.STATE_INITIALIZED) audioTrack.stop()
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "AudioTrack stop failed", e)
         }
-
-        return try {
-            // STREAM_ALARM so the tone carries outdoors: on Wear it is the loudest stream and is
-            // the one users leave up for alerts, unlike STREAM_MUSIC or STREAM_NOTIFICATION.
-            ToneGenerator(AudioManager.STREAM_ALARM, ToneGenerator.MAX_VOLUME).also {
-                toneGenerator = it
-            }
+        try {
+            audioTrack.release()
         } catch (e: RuntimeException) {
-            Log.e(TAG, "ToneGenerator unavailable; running vibration-only", e)
-            initFailed = true
-            null
+            Log.w(TAG, "AudioTrack release failed", e)
         }
+        track = null
+        trackCapacitySamples = 0
+        pendingSamples = null
+        pendingFrom = 0
+        trackIsEmpty = false
     }
 
-    /** Call with [generatorLock] held. */
-    private fun releaseGeneratorLocked() {
-        try {
-            toneGenerator?.release()
-        } catch (e: RuntimeException) {
-            Log.w(TAG, "ToneGenerator release failed", e)
-        }
+    /** Call with [audioLock] held. */
+    private fun releaseAudioLocked() {
+        releaseTrackLocked()
         try {
             // Goes with the teardown, not with the cue: leaving it running would hold the audio
             // output open past the race that needed it.
@@ -368,7 +686,6 @@ class ToneManager(context: Context) {
         } catch (e: RuntimeException) {
             Log.w(TAG, "Keep-alive release failed", e)
         }
-        toneGenerator = null
         keepAliveGenerator = null
         soundingUntilMs = 0L
     }
@@ -382,8 +699,11 @@ class ToneManager(context: Context) {
      * left queued.
      */
     @Synchronized
-    private fun releaseGeneratorAndQuit() {
-        synchronized(generatorLock) { releaseGeneratorLocked() }
+    private fun releaseAudioAndQuit() {
+        synchronized(audioLock) { releaseAudioLocked() }
+        renderThread?.quitSafely()
+        renderThread = null
+        renderHandler = null
         toneThread?.quitSafely()
         toneThread = null
         toneHandler = null
@@ -394,13 +714,35 @@ class ToneManager(context: Context) {
 
         const val THREAD_NAME = "RaceTimerTone"
 
+        const val RENDER_THREAD_NAME = "RaceTimerRender"
+
+        const val BYTES_PER_SAMPLE = 2
+
+        /** Chunk used to pad the buffer on API 30. See `armStartThreshold`. */
+        const val SILENCE_CHUNK_SAMPLES = 4_096
+
+        /** Grace after a cue's nominal end before the track is reset, so its tail is not clipped. */
+        const val CUE_TAIL_MARGIN_MS = 300L
+
+        /** Only reached if the platform will not say what its output rate is. */
+        const val FALLBACK_SAMPLE_RATE_HZ = 48_000
+
         /**
-         * How far ahead of the cue every blast is scheduled, so none of them races a thread wake-up.
+         * Track buffer, in milliseconds of audio.
          *
-         * Sized off the measured worst case for a blast that was due the moment it was posted —
-         * 30 ms on an SM-R925U under recomposition (see the class doc) — with a little room over.
-         * Below that, blast 0 starts paying a wake-up its successors do not and the first interval
-         * of the cue closes up, which is audible on a 400 ms beat.
+         * Comfortably over the longest cue in any sequence — the three-second sustained gun — so a
+         * whole cue is in the buffer before playback starts and nothing has to be fed in as it
+         * drains. That is what makes an underrun impossible mid-cue, which is the one way a
+         * streaming track could reintroduce the gap this change removes.
+         */
+        const val MAX_PREFILL_MS = 4_000L
+
+        /**
+         * How far ahead of the cue the audio is scheduled, so it does not race a thread wake-up.
+         *
+         * Sized off the measured worst case for work that was due the moment it was posted — 30 ms
+         * on an SM-R925U under recomposition — with a little room over, and now also covering the
+         * render and the buffer write.
          *
          * The cost is that a cue's audio trails its vibration by this much, since [HapticManager]
          * submits at the unshifted moment. That is a deliberate trade: a constant offset between the
@@ -411,66 +753,16 @@ class ToneManager(context: Context) {
          */
         const val LEAD_IN_MS = 40L
 
-        /**
-         * Tone for a blast. High and piercing — the most audible of the built-ins over wind and
-         * water.
-         *
-         * A `TONE_CDMA_*` tone is a *pattern* with its own internal segment lengths, so a request is
-         * a cap rather than a length that is honoured. That is fatal for a sustained cue (see
-         * [SUSTAINED_TONE]) but survivable here, where every request is short enough to truncate the
-         * pattern rather than outrun it.
-         *
-         * **Do not swap this to a DTMF tone to chase the overshoot.** That was tried and measured on
-         * an SM-R925U under #58, and the overshoot is not a property of the tone family:
-         *
-         * | Requested | Tone | Delivered |
-         * |---|---|---|
-         * | 150 ms | `TONE_CDMA_HIGH_L` | 160.0 ms |
-         * | 150 ms | `TONE_DTMF_D` | 160.0 ms |
-         * | 500 ms | `TONE_CDMA_HIGH_L` | 520.0 ms |
-         * | 500 ms | `TONE_DTMF_D` | 512.0 ms **and** 520.0 ms, same race |
-         *
-         * The last row is the important one: identical calls delivered different lengths, so the
-         * overshoot cannot be tuned away by picking a tone or by shortening the request either. What
-         * remains is a tone running ~10–20 ms past the buzz beside it, in the same direction every
-         * time, which is a real but so-far-unfixed defect. Confirm any change here against delivered
-         * frame count, never by ear.
-         */
-        const val BLAST_TONE = ToneGenerator.TONE_CDMA_HIGH_L
-
-        /**
-         * Tone for a sustained cue.
-         *
-         * Not [BLAST_TONE]: the CDMA tones are patterns, and asking one for three seconds does not
-         * buy three seconds of sound — it stops when its own segment ends. The DTMF tones are single
-         * continuous segments, and at this length one tracks the request closely (3000 ms requested,
-         * 3000.2 ms delivered, #42), which is the whole requirement for the gun. Note that the same
-         * tone is *not* accurate at short lengths — see [SYNC_TONE] — so this reasoning does not
-         * transfer to blasts. Confirm any change here against delivered frame count, never by ear.
-         */
-        const val SUSTAINED_TONE = ToneGenerator.TONE_DTMF_D
-
-        /**
-         * Tone for a [CueVoice.SYNC] tick.
-         *
-         * Chosen for *pitch* distance from [BLAST_TONE], not timbre: `TONE_DTMF_1` is the lowest
-         * DTMF pair (697 + 1209 Hz) against a high CDMA blast, and pitch is what survives wind and
-         * water on the water.
-         *
-         * Known defect, measured under #58: at [CueTiming.SYNC_ON] this delivers **80 ms for a 60 ms
-         * request** — a third longer than the buzz beside it, and the worst proportional overshoot
-         * in the app. It is not fixable by tone choice ([BLAST_TONE] has the evidence); closing it
-         * means driving [HapticManager] from measured delivered lengths rather than requested ones.
-         * Confirm any change here against delivered frame count, never by ear.
-         */
-        const val SYNC_TONE = ToneGenerator.TONE_DTMF_1
-
         /** Long enough to register outdoors, short enough to stay clear of the next cue. */
-        const val BEEP_MS = 400
+        const val BEEP_MS = 400L
 
         /**
          * Tone used for the silent keep-alive. DTMF because it must hold for an arbitrary requested
          * length — a `TONE_CDMA_*` pattern would stop at its own segment and let the output close.
+         *
+         * The last [ToneGenerator] in the class, and it is here for what it does to the *output*
+         * rather than for the sound it makes, which is why the duration cap that ruled it out for
+         * cues does not matter: nothing is listening to it.
          */
         const val KEEP_ALIVE_TONE = ToneGenerator.TONE_DTMF_0
 
