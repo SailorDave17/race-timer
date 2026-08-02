@@ -547,6 +547,60 @@ class TimerEngineTest {
         )
     }
 
+    // --- What "a race is on screen" actually means (#87) ------------------------
+
+    @Test fun `a stopped engine is IDLE but still holds its sequence`() {
+        // Why the pre-start screen asks the state rather than whether a sequence is loaded (#87).
+        // stop() keeps the sequence on purpose — see its doc, and the pausedRemainingMs line that
+        // exists so the idle screen reads a full duration rather than 0:00 — so
+        // `loadedSequence != null` stayed true after Stop. The screen went on rendering the *stopped*
+        // race's length while the sailor picked a different sequence, and Start then correctly ran
+        // the new one, disagreeing with the number they had just read.
+        engine.load(BuiltInSequences.club) // 3:00
+        engine.start()
+        fakeNow += 30_000L
+        fakeWall += 30_000L
+        engine.stop()
+
+        assertEquals(TimerState.IDLE, engine.currentState)
+        assertNotNull("stop() keeps the sequence on purpose", engine.loadedSequence)
+        // The trap in one line: this is the *stopped* race's duration, and it is what the screen was
+        // showing under whatever sequence name the sailor had since picked.
+        assertEquals(180_000L, engine.remainingMs)
+    }
+
+    @Test fun `a race past its gun is not IDLE, so the gun stays on screen`() {
+        // The other side of the same condition: FINISHED must keep rendering from the engine. Treating
+        // "no race" as "not RUNNING" instead of "IDLE" would flip the screen to the next sequence's
+        // duration at the exact moment the gun fires.
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        fakeNow += 180_000L
+        fakeWall += 180_000L
+        engine.tick()
+
+        assertEquals(TimerState.FINISHED, engine.currentState)
+        assertTrue("the gun must still own the screen", engine.currentState != TimerState.IDLE)
+    }
+
+    @Test fun `a count-up race and its frozen summary are both non-IDLE`() {
+        // RACE_ENDED exists precisely to hold the final time up for the race committee, so it has to
+        // count as a race on screen too — the one case where a *finished* race must outrank the
+        // selection for as long as the sailor is still looking at it.
+        engine.load(BuiltInSequences.scholasticRaceManager) // 3:00, counts up past the gun
+        engine.start()
+        fakeNow += 200_000L
+        fakeWall += 200_000L
+        engine.tick()
+        assertEquals(TimerState.COUNTING_UP, engine.currentState)
+
+        engine.endRace()
+        assertEquals(TimerState.RACE_ENDED, engine.currentState)
+
+        engine.stop()
+        assertEquals("only Stop returns it to the pre-start screen", TimerState.IDLE, engine.currentState)
+    }
+
     // --- State restoration ----------------------------------------------------
 
     @Test fun `restore resumes correctly on same boot`() {
