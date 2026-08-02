@@ -220,6 +220,41 @@ class TimerService : Service() {
                 }
                 pendingRestoreNotice = lastRestoreOutcome
 
+                // Sound whatever is already due, synchronously, ahead of the startup work below (#62).
+                //
+                // The first cue of every sequence we ship sits at `offsetMs == totalMs` — Scholastic's
+                // 3:00, US Sailing's 5:00, a Custom race's whole-minute top — so it comes due at the
+                // instant `start()` anchors the gun, with no slack at all. It used to be dispatched by
+                // the first `tickRunnable` pass, which put it behind persist + wake lock +
+                // `startForeground`: measured ~170 ms late against an anchor the countdown display had
+                // right to the millisecond.
+                //
+                // It has to be a direct call, not a re-ordering of the four lines below. Both
+                // `scheduleTickLoop` and `scheduleNextCue` *post* to the main Looper and this method is
+                // already running on it, so nothing they queue can be picked up until `onStartCommand`
+                // returns — hoisting either above the block would move code and change no timing. Only
+                // work done on this thread gets ahead of the startup path.
+                //
+                // Safe to put ahead of `startForeground`, whose Android 12+ deadline is the reason not
+                // to delay it casually (see the START_NOT_STICKY note further down for prior art on
+                // that class of problem): what runs on *this* thread is one vibrator binder call plus a
+                // couple of handler posts — `ToneManager.playCue` hands the cue to the tone thread and
+                // returns — single-digit milliseconds against a multi-second budget.
+                //
+                // Firing this early does leave #61's `warmUp` less time to win the pre-render race, and
+                // it will now usually lose it: the render thread is started a few lines above and a cue
+                // costs 27-861 ms to synthesise depending on how contended that thread is. Still a
+                // strict improvement, because losing the race is not a wait — `ToneManager.cueFor`
+                // reads a `ConcurrentHashMap` and re-renders on the tone thread rather than blocking on
+                // the render thread. The cue therefore sounds one render after *dispatch* in either
+                // arrangement, and dispatch is the part that moved. The cost is one duplicated render,
+                // which that class already accounts wasted work rather than a fault.
+                //
+                // The restore path wants this too, and said so first: `TimerEngine.restore` keeps cues
+                // with `offsetMs <= remaining` precisely so that "a cue sitting exactly on `remaining`
+                // is still to come and tick() should sound it at once".
+                engine.tick()
+
                 persistSnapshot()
                 acquireWakeLock()
                 startForegroundWithNotification()
