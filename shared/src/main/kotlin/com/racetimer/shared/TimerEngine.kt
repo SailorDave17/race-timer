@@ -584,8 +584,52 @@ fun resumeOfferRemainingMs(
     selectedSequenceId: String,
     nowElapsedMs: Long,
     nowWallMs: Long,
+): Long? = recoverableRemainingMs(snap, sequence, nowElapsedMs, nowWallMs)
+    ?.takeIf { snap.sequenceId == selectedSequenceId }
+
+/**
+ * The same saved race seen from the other side: what tapping Start is about to **throw away**.
+ *
+ * Non-null exactly when a recoverable race is saved and the sailor has a *different* sequence
+ * selected — the case [resumeOfferRemainingMs] withholds the offer for. `ACTION_START` will then take
+ * the load-and-start branch and `persistSnapshot()` will write the new race over the old one, which is
+ * a one-tap, unrecoverable loss with nothing on screen to warn of it (#89).
+ *
+ * These two functions are **exact complements** over a recoverable race — the id either matches or it
+ * does not — so at most one is ever non-null, and both read recoverability from
+ * [recoverableRemainingMs] rather than deciding it again. That matters here specifically: the rule was
+ * previously written out twice in `MainActivity`, inverted relative to itself, which is how the
+ * mismatch case went unnoticed in the first place.
+ *
+ * Returns the doomed race's live remaining time so a caller can name what is being lost. Negative for a
+ * count-up race past its gun, exactly as [remainingFromSnapshot] defines it.
+ */
+fun discardedOnStartRemainingMs(
+    snap: TimerEngine.Snapshot,
+    sequence: RaceSequence,
+    selectedSequenceId: String,
+    nowElapsedMs: Long,
+    nowWallMs: Long,
+): Long? = recoverableRemainingMs(snap, sequence, nowElapsedMs, nowWallMs)
+    ?.takeIf { snap.sequenceId != selectedSequenceId }
+
+/**
+ * Is there anything left of this saved race, whatever sequence is currently selected?
+ *
+ * The single recoverability rule behind both public readings above. A countdown whose gun has passed is
+ * spent and worth neither offering nor protecting; a [RaceSequence.countUpAfterFinish] race past its
+ * gun is neither, because that is where it lives.
+ *
+ * Deliberately blind to the selection: a spent race must come back null for *both* callers, so that
+ * starting something else over the top of it happens without ceremony. Warning about a race with
+ * nothing left to resume would train the sailor to ignore the warning that matters.
+ */
+private fun recoverableRemainingMs(
+    snap: TimerEngine.Snapshot,
+    sequence: RaceSequence,
+    nowElapsedMs: Long,
+    nowWallMs: Long,
 ): Long? {
-    if (snap.sequenceId != selectedSequenceId) return null
     val remaining = remainingFromSnapshot(snap, nowElapsedMs, nowWallMs)
     return if (remaining <= 0L && !sequence.countUpAfterFinish) null else remaining
 }

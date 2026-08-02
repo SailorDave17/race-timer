@@ -24,6 +24,7 @@ import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.discardedOnStartRemainingMs
 import com.racetimer.shared.formatCountdown
 import com.racetimer.shared.resumeOfferRemainingMs
 import com.racetimer.wear.ui.CustomDurationScreen
@@ -94,6 +95,20 @@ class MainActivity : ComponentActivity() {
      * time rather than a countdown that would render as a negative number.
      */
     private var uiPreviewElapsed by mutableStateOf(false)
+
+    /**
+     * Names the saved race a tap on Start is about to destroy, or null when it would destroy nothing.
+     *
+     * The complement of [uiResumeOffered]: the saved race is recoverable but belongs to a *different*
+     * sequence, so Start runs the selection and `persistSnapshot()` writes over the old race. That is
+     * one tap and unrecoverable, and until #89 nothing said so — the sailor saw an ordinary Start
+     * (#87's sibling fix having correctly removed the wrong-but-alarming Resume offer that used to sit
+     * there by accident).
+     *
+     * A standing caveat rather than news, so Tier 3 per `docs/message-surface.md` — it must survive
+     * until the sailor acts, because the thing it warns about is the very next tap.
+     */
+    private var uiDiscardWarning by mutableStateOf<String?>(null)
 
     private var selectedSequence: RaceSequence = BuiltInSequences.usSailing
 
@@ -192,6 +207,7 @@ class MainActivity : ComponentActivity() {
                             message = uiMessage,
                             resumeOffered = uiResumeOffered,
                             previewElapsed = uiPreviewElapsed,
+                            discardWarning = uiDiscardWarning,
                             onStart = { handleStart() },
                             onStartOver = { handleStartOver() },
                             onStop = { handleStop() },
@@ -333,12 +349,38 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    /**
+     * The Tier 3 line warning that Start will destroy the saved race, or null when it will not.
+     *
+     * Recomputed every refresh for the same reason as [pendingResumeRemainingMs]: the saved race's gun
+     * keeps approaching whether or not it is being looked at, so a race that is worth protecting now
+     * may be spent a minute from now and the warning has to go with it.
+     *
+     * Names the *sequence* rather than the remaining time. The clock on screen belongs to the race the
+     * sailor is about to start, and putting a second, different time next to it invites reading the
+     * wrong one — the exact confusion #87 is about. The name is enough to identify what is being lost.
+     */
+    private fun discardWarning(): String? {
+        val (snapshot, sequence) = pendingResume ?: return null
+        discardedOnStartRemainingMs(
+            snapshot,
+            sequence,
+            selectedSequence.id,
+            SystemMonotonicClock.elapsedMs(),
+            System.currentTimeMillis(),
+        ) ?: return null
+        return "Start discards saved ${sequence.name}"
+    }
+
     /** Drop the saved race's claim on the pre-start screen, whichever way the sailor answered it. */
     private fun clearResumeOffer() {
         pendingResume = null
         resumeAnswered = false
         uiResumeOffered = false
         uiPreviewElapsed = false
+        // The warning is the other half of that claim (see [uiDiscardWarning]) and goes with it — by
+        // the time an engine holds a race, whatever was going to be discarded already has been.
+        uiDiscardWarning = null
     }
 
     // --- User actions ---------------------------------------------------------
@@ -476,6 +518,9 @@ class MainActivity : ComponentActivity() {
             uiElapsedMs = if (uiPreviewElapsed) displayedElapsedMs(-resumeRemaining!!) else 0L
             uiTimerState = TimerState.IDLE
             uiShowResyncPrompt = false
+            // Suppressed once the sailor has answered: they have committed, the race is already being
+            // discarded, and a warning about it is no longer something they can act on.
+            uiDiscardWarning = if (resumeAnswered) null else discardWarning()
             setScreenOn(false)
             return
         }
