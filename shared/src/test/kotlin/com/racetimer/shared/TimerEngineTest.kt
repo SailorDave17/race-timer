@@ -455,6 +455,98 @@ class TimerEngineTest {
         )
     }
 
+    // --- What Start is about to throw away (#89) -------------------------------
+
+    @Test fun `discardedOnStartRemainingMs names the race a mismatched Start would destroy`() {
+        // The loss #89 is about: ACTION_START takes the load-and-start branch on an id mismatch and
+        // persistSnapshot() writes the new race over the old one. Nothing on screen said so.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        val doomed = BuiltInSequences.custom(totalMinutes = 5)
+        assertEquals(
+            420_000L,
+            discardedOnStartRemainingMs(snap, saved, doomed.id, fakeNow, fakeWall),
+        )
+    }
+
+    @Test fun `discardedOnStartRemainingMs is silent when the saved race is the selected one`() {
+        // Selecting the saved race's own sequence means Start resumes it, not destroys it.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        assertNull(discardedOnStartRemainingMs(snap, saved, saved.id, fakeNow, fakeWall))
+    }
+
+    @Test fun `a spent countdown is neither offered nor worth warning about`() {
+        // Both sides go quiet together. Warning about a race with nothing left to resume would train
+        // the sailor to ignore the warning that matters.
+        val saved = BuiltInSequences.club // 3:00
+        engine.load(saved)
+        engine.start()
+        val snap = engine.snapshot()!!
+        val spentElapsed = fakeNow + 180_001L
+        val spentWall = fakeWall + 180_001L
+
+        assertNull(resumeOfferRemainingMs(snap, saved, saved.id, spentElapsed, spentWall))
+        assertNull(discardedOnStartRemainingMs(snap, saved, "custom_5m", spentElapsed, spentWall))
+    }
+
+    @Test fun `the offer and the discard warning are exact complements`() {
+        // The structural guarantee behind #89's fix: one recoverability rule, two readings of it, so
+        // they cannot drift the way the expiry rule did when it was written out twice inverted.
+        // Whatever is selected, a recoverable race is either resumable or doomed - never both, never
+        // neither.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        val selections = listOf(
+            saved.id,
+            BuiltInSequences.custom(totalMinutes = 5).id,
+            BuiltInSequences.club.id,
+            BuiltInSequences.usSailing.id,
+            BuiltInSequences.scholasticRaceManager.id,
+        )
+        for (selected in selections) {
+            val offered = resumeOfferRemainingMs(snap, saved, selected, fakeNow, fakeWall)
+            val doomed = discardedOnStartRemainingMs(snap, saved, selected, fakeNow, fakeWall)
+            assertTrue(
+                "exactly one of offer/discard must answer for selection=$selected, got $offered / $doomed",
+                (offered == null) != (doomed == null),
+            )
+            assertEquals("both must report the same clock", 420_000L, offered ?: doomed)
+        }
+    }
+
+    @Test fun `a count-up race past its gun is still worth warning about`() {
+        // The count-up exception has to reach the warning too, not just the offer: past the gun is
+        // where a race-manager race lives, so it is still destroyable and still worth protecting.
+        val saved = BuiltInSequences.scholasticRaceManager
+        engine.load(saved)
+        engine.start()
+        val snap = engine.snapshot()!!
+
+        assertEquals(
+            -120_000L,
+            discardedOnStartRemainingMs(
+                snap, saved, BuiltInSequences.club.id,
+                fakeNow + 300_000L, fakeWall + 300_000L,
+            ),
+        )
+    }
+
     // --- State restoration ----------------------------------------------------
 
     @Test fun `restore resumes correctly on same boot`() {

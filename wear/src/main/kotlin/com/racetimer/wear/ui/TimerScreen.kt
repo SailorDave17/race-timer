@@ -79,6 +79,11 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  *                       between resuming it and running the sequence from the top.
  * @param previewElapsed True when the offered race is already past its gun (a race-manager count-up),
  *                       so the readout shows [elapsedMs] instead of a countdown to a gun that fired.
+ * @param discardWarning Non-null when a saved race is still recoverable but belongs to a *different*
+ *                       sequence, so tapping Start destroys it. Tier 3 per `docs/message-surface.md`:
+ *                       a standing caveat about the very next tap, so it persists rather than clearing
+ *                       itself. Mutually exclusive with [resumeOffered] by construction — the saved
+ *                       race either matches the selection or it does not.
  * @param onStart        Called when the user taps Start, or Resume when [resumeOffered].
  * @param onStartOver    Called when the user taps Start over. Only reachable when [resumeOffered].
  * @param onStop         Called when the user taps Stop, or Done in [TimerState.RACE_ENDED].
@@ -97,6 +102,7 @@ fun TimerScreen(
     message: String? = null,
     resumeOffered: Boolean = false,
     previewElapsed: Boolean = false,
+    discardWarning: String? = null,
     onStart: () -> Unit,
     onStartOver: () -> Unit = {},
     onStop: () -> Unit,
@@ -141,6 +147,26 @@ fun TimerScreen(
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "Recovered — tap Sync to confirm",
+                    style = MaterialTheme.typography.caption2,
+                    color = Color(0xFFFFC107),
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                )
+            }
+
+            // What Start is about to throw away (#89). The same Tier 3 surface as the prompt above,
+            // and they cannot collide: this one only appears pre-start, while showResyncPrompt
+            // requires a RUNNING engine.
+            //
+            // No scrim, matching the existing Tier 3 consumer. The contrast defect noted in
+            // docs/message-surface.md is the amber-on-amber case, and the amber background only
+            // appears inside the final minute of a *running* race — which this line cannot be on
+            // screen for. Against the idle navy it computes 10.4:1. Giving it a scrim here would
+            // pre-empt the fix #12 owns for the tier as a whole.
+            if (discardWarning != null) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = discardWarning,
                     style = MaterialTheme.typography.caption2,
                     color = Color(0xFFFFC107),
                     fontWeight = FontWeight.Bold,
