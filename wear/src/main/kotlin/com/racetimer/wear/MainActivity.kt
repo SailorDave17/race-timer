@@ -25,7 +25,7 @@ import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.formatCountdown
-import com.racetimer.shared.remainingFromSnapshot
+import com.racetimer.shared.resumeOfferRemainingMs
 import com.racetimer.wear.ui.CustomDurationScreen
 import com.racetimer.wear.ui.DEFAULT_CUSTOM_MINUTES
 import com.racetimer.wear.ui.RaceTimerTheme
@@ -294,8 +294,17 @@ class MainActivity : ComponentActivity() {
         // Resume on a spent countdown would promise a race that no longer exists; the service's
         // EXPIRED path and its "Old race ended" banner still cover a stale snapshot if one is
         // reached by tapping Start.
-        val remaining = remainingFromSnapshot(snapshot, SystemMonotonicClock.elapsedMs(), System.currentTimeMillis())
-        if (remaining > 0L || saved.countUpAfterFinish) {
+        // The same rule the refresh re-applies on every tick. `saved.id` is passed as the selection
+        // because [applySelection] above has just made it exactly that, so the id half is satisfied
+        // by construction here and only starts biting once the sailor picks something else.
+        val remaining = resumeOfferRemainingMs(
+            snapshot,
+            saved,
+            saved.id,
+            SystemMonotonicClock.elapsedMs(),
+            System.currentTimeMillis(),
+        )
+        if (remaining != null) {
             pendingResume = snapshot to saved
         }
     }
@@ -306,22 +315,22 @@ class MainActivity : ComponentActivity() {
      * Recomputed rather than stored: see [pendingResume]. Returns the remaining time to show, or
      * null when there is no offer, in which case the caller falls back to the selected sequence's
      * full duration the way it always did.
+     *
+     * The rule itself lives in [resumeOfferRemainingMs], so it can be tested without an Activity and
+     * so this and [restorePendingSelection] cannot drift — they had the expiry half of it spelled out
+     * twice, inverted. [pendingResume] is deliberately left set when the answer is null: an offer
+     * withheld because a different sequence is now selected has to come back if the sailor selects
+     * the saved race's own sequence again, and an expired one recomputes to null on every tick.
      */
     private fun pendingResumeRemainingMs(): Long? {
         val (snapshot, sequence) = pendingResume ?: return null
-        val remaining = remainingFromSnapshot(
+        return resumeOfferRemainingMs(
             snapshot,
+            sequence,
+            selectedSequence.id,
             SystemMonotonicClock.elapsedMs(),
             System.currentTimeMillis(),
         )
-        // A countdown that runs out while the offer is on screen stops being resumable at the moment
-        // it does, and the offer goes with it. A count-up race never does: past the gun is where it
-        // lives.
-        if (remaining <= 0L && !sequence.countUpAfterFinish) {
-            pendingResume = null
-            return null
-        }
-        return remaining
     }
 
     /** Drop the saved race's claim on the pre-start screen, whichever way the sailor answered it. */

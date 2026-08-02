@@ -560,6 +560,36 @@ fun gunTimeFromSnapshot(snap: TimerEngine.Snapshot, nowElapsedMs: Long, nowWallM
 fun remainingFromSnapshot(snap: TimerEngine.Snapshot, nowElapsedMs: Long, nowWallMs: Long): Long =
     gunTimeFromSnapshot(snap, nowElapsedMs, nowWallMs) - nowElapsedMs
 
+/**
+ * The number a "Resume" offer may stand on, or null when the saved race must not be offered at all.
+ *
+ * The offer on screen and what Start actually does have to agree, and there are two ways they drift:
+ *
+ * 1. **A different sequence is selected.** `TimerService.onStartCommand` restores only when the
+ *    persisted id equals the id Start sends, so a saved `custom_8m` has no claim on a screen showing
+ *    `custom_5m` — a tap there runs 5:00 from the top. Custom reaches this without ever leaving the
+ *    sequence, because re-dialling the stepper changes the id, which is how the preview came to sit
+ *    on the previous duration while Start correctly ran the new one.
+ * 2. **The saved gun has already passed.** A spent countdown has no race to come back to. A
+ *    [RaceSequence.countUpAfterFinish] race is the exception — past the gun is where it lives, and
+ *    restoring resumes the count-up — so its negative reading is returned rather than refused.
+ *
+ * Returned rather than acted on, so a caller holding the snapshot keeps it: withholding the offer is
+ * not the same as discarding the race, which only Stop, a fresh start, or the post-gun teardown do.
+ * Selecting the saved race's own sequence again therefore brings the offer back.
+ */
+fun resumeOfferRemainingMs(
+    snap: TimerEngine.Snapshot,
+    sequence: RaceSequence,
+    selectedSequenceId: String,
+    nowElapsedMs: Long,
+    nowWallMs: Long,
+): Long? {
+    if (snap.sequenceId != selectedSequenceId) return null
+    val remaining = remainingFromSnapshot(snap, nowElapsedMs, nowWallMs)
+    return if (remaining <= 0L && !sequence.countUpAfterFinish) null else remaining
+}
+
 // ---------------------------------------------------------------------------
 // Sync helper (pure, testable)
 // ---------------------------------------------------------------------------
