@@ -318,7 +318,7 @@ class RaceSequenceTest {
         // RaceSequence.kt and `scholasticRaceManager tail matches the requested race-manager cadence`
         // below, which pins down what it uses instead (single ticks, not doubled).
         val sequences = (BuiltInSequences.all - BuiltInSequences.scholasticRaceManager) +
-            BuiltInSequences.custom(totalSeconds = 180L)
+            BuiltInSequences.custom(totalMinutes = 3)
         for (seq in sequences) {
             for (sec in 5L downTo 1L) {
                 val offset = sec * 1_000L
@@ -333,28 +333,107 @@ class RaceSequenceTest {
         }
     }
 
+    // --- Custom sequence ------------------------------------------------------
+
     @Test fun `custom sequence has correct totalMs`() {
-        val seq = BuiltInSequences.custom(totalSeconds = 360L)
-        assertEquals(360_000L, seq.totalMs)
+        val seq = BuiltInSequences.custom(totalMinutes = 6)
+        assertEquals(6 * 60_000L, seq.totalMs)
     }
 
     @Test fun `custom sequence contains gun at 0`() {
-        val seq = BuiltInSequences.custom(totalSeconds = 120L)
+        val seq = BuiltInSequences.custom(totalMinutes = 2)
         assertTrue(seq.cues.any { it.isGun && it.offsetMs == 0L })
     }
 
     @Test fun `custom sequence cues are sorted descending`() {
-        val seq = BuiltInSequences.custom(totalSeconds = 300L)
+        val seq = BuiltInSequences.custom(totalMinutes = 5)
         val offsets = seq.cues.map { it.offsetMs }
         assertEquals(offsets.sortedDescending(), offsets)
     }
 
-    @Test fun `custom sequence excludes intermediate cues outside range`() {
-        // 90s total; intermediate cues at 60, 30, 10 — all within range
-        val seq = BuiltInSequences.custom(totalSeconds = 90L, intermediateCueOffsetsSec = listOf(60, 30, 10))
-        assertTrue(seq.cues.any { it.offsetMs == 60_000L })
-        assertTrue(seq.cues.any { it.offsetMs == 30_000L })
-        assertTrue(seq.cues.any { it.offsetMs == 10_000L })
+    @Test fun `custom sounds one long blast on every whole minute down to 1 00`() {
+        val seq = BuiltInSequences.custom(totalMinutes = 8)
+        for (minute in 8 downTo 1) {
+            assertPattern(seq, minute * 60_000L, longBlasts = 1, shortBlasts = 0)
+        }
+    }
+
+    @Test fun `custom has no cue above its own duration`() {
+        val seq = BuiltInSequences.custom(totalMinutes = 4)
+        assertEquals(4 * 60_000L, seq.cues.maxOf { it.offsetMs })
+    }
+
+    @Test fun `custom below the minute is the scholastic tail, cue for cue`() {
+        // The whole point of the re-spec: below 1:00 a Custom race must be indistinguishable from
+        // Scholastic, so an unfamiliar duration still ends in a cadence the sailor already races to.
+        val custom = BuiltInSequences.custom(totalMinutes = 7).cues.filter { it.offsetMs < 60_000L }
+        val scholastic = BuiltInSequences.scholastic.cues.filter { it.offsetMs < 60_000L }
+        assertEquals(scholastic, custom)
+    }
+
+    @Test fun `custom ends in the sustained gun, not a blast count`() {
+        val gun = BuiltInSequences.custom(totalMinutes = 3).cues.last()
+        assertTrue("last cue must be the gun", gun.isGun)
+        assertEquals(0L, gun.offsetMs)
+        assertEquals(3_000L, gun.signal.sustainedMs)
+        assertEquals(0, gun.signal.longBlasts)
+        assertEquals(0, gun.signal.shortBlasts)
+    }
+
+    @Test fun `a one-minute custom race is one long blast plus the scholastic tail`() {
+        // The documented minimum, spelled out in full rather than by property: 1:00 is the one
+        // duration where the minute cues and the tail meet with nothing in between, so it is the
+        // case most likely to lose or double a cue if the composition changes.
+        val seq = BuiltInSequences.custom(totalMinutes = 1)
+        assertEquals(60_000L, seq.totalMs)
+
+        val expected = listOf(
+            SequenceCue(60_000L, SignalPattern(longBlasts = 1, label = "1 long — 1:00")),
+        ) + BuiltInSequences.scholastic.cues.filter { it.offsetMs < 60_000L }
+        assertEquals(expected, seq.cues)
+    }
+
+    @Test fun `custom clamps to the one-minute minimum rather than throwing`() {
+        // Only reachable from a malformed persisted id — the picker enforces the minimum. A watch
+        // about to time a race is the wrong place to raise.
+        for (minutes in listOf(0, -1, Int.MIN_VALUE)) {
+            val seq = BuiltInSequences.custom(totalMinutes = minutes)
+            assertEquals("custom($minutes)", 60_000L, seq.totalMs)
+            assertEquals("custom($minutes)", BuiltInSequences.customId(1), seq.id)
+        }
+    }
+
+    // --- Resolving a sequence by id (the restore path) ------------------------
+
+    @Test fun `resolve returns every built-in by its own id`() {
+        for (seq in BuiltInSequences.all) {
+            assertSame(seq.id, seq, BuiltInSequences.resolve(seq.id))
+        }
+    }
+
+    @Test fun `resolve rebuilds a custom sequence from its id alone`() {
+        // The restore path in full: the id is the only thing persistence keeps about the chosen
+        // sequence, so if this does not reproduce the race, a killed process cannot come back as
+        // itself. Before this existed the lookup searched `all`, missed, and silently substituted
+        // US Sailing — wrong duration, wrong cues, no error.
+        for (minutes in listOf(1, 2, 8, 45, 120)) {
+            val original = BuiltInSequences.custom(totalMinutes = minutes)
+            val restored = BuiltInSequences.resolve(original.id)
+            assertEquals("custom $minutes restored", original, restored)
+        }
+    }
+
+    @Test fun `resolve returns null rather than substituting for an id nothing answers to`() {
+        for (id in listOf("", "custom_", "custom_m", "custom_0m", "custom_-3m", "custom_8", "custom_8s",
+                          "custom_eightm", "us_sailing", "scholastic_2")) {
+            assertNull("'$id' must not resolve", BuiltInSequences.resolve(id))
+        }
+    }
+
+    @Test fun `custom name and id both carry the chosen duration`() {
+        val seq = BuiltInSequences.custom(totalMinutes = 12)
+        assertEquals("Custom 12:00", seq.name)
+        assertEquals(12, BuiltInSequences.customMinutes(seq.id))
     }
 
     /** Assert the scholastic cue at [offsetMs] is exactly the given blast pattern. */

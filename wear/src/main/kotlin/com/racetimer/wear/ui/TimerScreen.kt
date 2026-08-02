@@ -74,7 +74,13 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  * @param showResyncPrompt True after a degraded recovery (reboot / clock step): the restored gun
  *                       is best-effort, so prompt the sailor to tap Sync against the RC flag.
  * @param message        Non-null to show a transient notice/warning banner (e.g. clock jump).
- * @param onStart        Called when the user taps Start.
+ * @param resumeOffered  True when a race survived a process kill and [remainingMs] is *that* race's
+ *                       clock rather than the sequence's full duration: Start becomes a choice
+ *                       between resuming it and running the sequence from the top.
+ * @param previewElapsed True when the offered race is already past its gun (a race-manager count-up),
+ *                       so the readout shows [elapsedMs] instead of a countdown to a gun that fired.
+ * @param onStart        Called when the user taps Start, or Resume when [resumeOffered].
+ * @param onStartOver    Called when the user taps Start over. Only reachable when [resumeOffered].
  * @param onStop         Called when the user taps Stop, or Done in [TimerState.RACE_ENDED].
  * @param onSync         Called when the user taps Sync.
  * @param onEndRace      Called when the user taps End Race in [TimerState.COUNTING_UP].
@@ -89,7 +95,10 @@ fun TimerScreen(
     syncLabel: String?,
     showResyncPrompt: Boolean = false,
     message: String? = null,
+    resumeOffered: Boolean = false,
+    previewElapsed: Boolean = false,
     onStart: () -> Unit,
+    onStartOver: () -> Unit = {},
     onStop: () -> Unit,
     onSync: () -> Unit,
     onEndRace: () -> Unit = {},
@@ -142,7 +151,12 @@ fun TimerScreen(
             Spacer(modifier = Modifier.height(4.dp))
 
             // The big countdown / elapsed-time display
-            CountdownText(remainingMs = remainingMs, elapsedMs = elapsedMs, state = state)
+            CountdownText(
+                remainingMs = remainingMs,
+                elapsedMs = elapsedMs,
+                state = state,
+                previewElapsed = previewElapsed,
+            )
 
             Spacer(modifier = Modifier.height(4.dp))
 
@@ -168,7 +182,15 @@ fun TimerScreen(
                 // returns the engine to IDLE once the gun cue and its "GO!" linger are done, so the
                 // sailor is never left on a finished screen with no way back.
                 TimerState.IDLE, TimerState.FINISHED, TimerState.PAUSED -> {
-                    StartButton(onClick = onStart)
+                    // A race that outlived the process turns the one control into a question. The
+                    // readout above is already showing that race's own clock, so both answers are
+                    // legible before the tap: Resume continues the number on screen, Start over
+                    // replaces it with the sequence's full duration.
+                    if (resumeOffered) {
+                        ResumeChoice(onResume = onStart, onStartOver = onStartOver)
+                    } else {
+                        StartButton(onClick = onStart)
+                    }
                 }
                 TimerState.RUNNING -> {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -206,12 +228,20 @@ fun TimerScreen(
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun CountdownText(remainingMs: Long, elapsedMs: Long, state: TimerState) {
+private fun CountdownText(
+    remainingMs: Long,
+    elapsedMs: Long,
+    state: TimerState,
+    previewElapsed: Boolean = false,
+) {
     val isFinalTen = state == TimerState.RUNNING && remainingMs in 1..10_000L
     val isFinished = state == TimerState.FINISHED
-    // Same elapsed-time display in both: live while COUNTING_UP, frozen once RACE_ENDED (elapsedMs
-    // itself carries that distinction — see the frozen-getter note on TimerEngine.remainingMs).
-    val showsElapsed = state == TimerState.COUNTING_UP || state == TimerState.RACE_ENDED
+    // Same elapsed-time display in all three: live while COUNTING_UP, frozen once RACE_ENDED
+    // (elapsedMs itself carries that distinction — see the frozen-getter note on
+    // TimerEngine.remainingMs), and live again while IDLE previewing a count-up race that survived a
+    // process kill, which is running whether or not this app is.
+    val showsElapsed = previewElapsed ||
+        state == TimerState.COUNTING_UP || state == TimerState.RACE_ENDED
 
     val displayText = when {
         showsElapsed -> formatElapsed(elapsedMs)
@@ -281,6 +311,63 @@ private fun StartButton(onClick: () -> Unit) {
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+/**
+ * Resume / Start over, the pre-start screen's one two-answer state.
+ *
+ * Side by side rather than stacked because there is no vertical room: the column above already runs
+ * to roughly 160 dp of a 192 dp screen, and a second full-width pill under the first would push the
+ * readout off. Splitting one row is the only shape that fits without shrinking the readout, which is
+ * the thing being asked about and must stay the largest element on screen.
+ *
+ * Resume keeps [StartButton]'s gold because it is the same action — arm the race that is already on
+ * screen — while Start over takes the muted secondary colour. Neither is destructive by accident:
+ * Start over is only ever reachable next to the number it would discard.
+ */
+@Composable
+private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(0.92f),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Button(
+            onClick = onResume,
+            modifier = Modifier
+                .weight(1f)
+                .height(52.dp),
+            colors = ButtonDefaults.buttonColors(
+                backgroundColor = Color(0xFFFFD700),
+                contentColor = Color(0xFF1A1A2E),
+            ),
+        ) {
+            Text(
+                text = "Resume",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+            )
+        }
+        Button(
+            onClick = onStartOver,
+            modifier = Modifier
+                .weight(1f)
+                .height(52.dp),
+            colors = ButtonDefaults.buttonColors(
+                backgroundColor = Color(0xFF555577),
+                contentColor = Color.White,
+            ),
+        ) {
+            Text(
+                text = "Start over",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 

@@ -174,6 +174,12 @@ class TimerService : Service() {
                 val sequenceId = intent.getStringExtra(EXTRA_SEQUENCE_ID) ?: BuiltInSequences.usSailing.id
                 val sequence = findSequence(sequenceId)
 
+                // Start over, explicitly asked for. The sailor was shown the saved race and chose
+                // not to resume it, so it is discarded here rather than left to be picked up by the
+                // restore branch below — or offered again on the next launch.
+                val freshStart = intent.getBooleanExtra(EXTRA_FRESH_START, false)
+                if (freshStart) clearPersistedState()
+
                 // Check if we should restore from saved state
                 val savedGunElapsed = prefs.getLong(PREF_GUN_ELAPSED, -1L)
                 val savedGunWall = prefs.getLong(PREF_GUN_WALL_CLOCK, -1L)
@@ -482,8 +488,21 @@ class TimerService : Service() {
 
     // --- Helpers --------------------------------------------------------------
 
+    /**
+     * The sequence [id] names, falling back to the default only when nothing answers to it.
+     *
+     * The fallback used to search [BuiltInSequences.all] alone, which does not contain a custom
+     * sequence — so a saved `custom_8m` race resolved to US Sailing and resumed at the wrong
+     * duration with the wrong cues, silently. [BuiltInSequences.resolve] rebuilds a custom sequence
+     * from its id instead, and returns null rather than substituting.
+     *
+     * The fallback that remains is defensive: every id reaching here came from a live [RaceSequence]
+     * the activity is holding, so it resolves. An id that *cannot* be resolved is caught one step
+     * earlier, where the activity re-selects the persisted sequence on launch, and is announced
+     * there rather than silently absorbed here.
+     */
     private fun findSequence(id: String): RaceSequence =
-        BuiltInSequences.all.firstOrNull { it.id == id } ?: BuiltInSequences.usSailing
+        BuiltInSequences.resolve(id) ?: BuiltInSequences.usSailing
 
     companion object {
         const val ACTION_START = "com.racetimer.wear.ACTION_START"
@@ -491,6 +510,9 @@ class TimerService : Service() {
         const val ACTION_STOP = "com.racetimer.wear.ACTION_STOP"
         const val ACTION_END_RACE = "com.racetimer.wear.ACTION_END_RACE"
         const val EXTRA_SEQUENCE_ID = "sequence_id"
+
+        /** Set on [ACTION_START] to run the sequence from the top instead of resuming a saved race. */
+        const val EXTRA_FRESH_START = "fresh_start"
 
         private const val PREFS_NAME = "race_timer_state"
         private const val PREF_SEQUENCE_ID = "sequence_id"
@@ -506,10 +528,51 @@ class TimerService : Service() {
         /** Slack added to the wake-lock timeout to cover the gun cue and the teardown that follows. */
         private const val WAKE_LOCK_MARGIN_MS = 30_000L
 
-        fun startIntent(context: Context, sequenceId: String): Intent =
+        /**
+         * The race still persisted from an earlier process, or null if there is none to come back to.
+         *
+         * Read by the activity on launch, for two things it cannot do without it.
+         *
+         * The first is picking the right sequence. Without this the restore path could not fire at
+         * all after process death: the activity comes back holding the default sequence,
+         * [ACTION_START] carries *that* id, and the guard in `onStartCommand` requires the persisted
+         * id to match before it will restore — so the snapshot was skipped and a fresh default race
+         * started over the top of it. Invisible until now only because the default is what most
+         * races use.
+         *
+         * The second is showing the sailor what resuming would actually give them, via
+         * [com.racetimer.shared.remainingFromSnapshot], instead of the sequence's full duration.
+         *
+         * Returns the whole snapshot rather than the id alone so both readings come from one load of
+         * the same four keys — they are written together by `persistSnapshot` and cleared together,
+         * and a caller that re-read them separately could catch them mid-edit.
+         */
+        fun savedSnapshot(context: Context): TimerEngine.Snapshot? {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val sequenceId = prefs.getString(PREF_SEQUENCE_ID, null) ?: return null
+            val gunWall = prefs.getLong(PREF_GUN_WALL_CLOCK, -1L)
+            val capturedElapsed = prefs.getLong(PREF_CAPTURED_ELAPSED, Long.MIN_VALUE)
+            // The same two guards `onStartCommand` restores under, so the offer on screen and what a
+            // tap actually does cannot disagree about whether there is a race to come back to.
+            if (gunWall <= 0L || capturedElapsed == Long.MIN_VALUE) return null
+            return TimerEngine.Snapshot(
+                sequenceId = sequenceId,
+                gunElapsedMs = prefs.getLong(PREF_GUN_ELAPSED, -1L),
+                gunWallMs = gunWall,
+                capturedElapsedMs = capturedElapsed,
+            )
+        }
+
+        /**
+         * @param freshStart true to discard any saved race and run [sequenceId] from the top. False
+         *   resumes a saved race when one matches, which is the behaviour every caller had before
+         *   the pre-start screen started offering the choice.
+         */
+        fun startIntent(context: Context, sequenceId: String, freshStart: Boolean = false): Intent =
             Intent(context, TimerService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_SEQUENCE_ID, sequenceId)
+                putExtra(EXTRA_FRESH_START, freshStart)
             }
 
         fun syncIntent(context: Context): Intent =

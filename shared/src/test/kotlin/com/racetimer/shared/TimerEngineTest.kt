@@ -240,14 +240,150 @@ class TimerEngineTest {
     // --- Custom sequence ------------------------------------------------------
 
     @Test fun `custom 6-minute sequence has correct totalMs`() {
-        val seq = BuiltInSequences.custom(totalSeconds = 360L)
+        val seq = BuiltInSequences.custom(totalMinutes = 6)
         assertEquals(360_000L, seq.totalMs)
     }
 
     @Test fun `custom sequence gun cue at 0`() {
-        val seq = BuiltInSequences.custom(totalSeconds = 120L)
+        val seq = BuiltInSequences.custom(totalMinutes = 2)
         val gun = seq.cues.first { it.isGun }
         assertEquals(0L, gun.offsetMs)
+    }
+
+    @Test fun `custom sequence runs its whole cue list in order`() {
+        val seq = BuiltInSequences.custom(totalMinutes = 2)
+        engine.load(seq)
+        engine.start()
+        // One tick per cue boundary, walked from the top: this is the sequence as the sailor hears
+        // it, not as the list declares it.
+        for (cue in seq.cues) {
+            fakeNow = seq.totalMs - cue.offsetMs
+            engine.tick()
+        }
+        assertEquals(seq.cues, cues)
+        assertTrue(gunFired)
+    }
+
+    @Test fun `a one-minute custom race still fires its minute cue and the whole tail`() {
+        val seq = BuiltInSequences.custom(totalMinutes = 1)
+        engine.load(seq)
+        engine.start()
+        // The minute cue is due the instant the countdown starts at 1:00, so it must not be skipped
+        // as "already past" the way a cue above the total would be.
+        engine.tick()
+        assertEquals(listOf(60_000L), cues.map { it.offsetMs })
+
+        fakeNow += 60_000L
+        engine.tick()
+        assertEquals(seq.cues, cues)
+        assertTrue(gunFired)
+    }
+
+    // --- Restoring a custom race ----------------------------------------------
+
+    @Test fun `a custom race restores as itself from its persisted id`() {
+        // The failure this guards is silent: a custom id is not in BuiltInSequences.all, so a
+        // lookup that falls back to a default resumed the race at US Sailing's duration and cues
+        // with nothing on screen to say so. Restoring through the same id the snapshot carries is
+        // the whole of the fix, so it is what the test drives.
+        engine.load(BuiltInSequences.custom(totalMinutes = 8))
+        engine.start()
+        fakeNow += 90_000L
+        fakeWall += 90_000L
+        val snap = engine.snapshot()!!
+
+        // A fresh engine on the same boot — the process died, the clocks did not.
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        val resolved = BuiltInSequences.resolve(snap.sequenceId)
+        assertNotNull("custom id must resolve", resolved)
+        val outcome = revived.restore(resolved!!, snap)
+
+        assertEquals(RestoreOutcome.EXACT, outcome)
+        assertEquals(BuiltInSequences.custom(totalMinutes = 8).id, resolved.id)
+        assertEquals(8 * 60_000L, resolved.totalMs)
+        assertEquals(390_000L, revived.remainingMs) // 8:00 less the 1:30 that elapsed
+    }
+
+    @Test fun `a restored custom race sounds only the cues it has not passed`() {
+        engine.load(BuiltInSequences.custom(totalMinutes = 3))
+        engine.start()
+        fakeNow += 100_000L // 1:40 remaining: the 3:00 and 2:00 cues are spent
+        fakeWall += 100_000L
+        val snap = engine.snapshot()!!
+
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        revived.addListener(listener)
+        revived.restore(BuiltInSequences.resolve(snap.sequenceId)!!, snap)
+
+        fakeNow += 100_000L // run it out past the gun
+        revived.tick()
+        assertEquals(
+            // 1:20 was left at the kill, so 3:00 and 2:00 are spent and must not sound again.
+            BuiltInSequences.custom(totalMinutes = 3).cues
+                .filter { it.offsetMs <= 80_000L }
+                .map { it.offsetMs },
+            cues.map { it.offsetMs },
+        )
+    }
+
+    // --- Previewing a snapshot without restoring it ---------------------------
+
+    @Test fun `remainingFromSnapshot agrees with what restore actually does`() {
+        // The whole reason this helper exists: the pre-start screen shows the sailor a number and
+        // then a tap has to deliver it. If these two ever disagree, Resume becomes a lie — which is
+        // exactly the bug the offer was added to fix, in a new place.
+        engine.load(BuiltInSequences.custom(totalMinutes = 8))
+        engine.start()
+        fakeNow += 137_000L
+        fakeWall += 137_000L
+        val snap = engine.snapshot()!!
+
+        val previewed = remainingFromSnapshot(snap, fakeNow, fakeWall)
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        revived.restore(BuiltInSequences.resolve(snap.sequenceId)!!, snap)
+
+        assertEquals(revived.remainingMs, previewed)
+        assertEquals(343_000L, previewed) // 8:00 less 2:17
+    }
+
+    @Test fun `remainingFromSnapshot keeps counting down as the clock runs on`() {
+        // The saved gun is fixed in the monotonic domain, so it keeps approaching whether or not the
+        // app is open. A preview captured once and held would sit frozen while the race ran away.
+        engine.load(BuiltInSequences.scholastic)
+        engine.start()
+        val snap = engine.snapshot()!!
+
+        assertEquals(180_000L, remainingFromSnapshot(snap, fakeNow, fakeWall))
+        assertEquals(120_000L, remainingFromSnapshot(snap, fakeNow + 60_000L, fakeWall + 60_000L))
+        assertEquals(0L, remainingFromSnapshot(snap, fakeNow + 180_000L, fakeWall + 180_000L))
+    }
+
+    @Test fun `remainingFromSnapshot goes negative past the gun of a count-up race`() {
+        // Not a spent race — for a race-manager sequence the gun is where the job starts, and the
+        // negated value is the elapsed race time the pre-start preview shows instead of a countdown.
+        engine.load(BuiltInSequences.scholasticRaceManager)
+        engine.start()
+        val snap = engine.snapshot()!!
+
+        val remaining = remainingFromSnapshot(snap, fakeNow + 300_000L, fakeWall + 300_000L)
+        assertEquals(-120_000L, remaining)          // 3:00 sequence, 5:00 later
+        assertEquals(120_000L, -remaining)          // 2:00 of race elapsed
+    }
+
+    @Test fun `remainingFromSnapshot falls back to wall-clock across a reboot`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        fakeNow += 30_000L
+        fakeWall += 30_000L
+        val snap = engine.snapshot()!!
+
+        // A reboot: the monotonic clock resets to near zero while the wall clock keeps running.
+        val afterRebootElapsed = 5_000L
+        val afterRebootWall = fakeWall + 20_000L
+        assertTrue("reboot must look like a backwards monotonic step", afterRebootElapsed < snap.capturedElapsedMs)
+
+        // 3:00 sequence, 30 s spent before the kill and 20 s of real time lost to the reboot.
+        assertEquals(130_000L, remainingFromSnapshot(snap, afterRebootElapsed, afterRebootWall))
     }
 
     // --- State restoration ----------------------------------------------------

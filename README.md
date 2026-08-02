@@ -9,7 +9,7 @@ A precise, glanceable start-sequence timer for sailboat racing that runs **stand
 - **Scholastic / ICSA** — 3-min sequence with dense horn-blast cues (3L, 2L, 1L+3S, 1L, 3S, 2S, 1S × 6, 1L-Start)
 - **Scholastic — Race Manager** — the same Scholastic/ICSA opening (3L, 2L, 1L+3S, 1L) for the race committee rather than a sailor, but its own cadence below the minute: 3S/2S/1S at 0:30/0:20/0:10, then single ticks at 0:05 through 0:01 (no 0:50/0:40 warnings, nothing between 0:09 and 0:06, and the final five aren't doubled the way a sailor's countdown doubles them). Once the gun fires it doesn't reset: the watch keeps running as an elapsed-time race clock (up to `H:MM:SS`), the screen is free to sleep, and a foreground service keeps timing in the background until **End Race** is tapped.
 - **Club 3-2-1-Go** — simple 3-min club racing sequence
-- **Custom** *(V1.1 — engine implemented and unit-tested, not yet exposed in the watch UI)* — arbitrary duration with configurable intermediate cues
+- **Custom** — any whole number of minutes, set on the watch (minimum 1:00, no maximum). One long blast on every whole minute from the top down to and including 1:00, then the Scholastic/ICSA cadence below the minute (0:50/0:40 ticks, 3S/2S/1S at 0:30/0:20/0:10, single ticks 0:10–0:06, doubled final five) and the same sustained gun — so an unfamiliar duration still ends in a countdown you already race to
 
 ### Sync Button
 Tap **Sync** at any point during the countdown to snap to the nearest whole minute — absorbs your reaction-time lag when watching the Race Committee's flag. Round-to-nearest by default; round-down available as a toggle.
@@ -24,7 +24,7 @@ Tap **Sync** at any point during the countdown to snap to the nearest whole minu
 - **Monotonic clock** — anchored to `elapsedRealtimeNanos()`, immune to NTP/wall-clock changes
 - **Foreground service + Ongoing Activity** — countdown survives screen-off and app backgrounding
 - **Keep-screen-on** — display stays on for the full countdown; clears the moment the sequence ends, or the moment the gun fires for **Scholastic — Race Manager**, so its elapsed-time count-up can run with the screen asleep
-- **State persistence** — the running gun time is snapshotted to `SharedPreferences`. A killed process is restored **exactly** (the monotonic anchor survives, immune to NTP). After a device restart the timer is recovered best-effort from wall-clock and prompts you to tap **Sync** to confirm against the flag.
+- **State persistence** — the running gun time is snapshotted to `SharedPreferences`. A killed process is restored **exactly** (the monotonic anchor survives, immune to NTP). After a device restart the timer is recovered best-effort from wall-clock and prompts you to tap **Sync** to confirm against the flag. The snapshot names the sequence as well as the time, so a **Custom** race comes back at its own duration rather than as a built-in. Reopening after a kill shows that race's own clock, still counting, and offers **Resume** or **Start over** instead of deciding for you — for every sequence, including the race-manager count-up.
 
 ## Project Structure
 
@@ -47,7 +47,8 @@ race-timer/
         │   └── ui/
         │       ├── Theme.kt            — Wear Compose MaterialTheme
         │       ├── TimerScreen.kt      — main countdown face
-        │       └── SequencePickerScreen.kt
+        │       ├── SequencePickerScreen.kt
+        │       └── CustomDurationScreen.kt — whole-minute stepper for the Custom sequence
         └── res/
 ```
 
@@ -92,6 +93,6 @@ race-timer/
 | Phase | Features |
 |-------|---------|
 | **MVP (current)** | Standalone Wear OS app — 4 built-in sequences (US Sailing, Scholastic, Scholastic — Race Manager, Club), Sync, haptics, foreground service, keep-screen-on |
-| V1.1 | Custom sequence UI (engine already implemented), named custom presets, round-down sync toggle, mute/haptics settings, Wear Tile + complication |
+| V1.1 | Named custom presets, round-down sync toggle, mute/haptics settings, Wear Tile + complication |
 | V1.2 | Android phone companion app (sequence picker, config, countdown mirror) |
 | Later | Rolling/chained starts, mic airhorn auto-sync, OCS/recall handling |
