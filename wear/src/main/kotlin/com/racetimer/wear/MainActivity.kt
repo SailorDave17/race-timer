@@ -506,8 +506,16 @@ class MainActivity : ComponentActivity() {
         // Binding uses BIND_AUTO_CREATE, so the service exists well before anything is started -
         // with an engine holding no sequence, whose remainingMs is 0. Showing that made a fresh
         // launch read as a finished race, so preview the pending sequence's duration instead.
+        //
+        // The test is the engine's *state*, not whether a sequence happens to be loaded (#87).
+        // `stop()` deliberately keeps the sequence and parks remainingMs at its full duration, so
+        // `loadedSequence != null` stayed true after Stop and this branch was skipped — leaving the
+        // clock on the stopped race's length while the sailor picked a different sequence, which then
+        // started correctly and disagreed with the number they had just read. IDLE is exactly "no race
+        // on screen"; every other state has one worth rendering, including FINISHED, which is the gun
+        // still reading GO! and must not flip to the next sequence's duration.
         val engine = timerService?.engine
-        if (engine == null || engine.loadedSequence == null) {
+        if (engine == null || engine.currentState == TimerState.IDLE) {
             // A race left over from a killed process gets the screen until the sailor answers it:
             // showing the sequence's full duration here is what made Resume a surprise, promising
             // 8:00 and delivering the 6:00 that was actually left.
@@ -524,7 +532,7 @@ class MainActivity : ComponentActivity() {
             setScreenOn(false)
             return
         }
-        // Anything loaded in the engine outranks a saved race: it has already been answered.
+        // A race the engine is actually running outranks a saved one: it has already been answered.
         clearResumeOffer()
         uiTimerState = engine.currentState
         if (uiTimerState == TimerState.COUNTING_UP || uiTimerState == TimerState.RACE_ENDED) {
