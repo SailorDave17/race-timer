@@ -277,6 +277,10 @@ class MainActivity : ComponentActivity() {
         selectedSequence = seq
         uiSequenceName = seq.name
         uiRemainingMs = seq.totalMs
+        // Outlives the process, and outlives the race (#88). Written here rather than at the picker
+        // callbacks so every path that changes the selection remembers it — including the two restore
+        // paths below, which re-save what they just read and so cost nothing.
+        TimerService.savePickedSequenceId(this, seq.id)
     }
 
     /**
@@ -294,11 +298,13 @@ class MainActivity : ComponentActivity() {
      * clearing: the next Start writes its own over the top.
      */
     private fun restorePendingSelection() {
-        val snapshot = TimerService.savedSnapshot(this) ?: return
+        val snapshot = TimerService.savedSnapshot(this) ?: return restorePickedSelection()
         val saved = BuiltInSequences.resolve(snapshot.sequenceId)
         if (saved == null) {
             showTransientMessage("Saved race unreadable — starting fresh")
-            return
+            // The race is gone, but the remembered pick is separate state and may be perfectly
+            // readable — falling back to it beats dropping to US Sailing on top of the bad news.
+            return restorePickedSelection()
         }
         applySelection(saved)
         // Reopen the stepper on the restored race's own length rather than the default, so a Custom
@@ -323,6 +329,30 @@ class MainActivity : ComponentActivity() {
         if (remaining != null) {
             pendingResume = snapshot to saved
         }
+    }
+
+    /**
+     * Open on the sequence the sailor last chose, rather than the US Sailing default (#88).
+     *
+     * Reached only when no race survived — a saved race outranks a remembered pick, because it *is* a
+     * pick, made more recently and with a race attached.
+     *
+     * Deliberately does nothing when there is nothing stored: a first-ever launch has no choice to
+     * honour and US Sailing is the right thing to show. An id nothing answers to gets the same
+     * treatment as an unreadable snapshot — announced, not absorbed, so the sailor learns the app is
+     * not showing what they picked instead of quietly racing the wrong sequence (#51's rule).
+     */
+    private fun restorePickedSelection() {
+        val id = TimerService.pickedSequenceId(this) ?: return
+        val picked = BuiltInSequences.resolve(id)
+        if (picked == null) {
+            showTransientMessage("Saved sequence unreadable — using default")
+            return
+        }
+        applySelection(picked)
+        // Same reason as the snapshot path: a Custom race the sailor runs repeatedly should reopen the
+        // stepper on its own length, not on the default.
+        BuiltInSequences.customMinutes(picked.id)?.let { customMinutes = it }
     }
 
     /**
