@@ -386,6 +386,75 @@ class TimerEngineTest {
         assertEquals(130_000L, remainingFromSnapshot(snap, afterRebootElapsed, afterRebootWall))
     }
 
+    // --- Whether a saved race may be offered at all ----------------------------
+
+    @Test fun `resumeOfferRemainingMs withholds a saved race when another sequence is selected`() {
+        // The bug this guards: re-dialling the Custom stepper changes the id, so a saved 8:00 race
+        // stops matching what Start would run — but the pre-start screen went on previewing its
+        // clock. Start was right all along (TimerService restores only on savedSeqId == sequenceId),
+        // so the screen promised the previous duration and then delivered the newly chosen one.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        val nowSelected = BuiltInSequences.custom(totalMinutes = 5)
+        assertNull(resumeOfferRemainingMs(snap, saved, nowSelected.id, fakeNow, fakeWall))
+    }
+
+    @Test fun `resumeOfferRemainingMs offers the saved race when its own sequence is selected`() {
+        // The other half: fixing the above must not cost the offer the case it exists for.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        assertEquals(420_000L, resumeOfferRemainingMs(snap, saved, saved.id, fakeNow, fakeWall))
+    }
+
+    @Test fun `resumeOfferRemainingMs withholds without discarding, so re-selecting brings it back`() {
+        // Withheld, not cleared: wandering to another sequence and back must not destroy a race the
+        // service is still holding. One snapshot, two answers, decided only by what is selected.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        assertNull(resumeOfferRemainingMs(snap, saved, BuiltInSequences.club.id, fakeNow, fakeWall))
+        assertEquals(420_000L, resumeOfferRemainingMs(snap, saved, saved.id, fakeNow, fakeWall))
+    }
+
+    @Test fun `resumeOfferRemainingMs withholds a countdown whose gun has passed`() {
+        val saved = BuiltInSequences.club // 3:00
+        engine.load(saved)
+        engine.start()
+        val snap = engine.snapshot()!!
+
+        assertNull(
+            resumeOfferRemainingMs(snap, saved, saved.id, fakeNow + 180_001L, fakeWall + 180_001L),
+        )
+    }
+
+    @Test fun `resumeOfferRemainingMs still offers a count-up race past its gun`() {
+        // Past the gun is where a race-manager sequence lives, so the negative reading is the offer
+        // rather than a refusal — the one case where a spent clock is still resumable.
+        val saved = BuiltInSequences.scholasticRaceManager
+        engine.load(saved)
+        engine.start()
+        val snap = engine.snapshot()!!
+
+        assertEquals(
+            -120_000L,
+            resumeOfferRemainingMs(snap, saved, saved.id, fakeNow + 300_000L, fakeWall + 300_000L),
+        )
+    }
+
     // --- State restoration ----------------------------------------------------
 
     @Test fun `restore resumes correctly on same boot`() {
