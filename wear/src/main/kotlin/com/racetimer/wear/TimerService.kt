@@ -175,6 +175,13 @@ class TimerService : Service() {
                 val sequenceId = intent.getStringExtra(EXTRA_SEQUENCE_ID) ?: BuiltInSequences.usSailing.id
                 val sequence = findSequence(sequenceId)
 
+                // Before anything else in this branch: synthesising a cue costs tens to hundreds of
+                // milliseconds on a watch, and the first cue of a race is due the instant the engine
+                // starts. Rendering here, in cue order, means the work overlaps the persist / wake
+                // lock / startForeground path that already sits between start and the first cue
+                // (#62) instead of landing on top of it.
+                tone.warmUp(sequence.cues.map { it.signal })
+
                 // Start over, explicitly asked for. The sailor was shown the saved race and chose
                 // not to resume it, so it is discarded here rather than left to be picked up by the
                 // restore branch below — or offered again on the next launch.
