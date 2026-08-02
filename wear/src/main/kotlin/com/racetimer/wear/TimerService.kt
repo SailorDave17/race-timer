@@ -478,6 +478,13 @@ class TimerService : Service() {
             .apply()
     }
 
+    /**
+     * Forget the race in flight. **Not** the sailor's chosen sequence — see [PREF_PICKED_SEQUENCE_ID].
+     *
+     * Removes the four snapshot keys by name on purpose. `edit().clear()` would be shorter and would
+     * silently take the remembered pick with it, reintroducing #88 the next time someone tidies this
+     * up: a Stop would once again send the next cold launch back to US Sailing.
+     */
     private fun clearPersistedState() {
         prefs.edit()
             .remove(PREF_SEQUENCE_ID)
@@ -520,6 +527,22 @@ class TimerService : Service() {
         private const val PREF_GUN_ELAPSED = "gun_elapsed_ms"
         private const val PREF_GUN_WALL_CLOCK = "gun_wall_clock_ms"
         private const val PREF_CAPTURED_ELAPSED = "captured_elapsed_ms"
+
+        /**
+         * The sequence the sailor last chose — **not** part of the race snapshot, and deliberately not
+         * cleared with it.
+         *
+         * The four keys above describe a race in flight; this one describes a preference that outlives
+         * every race. They were the same thing until #88, which is the whole defect: [clearPersistedState]
+         * drops `PREF_SEQUENCE_ID` on Stop and at the post-gun teardown, so the app remembered the
+         * sequence exactly while a race was running and forgot it in every ordinary case — a cold launch
+         * reverted to US Sailing however many Club races had just been run.
+         *
+         * Shares the prefs file rather than opening a second one: same owner, same lifetime as the app,
+         * and one file is one less thing to keep consistent. What matters is that no clear path touches
+         * it.
+         */
+        private const val PREF_PICKED_SEQUENCE_ID = "picked_sequence_id"
 
         private const val TICK_INTERVAL_MS = 50L
 
@@ -569,6 +592,27 @@ class TimerService : Service() {
          *   resumes a saved race when one matches, which is the behaviour every caller had before
          *   the pre-start screen started offering the choice.
          */
+        /**
+         * Remember [sequenceId] as the sailor's current choice, to be reopened on the next launch.
+         *
+         * Stores the id rather than the sequence because the id *is* the whole record — every built-in
+         * answers to its own, and a custom id encodes its duration (`custom_8m`), so
+         * [BuiltInSequences.resolve] rebuilds either from this one string. That is the same property
+         * the race snapshot relies on (#51), and it is guarded by `resolve rebuilds a custom sequence
+         * from its id alone` in `RaceSequenceTest` — persistence here adds no new assumption.
+         */
+        fun savePickedSequenceId(context: Context, sequenceId: String) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(PREF_PICKED_SEQUENCE_ID, sequenceId)
+                .apply()
+        }
+
+        /** The sequence id last passed to [savePickedSequenceId], or null on a first-ever launch. */
+        fun pickedSequenceId(context: Context): String? =
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(PREF_PICKED_SEQUENCE_ID, null)
+
         fun startIntent(context: Context, sequenceId: String, freshStart: Boolean = false): Intent =
             Intent(context, TimerService::class.java).apply {
                 action = ACTION_START
