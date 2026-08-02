@@ -163,18 +163,15 @@ class RaceSequenceTest {
     }
 
     @Test fun `no cue in any sequence outruns the gap to the next one`() {
-        // Blast lengths mirror CueTiming in the wear module, which HapticManager and ToneManager
-        // both play a cue on. A cue that runs past its successor would overlap it on both channels.
+        // Blast lengths come from CueTiming, which HapticManager and ToneManager both play a cue on.
+        // A cue that runs past its successor would overlap it on both channels. This used to carry a
+        // hand-copied mirror of those constants back when CueTiming lived in the wear module and was
+        // out of reach here — so a retune there would have left this test asserting the old shape.
         // Now covers every built-in, not just scholastic: usSailing's sync ticks fire at 1-second
         // spacing, the tightest gap anywhere, and 4:01 must not bleed into the signal it announces.
-        val longMs = 500L + 250L
-        val shortMs = 150L + 150L
-        val syncMs = 60L + 60L
         for (seq in BuiltInSequences.all) {
             for ((cue, next) in seq.cues.zipWithNext()) {
-                val sync = cue.signal.voice == CueVoice.SYNC
-                val patternMs = cue.signal.longBlasts * (if (sync) syncMs else longMs) +
-                    cue.signal.shortBlasts * (if (sync) syncMs else shortMs)
+                val patternMs = CueTiming.durationMs(cue.signal, cue.isGun)
                 val gapMs = cue.offsetMs - next.offsetMs
                 assertTrue(
                     "${seq.id} cue at ${cue.offsetMs} ms runs $patternMs ms into a $gapMs ms gap",

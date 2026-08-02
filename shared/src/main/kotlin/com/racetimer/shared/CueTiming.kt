@@ -1,13 +1,10 @@
-package com.racetimer.wear
-
-import com.racetimer.shared.CueVoice
-import com.racetimer.shared.SignalPattern
+package com.racetimer.shared
 
 /**
  * The on/off boundaries of a blast, in milliseconds.
  *
- * These define the *shape* of a cue for both of its channels: [HapticManager] builds its vibration
- * waveform from them and [ToneManager] schedules its tones on them, so a three-long cue is three
+ * These define the *shape* of a cue for both of its channels: `HapticManager` builds its vibration
+ * waveform from them and `ToneManager` schedules its tones on them, so a three-long cue is three
  * buzzes against three tones, aligned. They live here rather than inside either manager because
  * the shape is only right while both agree on it — tuning one in isolation is exactly how the two
  * drift apart.
@@ -15,8 +12,12 @@ import com.racetimer.shared.SignalPattern
  * The same reasoning covers [CueVoice.SYNC]: its lighter, quicker shape is defined here once so the
  * buzz and the tone stay the same length as each other, and so [durationMs] reports that length
  * rather than a blast's.
+ *
+ * Lives in `shared` rather than beside its two callers in the wear module because it needs no
+ * Android SDK to compute anything, and the sequence tests assert against it directly — they used to
+ * carry a hand-copied mirror of these constants, which is the same drift risk one module out.
  */
-internal object CueTiming {
+object CueTiming {
 
     /** Sound and buzz time of one long blast. */
     const val LONG_ON = 500L
@@ -33,7 +34,7 @@ internal object CueTiming {
      * Both this and [LONG_OFF] were widened during #58 — to 250 and 400 — while `3 short` and
      * `3 long` were reported running together, and then put back once the real cause was found: the
      * audio output closing between blasts and charging a ~54 ms restart to whichever one followed a
-     * close (see [ToneManager]'s keep-alive generator). The cues were uneven, not tight, and widening
+     * close (see `ToneManager`'s keep-alive generator). The cues were uneven, not tight, and widening
      * the gap was treating the symptom.
      *
      * Worth knowing before reaching for this again: it cannot be widened far. The doubled ticks of
@@ -89,7 +90,7 @@ internal object CueTiming {
      * Reads [SignalPattern.voice] through [onMs]/[offMs] rather than assuming blast timings: a sync
      * tick is a quarter the length of a short blast, and reporting it as a blast would overstate
      * every sync cue to both callers that depend on this — the gap check in the sequence tests and
-     * the audio teardown delay in [ToneManager].
+     * the audio teardown delay in `ToneManager`.
      */
     fun durationMs(pattern: SignalPattern, isGun: Boolean = false): Long = when {
         pattern.sustainedMs > 0L -> pattern.sustainedMs
