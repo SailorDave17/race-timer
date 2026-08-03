@@ -250,6 +250,7 @@ class MainActivity : ComponentActivity() {
                             syncLabel = uiSyncLabel,
                             showResyncPrompt = uiShowResyncPrompt,
                             message = uiMessage,
+                            onMessageExpired = { uiMessage = null },
                             resumeOffered = uiResumeOffered,
                             previewElapsed = uiPreviewElapsed,
                             discardWarning = uiDiscardWarning,
@@ -495,10 +496,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Post a Tier 1 banner (see `docs/message-surface.md`) that clears itself. */
+    /**
+     * Post a Tier 1 banner (see `docs/message-surface.md`).
+     *
+     * Setting the text is all this does. **The three seconds are counted by the screen, not here**
+     * (#102): this used to post its own `uiHandler.postDelayed` clear, which started the clock at the
+     * moment of the call — fine for the two consumers that fire off an engine callback with the app
+     * already up, and useless for the two that fire from `onCreate`. A cold launch on the watch takes
+     * about four and a half seconds to first paint, measured, so a notice posted in `onCreate` had
+     * already expired by the time there was anything to show it on. It was set, it reached
+     * composition, and it was cleared 0.7 s after the first frame — which is why #102 read as "never
+     * renders": nothing was broken except *when the timer started*.
+     *
+     * [TimerScreen] now owns the dwell and calls back when it is up, so the three seconds are three
+     * seconds a sailor could actually have read it for, whatever the app spent getting there.
+     */
     private fun showTransientMessage(text: String) {
         uiMessage = text
-        uiHandler.postDelayed({ uiMessage = null }, MESSAGE_DURATION_MS)
     }
 
     // --- State refresh --------------------------------------------------------
@@ -615,6 +629,5 @@ class MainActivity : ComponentActivity() {
          */
         private const val UI_FALLBACK_REFRESH_MS = 100L
         private const val SYNC_LABEL_DURATION_MS = 2_000L
-        private const val MESSAGE_DURATION_MS = 3_000L
     }
 }

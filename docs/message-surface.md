@@ -54,32 +54,53 @@ action (Tier 3).
 
 ## Tier 1 — Transient banner (shipped)
 
-`MessageBanner` in [TimerScreen.kt:299](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L299),
-driven by the `message: String?` parameter.
+`MessageBanner` in [TimerScreen.kt:532](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L532),
+driven by the `message: String?` parameter and cleared through `onMessageExpired`.
 
 | | |
 |---|---|
-| Position | `Alignment.TopCenter` of the root `Box`, 2 dp top padding — outside the centred `Column`, so it cannot push the readout |
+| Position | `Alignment.TopCenter` of the root `Box`, offset down by `BANNER_TOP_FRACTION` of screen height — which puts it **below** the readout, in the gap above the Start button. Overlays the centred `Column` rather than sitting in it, so it still cannot push the readout |
+| Width | Capped at `BANNER_MAX_WIDTH_FRACTION` of screen width. A cap, not a width: short notices keep a band snug around their own text |
 | Type | 11 sp, `TextAlign.Center`, amber `#FFB74D` |
-| Backing | `#CC3A2A00` (80 % opaque dark amber), 8 dp rounded corners, 8 × 3 dp padding |
-| Lifetime | `showTransientMessage` sets `uiMessage`; `uiHandler.postDelayed` clears it after `MESSAGE_DURATION_MS` = 3 s |
+| Backing | `#FF3A2A00` (opaque dark amber), 8 dp rounded corners, 8 × 3 dp padding |
+| Lifetime | `showTransientMessage` sets `uiMessage`; a `LaunchedEffect` **in `TimerScreen`** clears it after `MESSAGE_DURATION_MS` = 3 s, counted from the composition that puts it on screen |
 | Interaction | None. Not tappable, not dismissible, does not block anything |
-| Consumers | Three, all via `showTransientMessage` ([MainActivity.kt:217](../wear/src/main/kotlin/com/racetimer/wear/MainActivity.kt#L217)): `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady"; `announceRestoreOutcome` → "Resumed race in progress" (`EXACT`) and "Old race ended — starting fresh" (`EXPIRED`) |
+| Consumers | Five, all via `showTransientMessage`: `restorePendingSelection` → "Saved race unreadable — starting fresh" and "Saved sequence unreadable — using default"; `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady"; `announceRestoreOutcome` → "Resumed race in progress" (`EXACT`) and "Old race ended — starting fresh" (`EXPIRED`) |
+
+### Why it is below the readout, and why the screen owns the timer (#102)
+
+Both were changed by #102, which was filed as "the banner never renders" and was really two separate
+reasons a sailor never saw one.
+
+**The timer.** The three seconds used to be counted by `uiHandler.postDelayed` at the call site, so
+they started when the message was *posted*. That is fine for the three consumers that fire off an
+engine callback with the app already up, and useless for the two that fire from `onCreate`: a cold
+launch on an SM-R925U takes **4.4 s to first paint**, measured, so the notice had expired before there
+was a screen to put it on. Counting the dwell from the composition that renders it makes three
+seconds mean three seconds a sailor could have read it, whatever the app spent getting there.
+
+**The position.** Pinned 2 dp from the top of a *circle*, the banner had a visible chord of about
+84 px to live in, and any message that wrapped lost its first line to the bezel mask. Moving it down
+far enough to clear the mask put it over the countdown, which rule 1 above forbids. There is no
+top-centre geometry that fits a forty-character notice inside the circle *and* above the readout, so
+it moved below the readout instead — the widest part of the screen, where the same message needs two
+lines instead of three and cannot cover the readout by construction. The arithmetic lives in
+`shared/BannerLayout.kt` and is asserted by `BannerLayoutTest`.
 
 The scrim is what makes this work on all four backgrounds. Computed WCAG contrast for `#FFB74D` on the
-composited banner background:
+banner background:
 
 | Background state | Contrast | |
 |---|---|---|
-| Normal navy | 8.4 : 1 | pass |
-| Final ten | 8.1 : 1 | pass |
-| Finished | 7.7 : 1 | pass |
-| One minute | **6.6 : 1** | pass (worst case) |
+| All four | 8.6 : 1 | pass |
 
-11 sp is normal-size text, so the bar is 4.5 : 1. The amber background is the worst case and still
-clears it — because the scrim is 80 % opaque, the background only contributes 20 % of the composite.
+11 sp is normal-size text, so the bar is 4.5 : 1. The four rows collapsed to one when #102 made the
+scrim opaque: at 80 % the background still contributed a fifth of the composite, and the amber
+one-minute state was the worst case at 6.6 : 1. It now contributes nothing, so the worst case is the
+only case.
 
-**Copy rules:** one line at 11 sp on a round watch is roughly 30 characters. State what happened and
+**Copy rules:** one line at 11 sp inside the width cap is roughly 34 characters, and two lines is all
+the gap above the Start button holds — so keep a notice under about 60. State what happened and
 what it means for the countdown, in that order — "Clock changed — countdown held steady" tells the
 sailor the fact *and* that they need do nothing. Never end in an instruction the banner will vanish
 before they can follow; that is Tier 3.
