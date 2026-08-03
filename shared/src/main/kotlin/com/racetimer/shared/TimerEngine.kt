@@ -294,15 +294,26 @@ class TimerEngine(
      */
     fun sync(roundDown: Boolean = false, guardMs: Long = 1_000L, maxCorrectionMs: Long = 30_000L) {
         if (state != TimerState.RUNNING) return
+        val seq = sequence ?: return
 
         val now = clock.elapsedMs()
+        val remaining = gunTimeMs - now
+
+        // Inert through a lead-in (#104). A sync is a correction against a sequence already under
+        // way — the whole run-up is the window *before* there is anything to be corrected against,
+        // since the signal box has not been started yet. Snapping here would be worse than useless:
+        // with a 70 s lead on a 3:00 sequence the clock reads 4:07, nearest-minute lands on 4:00,
+        // and seven seconds of lead vanish — the exact misalignment the lead-in exists to prevent,
+        // with no signal to notice it by. Refused *before* the double-tap guard is armed, so it
+        // costs a later, legitimate sync nothing.
+        if (isInLeadIn(seq, remaining)) return
+
         // null == never synced this session, so the first sync is always allowed. (Do not fold this
         // into a sentinel Long: `now - Long.MIN_VALUE` overflows negative and swallowed every
         // first sync of a race.)
         lastSyncTimeMs?.let { if (now - it < guardMs) return }
         lastSyncTimeMs = now
 
-        val remaining = gunTimeMs - now
         var snapped = snapToMinute(remaining, roundDown)
 
         // A sync is a *correction*, not a jump: never move the clock more than maxCorrectionMs.
@@ -320,7 +331,6 @@ class TimerEngine(
         // reaches O, so anything with O >= the pre-snap remaining is already spent; re-adding it (the
         // old `<= snapped` bug) double-fired a horn whenever a sync rounded up onto a fired boundary.
         // Strictly `<` for that reason, unlike restore's `<=`: here the boundary cue has fired.
-        val seq = sequence ?: return
         queueCues(seq) { it.offsetMs < remaining }
 
         listeners.forEach { it.onSync(snapped) }

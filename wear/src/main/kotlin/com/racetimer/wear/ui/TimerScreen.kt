@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -98,8 +99,17 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  *                       a standing caveat about the very next tap, so it persists rather than clearing
  *                       itself. Mutually exclusive with [resumeOffered] by construction — the saved
  *                       race either matches the selection or it does not.
+ * @param leadInOffered  True when the selected sequence may be armed with a lead-in (#104), which is
+ *                       race-manager modes only — the rule is `offersLeadIn` in `shared/`, never a
+ *                       branch on a sequence name here. Every other sequence's pre-start screen is
+ *                       byte-for-byte what it was.
+ * @param inLeadIn       True while a running race is still in its lead-in. Drops the Sync button for
+ *                       the duration: there is nothing to snap to before the signal box has been
+ *                       started, and snapping would delete part of the lead (`isInLeadIn`).
  * @param onStart        Called when the user taps Start, or Resume when [resumeOffered].
  * @param onStartOver    Called when the user taps Start over. Only reachable when [resumeOffered].
+ * @param onLeadIn       Called when the user taps the lead-in control. Only reachable when
+ *                       [leadInOffered].
  * @param onStop         Called when the user taps Stop, or Done in [TimerState.RACE_ENDED].
  * @param onSync         Called when the user taps Sync.
  * @param onEndRace      Called when the user taps End Race in [TimerState.COUNTING_UP].
@@ -118,8 +128,11 @@ fun TimerScreen(
     resumeOffered: Boolean = false,
     previewElapsed: Boolean = false,
     discardWarning: String? = null,
+    leadInOffered: Boolean = false,
+    inLeadIn: Boolean = false,
     onStart: () -> Unit,
     onStartOver: () -> Unit = {},
+    onLeadIn: () -> Unit = {},
     onStop: () -> Unit,
     onSync: () -> Unit,
     onEndRace: () -> Unit = {},
@@ -227,16 +240,34 @@ fun TimerScreen(
                     // readout above is already showing that race's own clock, so both answers are
                     // legible before the tap: Resume continues the number on screen, Start over
                     // replaces it with the sequence's full duration.
+                    //
+                    // The lead-in control is deliberately absent from that state and only that one.
+                    // Three controls do not fit this column: the row above already runs to roughly
+                    // 160 dp of a 192 dp screen, so a third button in the Resume row leaves each
+                    // about 53 dp and "Start over" no longer fits on its one line. The question the
+                    // resume screen asks is *this race or a fresh one*, and Start over already
+                    // re-runs whatever lead the saved race carried — a race manager wanting a
+                    // different lead reaches it after Stop, which is a rare path inside a rare one.
                     if (resumeOffered) {
                         ResumeChoice(onResume = onStart, onStartOver = onStartOver)
+                    } else if (leadInOffered) {
+                        StartWithLeadIn(onStart = onStart, onLeadIn = onLeadIn)
                     } else {
                         StartButton(onClick = onStart)
                     }
                 }
                 TimerState.RUNNING -> {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SyncButton(onClick = onSync)
-                        SecondaryButton(label = "Stop", onClick = onStop)
+                    // Sync has nothing to act on until the sequence proper is under way — see
+                    // `isInLeadIn`. Rather than leave a button that takes the tap and does nothing,
+                    // the lead-in gets the wide sole-control layout Start and End Race use, and Sync
+                    // reappears on the same tick the sequence's own first signal fires.
+                    if (inLeadIn) {
+                        WideStopButton(onClick = onStop)
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SyncButton(onClick = onSync)
+                            SecondaryButton(label = "Stop", onClick = onStop)
+                        }
                     }
                 }
                 // Sync doesn't apply once the gun has fired — there is no committee flag left to
@@ -422,6 +453,93 @@ private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
                 textAlign = TextAlign.Center,
             )
         }
+    }
+}
+
+/**
+ * Start, with the lead-in control beside it — the pre-start screen of a race-manager mode (#104).
+ *
+ * Side by side for the same reason as [ResumeChoice]: there is no vertical room for a second row, so
+ * the only shape that fits without shrinking the readout is to split one.
+ *
+ * **Equal halves**, exactly as [ResumeChoice] splits its two. These are the two ways to begin a race
+ * and neither is a lesser version of the other — a race manager on a committee boat with a signal box
+ * reaches for the right-hand one every race of the day. Sizing the lead-in as a narrow afterthought
+ * would make the more common of the two the harder to hit, on a wet round screen.
+ *
+ * Tapping Start here is byte-for-byte what it was: same anchor, same cues, same screen. The lead-in
+ * is reached only through its own control.
+ */
+@Composable
+private fun StartWithLeadIn(onStart: () -> Unit, onLeadIn: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(0.92f),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Button(
+            onClick = onStart,
+            modifier = Modifier
+                .weight(1f)
+                .height(52.dp),
+            colors = ButtonDefaults.buttonColors(
+                backgroundColor = Color(0xFFFFD700),
+                contentColor = Color(0xFF1A1A2E),
+            ),
+        ) {
+            Text(
+                text = "Start",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+            )
+        }
+        Button(
+            onClick = onLeadIn,
+            modifier = Modifier
+                .weight(1f)
+                .height(52.dp),
+            colors = ButtonDefaults.buttonColors(
+                backgroundColor = Color(0xFF64B5F6),
+                contentColor = Color(0xFF1A1A2E),
+            ),
+        ) {
+            Text(
+                text = "Lead-in",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+/**
+ * Stop as the sole control, during a lead-in.
+ *
+ * Sized like [StartButton] and [EndRaceButton] for the same "only thing in the column" reason, and
+ * keeping [SecondaryButton]'s muted colour rather than taking on End Race's alarm-red: it is the
+ * same Stop it always was, just without a Sync button to share the row with.
+ */
+@Composable
+private fun WideStopButton(onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth(0.68f)
+            .height(56.dp),
+        colors = ButtonDefaults.buttonColors(
+            backgroundColor = Color(0xFF555577),
+            contentColor = Color.White,
+        ),
+    ) {
+        Text(
+            text = "Stop",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 

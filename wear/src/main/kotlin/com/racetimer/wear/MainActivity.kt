@@ -18,6 +18,7 @@ import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable as wearComposable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.LaunchNotice
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
@@ -28,11 +29,18 @@ import com.racetimer.shared.TimerState
 import com.racetimer.shared.discardedOnStartRemainingMs
 import com.racetimer.shared.forcesMaxBrightness
 import com.racetimer.shared.formatCountdown
+import com.racetimer.shared.isInLeadIn
 import com.racetimer.shared.keepsScreenOn
 import com.racetimer.shared.launchPlan
+import com.racetimer.shared.leadInBaseId
+import com.racetimer.shared.leadInBaseOf
+import com.racetimer.shared.offersLeadIn
 import com.racetimer.shared.resumeOfferRemainingMs
+import com.racetimer.shared.withLeadIn
 import com.racetimer.wear.ui.CustomDurationScreen
 import com.racetimer.wear.ui.DEFAULT_CUSTOM_MINUTES
+import com.racetimer.wear.ui.LeadInDurationScreen
+import com.racetimer.wear.ui.LeadInPickerScreen
 import com.racetimer.wear.ui.RaceTimerTheme
 import com.racetimer.wear.ui.SequencePickerScreen
 import com.racetimer.wear.ui.TimerScreen
@@ -115,7 +123,28 @@ class MainActivity : ComponentActivity() {
      */
     private var uiDiscardWarning by mutableStateOf<String?>(null)
 
+    /**
+     * True when the selected sequence may be armed with a lead-in, so the pre-start screen offers
+     * the control (#104). The rule is [offersLeadIn], in `shared/` — race-manager modes only.
+     */
+    private var uiLeadInOffered by mutableStateOf(false)
+
+    /**
+     * True while the running race is still in its lead-in, which is what drops the Sync button for
+     * the duration. See [isInLeadIn] for why Sync must not act there.
+     */
+    private var uiInLeadIn by mutableStateOf(false)
+
     private var selectedSequence: RaceSequence = BuiltInSequences.usSailing
+
+    /**
+     * Where [LeadInPickerScreen] and [LeadInDurationScreen] open: the lead last armed.
+     *
+     * Mirrors [customMinutes], and persisted for the same reason a Custom duration effectively is —
+     * a club runs one signal box, so re-dialling its warning every week is the cost this remembers
+     * away. Read once on launch; [TimerService] owns the storage.
+     */
+    private var lastBoxAlertSeconds: Int = DEFAULT_BOX_ALERT_SECONDS
 
     /**
      * The race left behind by an earlier process, and the sequence it was running.
@@ -254,8 +283,11 @@ class MainActivity : ComponentActivity() {
                             resumeOffered = uiResumeOffered,
                             previewElapsed = uiPreviewElapsed,
                             discardWarning = uiDiscardWarning,
+                            leadInOffered = uiLeadInOffered,
+                            inLeadIn = uiInLeadIn,
                             onStart = { handleStart() },
                             onStartOver = { handleStartOver() },
+                            onLeadIn = { navController.navigate(NAV_LEAD_IN) },
                             onStop = { handleStop() },
                             onSync = { handleSync() },
                             onEndRace = { handleEndRace() },
@@ -281,6 +313,30 @@ class MainActivity : ComponentActivity() {
                                 // choosing, and the picker they passed through has nothing left to
                                 // offer. popBackStack() alone would strand them on it.
                                 navController.popBackStack(NAV_TIMER, inclusive = false)
+                            },
+                        )
+                    }
+                    wearComposable(NAV_LEAD_IN) {
+                        LeadInPickerScreen(
+                            lastUsedSeconds = lastBoxAlertSeconds,
+                            // Selecting an alert *starts the race* — the tapped chip was the confirm,
+                            // and its label carried the value being committed to. Back to the timer
+                            // face first so the countdown the race is running is what appears when
+                            // the service reports in, rather than a picker for a race already under
+                            // way.
+                            onAlertSelected = { seconds ->
+                                navController.popBackStack(NAV_TIMER, inclusive = false)
+                                handleStartWithLeadIn(seconds)
+                            },
+                            onCustomSelected = { navController.navigate(NAV_LEAD_CUSTOM) },
+                        )
+                    }
+                    wearComposable(NAV_LEAD_CUSTOM) {
+                        LeadInDurationScreen(
+                            initialSeconds = lastBoxAlertSeconds,
+                            onConfirm = { seconds ->
+                                navController.popBackStack(NAV_TIMER, inclusive = false)
+                                handleStartWithLeadIn(seconds)
                             },
                         )
                     }
@@ -323,10 +379,41 @@ class MainActivity : ComponentActivity() {
         selectedSequence = seq
         uiSequenceName = seq.name
         uiRemainingMs = seq.totalMs
+        uiLeadInOffered = offersLeadIn(seq)
         // Outlives the process, and outlives the race (#88). Written here rather than at the picker
         // callbacks so every path that changes the selection remembers it — including the two restore
         // paths below, which re-save what they just read and so cost nothing.
-        TimerService.savePickedSequenceId(this, seq.id)
+        //
+        // Stripped of any lead time (#104). A lead-in is a per-race choice, never a sticky one: the
+        // only way `seq` carries one here is the restore path below re-selecting a saved lead-in race
+        // so the Resume offer can match its id, and remembering *that* as the pick would arm every
+        // later cold launch with a lead nobody re-chose — the invisible state the two-tap picker
+        // exists to rule out. The lead the race manager last used is remembered separately, as a
+        // value the picker opens on rather than as a race waiting to be started.
+        TimerService.savePickedSequenceId(this, leadInBaseId(seq.id))
+    }
+
+    /**
+     * Give up the lead-in a race was armed with, once that race is the engine's problem.
+     *
+     * A lead-in may sit in [selectedSequence] for exactly two windows: between arming a race and the
+     * service picking the intent up, and — after a process kill — while the saved race is being
+     * offered back, since [resumeOfferRemainingMs] can only make that offer when the selection's id
+     * matches the race's. Both end when the engine takes the race, which is where this is called.
+     *
+     * Dropping it *then* rather than when the race ends is what keeps the number on screen honest
+     * throughout: while the race runs the countdown comes from the engine, and by the time the
+     * pre-start screen is reading [selectedSequence] again it is the plain sequence at its own
+     * duration, with a plain Start.
+     */
+    private fun dropLeadInFromSelection() {
+        if (selectedSequence.leadInMs == 0L) return
+        // Null only if the base id resolves to nothing, which cannot happen for a sequence that was
+        // built by arming one — but the selection is better left as it is than cleared on a surprise.
+        val base = leadInBaseOf(selectedSequence) ?: return
+        selectedSequence = base
+        uiSequenceName = base.name
+        uiLeadInOffered = offersLeadIn(base)
     }
 
     /**
@@ -345,6 +432,9 @@ class MainActivity : ComponentActivity() {
      * clearing: the next Start writes its own over the top.
      */
     private fun restorePendingSelection() {
+        // Read before the plan is applied and independently of it: the lead-time picker opens on
+        // this whether or not a race survived, and it is a preference rather than part of any race.
+        lastBoxAlertSeconds = TimerService.lastBoxAlertSeconds(this)
         val plan = launchPlan(
             TimerService.savedSnapshot(this),
             TimerService.pickedSequenceId(this),
@@ -458,6 +548,29 @@ class MainActivity : ComponentActivity() {
         // and it is what the fresh race will start from, so there is no jump to avoid.
         clearResumeOffer()
         startForegroundService(TimerService.startIntent(this, selectedSequence.id, freshStart = true))
+    }
+
+    /**
+     * Arm the selected sequence with a [leadSeconds] run-up and start it (#104).
+     *
+     * Always a fresh start. The lead-time picker is a deliberate two-tap arming action for a race
+     * that does not exist yet, so it must not fall into the restore path and come back with somebody
+     * else's clock — Resume is the control for that, and it is on the same screen.
+     *
+     * The armed sequence goes into [selectedSequence] as well as into the intent, so the ~100 ms
+     * between the tap and the service reporting in previews the race being started (4:10 on a 70 s
+     * lead) rather than the plain sequence's 3:00. [dropLeadInFromSelection] takes it back out the
+     * moment the engine has the race.
+     */
+    private fun handleStartWithLeadIn(boxAlertSeconds: Int) {
+        val armed = withLeadIn(selectedSequence, boxAlertSeconds) ?: return
+        lastBoxAlertSeconds = boxAlertSeconds
+        TimerService.saveLastBoxAlertSeconds(this, boxAlertSeconds)
+        resyncAcknowledged = false
+        clearResumeOffer()
+        selectedSequence = armed
+        uiRemainingMs = armed.totalMs
+        startForegroundService(TimerService.startIntent(this, armed.id, freshStart = true))
     }
 
     private fun handleStop() {
@@ -585,6 +698,11 @@ class MainActivity : ComponentActivity() {
             uiElapsedMs = if (uiPreviewElapsed) displayedElapsedMs(-resumeRemaining!!) else 0L
             uiTimerState = TimerState.IDLE
             uiShowResyncPrompt = false
+            // No race is running, so nothing is in a lead-in — and the control to arm one belongs to
+            // the clean pre-start screen only, never beside the Resume/Start over pair (see
+            // TimerScreen for why three controls do not fit this column).
+            uiInLeadIn = false
+            uiLeadInOffered = offersLeadIn(selectedSequence) && !uiResumeOffered
             // Suppressed once the sailor has answered: they have committed, the race is already being
             // discarded, and a warning about it is no longer something they can act on.
             uiDiscardWarning = if (resumeAnswered) null else discardWarning()
@@ -595,7 +713,17 @@ class MainActivity : ComponentActivity() {
         }
         // A race the engine is actually running outranks a saved one: it has already been answered.
         clearResumeOffer()
+        // And the lead-in that armed it was a per-race choice, spent the moment the engine took the
+        // race (#104) — see [dropLeadInFromSelection].
+        dropLeadInFromSelection()
         uiTimerState = engine.currentState
+        // Sync has nothing to snap to until the sequence proper is under way. Read from the engine's
+        // own sequence and its live clock rather than from the selection, which no longer carries the
+        // lead by the time this runs.
+        uiInLeadIn = engine.currentState == TimerState.RUNNING &&
+            engine.loadedSequence?.let { isInLeadIn(it, engine.remainingMs) } == true
+        // Nothing to arm while a race is running; the control returns with the pre-start screen.
+        uiLeadInOffered = false
         if (uiTimerState == TimerState.COUNTING_UP || uiTimerState == TimerState.RACE_ENDED) {
             // remainingMs stays live and negative past the gun (see its doc) — flip the sign
             // rather than adding a second engine getter for what is the same number the other way.
@@ -620,6 +748,8 @@ class MainActivity : ComponentActivity() {
         private const val NAV_TIMER = "timer"
         private const val NAV_PICKER = "picker"
         private const val NAV_CUSTOM = "custom"
+        private const val NAV_LEAD_IN = "lead_in"
+        private const val NAV_LEAD_CUSTOM = "lead_in_custom"
         /**
          * Fallback poll rate; the running countdown comes from onTick, not from this.
          *

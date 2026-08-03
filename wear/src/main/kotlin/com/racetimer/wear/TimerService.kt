@@ -19,6 +19,8 @@ import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.CueTiming
+import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
+import com.racetimer.shared.isValidBoxAlert
 import com.racetimer.shared.NO_CAPTURED_ELAPSED_MS
 import com.racetimer.shared.NO_GUN_ELAPSED_MS
 import com.racetimer.shared.NO_GUN_WALL_MS
@@ -587,6 +589,20 @@ class TimerService : Service() {
          */
         private const val PREF_PICKED_SEQUENCE_ID = "picked_sequence_id"
 
+        /**
+         * The lead time the race manager last armed a race with (#104).
+         *
+         * A preference, not race state, so it sits beside [PREF_PICKED_SEQUENCE_ID] and outside
+         * [clearPersistedState] for the same reason that key does: a club runs the same signal box
+         * every week, and "the picker opens on the last-used value" has to survive a Stop and a cold
+         * launch or it only ever means "this session".
+         *
+         * It is *not* what makes a lead-in race restorable — the lead lives inside the sequence id
+         * (see `LeadIn.kt`), which is what the snapshot already carries. This key would be safe to
+         * lose; the race would not.
+         */
+        private const val PREF_LAST_BOX_ALERT = "last_box_alert_seconds"
+
         private const val TICK_INTERVAL_MS = 50L
 
         /** Time the UI keeps showing "GO!" *after* the gun cue itself has finished sounding. */
@@ -658,6 +674,27 @@ class TimerService : Service() {
         fun pickedSequenceId(context: Context): String? =
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(PREF_PICKED_SEQUENCE_ID, null)
+
+        /** Remember [seconds] as the lead the lead-time picker should reopen on. */
+        fun saveLastBoxAlertSeconds(context: Context, seconds: Int) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(PREF_LAST_BOX_ALERT, seconds)
+                .apply()
+        }
+
+        /**
+         * The lead last armed, or [DEFAULT_BOX_ALERT_SECONDS] when there has never been one.
+         *
+         * Range-checked on the way out rather than trusted: this is the one lead-in value that is
+         * *not* reconstructed from a sequence id, so a stored number out of bounds would otherwise
+         * open the stepper somewhere the picker can never produce.
+         */
+        fun lastBoxAlertSeconds(context: Context): Int =
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getInt(PREF_LAST_BOX_ALERT, DEFAULT_BOX_ALERT_SECONDS)
+                .takeIf { isValidBoxAlert(it) }
+                ?: DEFAULT_BOX_ALERT_SECONDS
 
         fun startIntent(context: Context, sequenceId: String, freshStart: Boolean = false): Intent =
             Intent(context, TimerService::class.java).apply {
