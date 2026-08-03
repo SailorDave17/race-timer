@@ -19,13 +19,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -34,9 +37,16 @@ import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.racetimer.shared.BANNER_MAX_WIDTH_FRACTION
+import com.racetimer.shared.BANNER_TOP_FRACTION
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.bannerFitsRoundScreen
 import com.racetimer.shared.formatCountdown
 import com.racetimer.shared.formatElapsed
+import kotlinx.coroutines.delay
+
+/** How long a Tier 1 banner stays up, counted from the composition that puts it on screen (#102). */
+private const val MESSAGE_DURATION_MS = 3_000L
 
 // ---------------------------------------------------------------------------
 // Background colour states
@@ -74,6 +84,10 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = wh
  * @param showResyncPrompt True after a degraded recovery (reboot / clock step): the restored gun
  *                       is best-effort, so prompt the sailor to tap Sync against the RC flag.
  * @param message        Non-null to show a transient notice/warning banner (e.g. clock jump).
+ * @param onMessageExpired Called once [message] has been on screen for [MESSAGE_DURATION_MS], so the
+ *                       caller can clear it. The dwell belongs here rather than at the call site
+ *                       because it is screen time that was promised, not wall time — see the
+ *                       LaunchedEffect below and #102.
  * @param resumeOffered  True when a race survived a process kill and [remainingMs] is *that* race's
  *                       clock rather than the sequence's full duration: Start becomes a choice
  *                       between resuming it and running the sequence from the top.
@@ -100,6 +114,7 @@ fun TimerScreen(
     syncLabel: String?,
     showResyncPrompt: Boolean = false,
     message: String? = null,
+    onMessageExpired: () -> Unit = {},
     resumeOffered: Boolean = false,
     previewElapsed: Boolean = false,
     discardWarning: String? = null,
@@ -241,6 +256,19 @@ fun TimerScreen(
 
         // Transient notice / warning banner (e.g. clock adjustment)
         if (message != null) {
+            // The dwell is counted here, from the composition that puts the banner on screen, and
+            // not by whoever posted the message (#102). A notice posted in `MainActivity.onCreate`
+            // is posted about four and a half seconds before a cold launch paints anything, so a
+            // timer started at the call site spent its whole life on a screen that did not exist.
+            //
+            // Keyed on the text: a different notice arriving restarts the three seconds, which is
+            // what makes the two launch notices' "one message line, so one notice" rule survive
+            // contact with a second message. The same text twice running does not restart it — it is
+            // the same news, and re-arming would let a repeating condition pin the banner up.
+            LaunchedEffect(message) {
+                delay(MESSAGE_DURATION_MS)
+                onMessageExpired()
+            }
             MessageBanner(
                 message = message,
                 modifier = Modifier.align(Alignment.TopCenter),
@@ -491,12 +519,22 @@ private fun SecondaryButton(label: String, onClick: () -> Unit) {
 // Message / warning banner
 // ---------------------------------------------------------------------------
 
+/**
+ * The Tier 1 transient banner (see `docs/message-surface.md`).
+ *
+ * Positioned off the screen's own size rather than off fixed dp, because the constraint is the shape
+ * of the display and not a margin — and placed **below the readout** rather than above it, which is
+ * where it used to sit. The reasoning is in `shared/BannerLayout.kt`, along with
+ * [bannerFitsRoundScreen], which asserts these fractions clear the circle at the banner's full
+ * height budget.
+ */
 @Composable
 private fun MessageBanner(message: String, modifier: Modifier = Modifier) {
+    val configuration = LocalConfiguration.current
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = 2.dp, start = 12.dp, end = 12.dp),
+            .padding(top = configuration.screenHeightDp.dp * BANNER_TOP_FRACTION),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -505,7 +543,16 @@ private fun MessageBanner(message: String, modifier: Modifier = Modifier) {
             color = Color(0xFFFFB74D),
             textAlign = TextAlign.Center,
             modifier = Modifier
-                .background(Color(0xCC3A2A00), shape = RoundedCornerShape(8.dp))
+                // A cap ahead of the background, so the scrim stops where the text does and a short
+                // notice keeps a band snug around itself instead of a fixed-width slab.
+                .widthIn(max = configuration.screenWidthDp.dp * BANNER_MAX_WIDTH_FRACTION)
+                // Opaque, where it used to be 80 %. At 80 % the background contributed a fifth of
+                // the composite, which made the amber one-minute state the worst case in
+                // docs/message-surface.md's contrast table at 6.6 : 1 — and that state is not a
+                // hypothetical for this banner, since the clock-adjustment notice is the one Tier 1
+                // consumer that fires mid-race. Contributing nothing collapses four cases to one at
+                // 8.6 : 1, on the screen where legibility is the whole product.
+                .background(Color(0xFF3A2A00), shape = RoundedCornerShape(8.dp))
                 .padding(horizontal = 8.dp, vertical = 3.dp),
         )
     }
