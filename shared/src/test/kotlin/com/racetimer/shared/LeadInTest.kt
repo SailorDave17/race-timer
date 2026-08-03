@@ -13,6 +13,20 @@ class LeadInTest {
 
     private val raceManager = BuiltInSequences.scholasticRaceManager
 
+    /**
+     * Every mode a race manager runs, in `all` order — named outright, on purpose.
+     *
+     * The tempting version of this is `all.filter { it.countUpAfterFinish }`, and it is worthless:
+     * `offersLeadIn` *is* `countUpAfterFinish`, so the eligibility test below would compare the
+     * implementation against itself and pass whatever either one said. Naming the sequences is what
+     * gives the assertion an independent answer to check against, and the cost — this list must be
+     * edited when a mode is added — is the assertion doing its job, not a defect in it.
+     */
+    private val raceManagers = listOf(
+        BuiltInSequences.usSailingRaceManager,
+        BuiltInSequences.scholasticRaceManager,
+    )
+
     /** Every box alert a race can legally be armed for: the presets, both dialled bounds, and one odd. */
     private val allAlerts =
         (BOX_ALERT_PRESET_SECONDS + BOX_ALERT_MIN_SECONDS + BOX_ALERT_MAX_SECONDS + 47).distinct()
@@ -80,17 +94,55 @@ class LeadInTest {
     @Test fun `only race-manager sequences offer a lead-in`() {
         // Syncing to a signal box is committee work: a sailor has no box to sync to, and a sailor
         // who triggers this by accident starts their race late. Asserted over `all` as a set rather
-        // than by naming Scholastic - Race Manager, so a sequence added later either opts in through
+        // than by naming the sequences, so a sequence added later either opts in through
         // countUpAfterFinish — which is what makes it a race-manager mode — or does not opt in at all.
+        //
+        // #105 is the first time this test could fail for a reason that matters. With one committee
+        // sequence in existence, "offer the lead-in for race-manager modes" and "offer it for
+        // scholastic_race_manager" produced identical results, so the rule was untestable *as a
+        // rule*: a hardcoded id would have passed just as well. A second mode that was never named
+        // in `offersLeadIn` and arms anyway is what makes it a rule rather than a coincidence.
         val offering = BuiltInSequences.all.filter { offersLeadIn(it) }
-        assertEquals(listOf(BuiltInSequences.scholasticRaceManager), offering)
+        assertEquals(raceManagers, offering)
     }
 
     @Test fun `no sailor sequence can be armed with a lead-in`() {
-        for (seq in BuiltInSequences.all - BuiltInSequences.scholasticRaceManager) {
+        for (seq in BuiltInSequences.all - raceManagers.toSet()) {
             assertNull("${seq.id} must not arm", withLeadIn(seq, 60))
         }
         assertNull("custom must not arm", withLeadIn(BuiltInSequences.custom(5), 60))
+    }
+
+    @Test fun `every race-manager mode arms without being named anywhere`() {
+        // The other half of the rule above, and the AC #105 exists to prove: the lead-in reached the
+        // new sequence through offersLeadIn alone. Nothing in LeadIn.kt mentions
+        // us_sailing_race_manager, and this arms it end to end — id, cues, stages and all — at every
+        // preset, on a 5:00 sequence rather than the 3:00 one every other test in this file uses.
+        for (seq in raceManagers) {
+            for (alert in allAlerts) {
+                val armed = withLeadIn(seq, alert)
+                assertNotNull("${seq.id} at $alert s", armed)
+                assertEquals(
+                    "${seq.id} at $alert s",
+                    leadInSecondsFor(alert) * 1_000L + seq.totalMs,
+                    armed!!.totalMs,
+                )
+                assertEquals("${seq.id} at $alert s", seq.totalMs, armed.sequenceMs)
+                assertEquals("${seq.id} at $alert s", leadInId(seq.id, alert), armed.id)
+                assertTrue("${seq.id} at $alert s", armed.countUpAfterFinish)
+            }
+        }
+    }
+
+    @Test fun `the longest lead on the longest sequence puts the gun 6-10 away`() {
+        // The largest remaining time the app can now produce, and it only became reachable with
+        // #105 — #104's worst case was a 70 s lead on a 3:00 sequence, or 4:10. Anything reading a
+        // threshold off remaining time (backgroundColorFor's 60 s and 10 s bands, the resume-offer
+        // guards) now sees a maximum half again as large, so the number is worth pinning where a
+        // future sequence that grows it again has to face it.
+        val armed = withLeadIn(BuiltInSequences.usSailingRaceManager, BOX_ALERT_PRESET_SECONDS.max())!!
+        assertEquals(6 * 60_000L + 10_000L, armed.totalMs)
+        assertEquals("6:10", formatCountdown(armed.totalMs))
     }
 
     // --- Where the gun lands (AC 5) -------------------------------------------

@@ -335,6 +335,54 @@ object BuiltInSequences {
         ) + finalMinuteTail + sustainedGun,
     )
 
+    // --- US Sailing 5-4-1-go (RRS 26), race-manager variant ---
+    //
+    // The committee side of [usSailing], and deliberately NOT built on it. The offsets line up and
+    // nothing else does, so there is no shared head to extract the way [scholasticHead] is genuinely
+    // shared — an extraction here would have to be parameterised on every cue it contained, which is
+    // a copy with extra steps. #59 shipped the mirror-image mistake in its first pass, assuming two
+    // tails that looked alike were alike.
+    //
+    // Three departures from the sailor sequence, each with a reason:
+    //
+    //  - **1 long at 5:00, 4:00 and 1:00**, where a sailor gets 1 short / 2 short / 2 short. A sailor
+    //    counts blasts on the wrist under load and cannot tell one 500 ms buzz from another; a race
+    //    manager is *sounding* the signals rather than counting them, so the long matches what their
+    //    own horn is doing. Confirmed by the iStart Owner's Manual v2.0, whose Rule 26 loud-horn
+    //    schedule is 1 long at each of those three marks.
+    //  - **Silent at 3:00 and 2:00.** Same reasoning that keeps 0:50 and 0:40 out of
+    //    [raceManagerTail]: those are cross-check marks for a sailor, and the committee is the thing
+    //    being cross-checked against. The manual's table has no entries there either.
+    //  - **A third sync run into the gun**, replacing [finalMinuteTail] outright. All three run-ins
+    //    are then the same device, so the race manager learns one cadence and it means the same thing
+    //    every time — and it keeps the run-in categorically distinct from the signals, which matters
+    //    most at the gun, the one mark that must not be anticipated by mistake.
+    //
+    // [countUpAfterFinish] is the whole of the count-up behaviour and the whole of lead-in
+    // eligibility (`offersLeadIn` reads exactly this flag): nothing downstream branches on which
+    // race-manager sequence is loaded, and this is the first sequence that could prove it.
+    val usSailingRaceManager: RaceSequence = RaceSequence(
+        id = "us_sailing_race_manager",
+        name = "US Sailing - Race Manager",
+        cues = listOf(
+            SequenceCue(
+                offsetMs = 5 * 60_000L,
+                signal = SignalPattern(longBlasts = 1, label = "Warning — class flag up"),
+            ),
+        ) + syncRunInto(4 * 60_000L, "prep") + listOf(
+            SequenceCue(
+                offsetMs = 4 * 60_000L,
+                signal = SignalPattern(longBlasts = 1, label = "Preparatory — P/I/Z/U flag up"),
+            ),
+        ) + syncRunInto(1 * 60_000L, "one-minute") + listOf(
+            SequenceCue(
+                offsetMs = 1 * 60_000L,
+                signal = SignalPattern(longBlasts = 1, label = "One-minute — prep flag down"),
+            ),
+        ) + syncRunInto(0L, "start") + sustainedGun,
+        countUpAfterFinish = true,
+    )
+
     // --- Scholastic / ICSA 3-minute sequence ---
     val scholastic: RaceSequence = RaceSequence(
         id = "scholastic",
@@ -386,8 +434,14 @@ object BuiltInSequences {
         ),
     )
 
-    /** All built-in sequences in display order. */
-    val all: List<RaceSequence> = listOf(usSailing, scholastic, scholasticRaceManager, club)
+    /**
+     * All built-in sequences in display order.
+     *
+     * Each race-manager variant sits directly under the sailor sequence it is the committee side of,
+     * so the picker reads as two pairs and a standalone rather than as five unrelated modes.
+     */
+    val all: List<RaceSequence> =
+        listOf(usSailing, usSailingRaceManager, scholastic, scholasticRaceManager, club)
 
     // -----------------------------------------------------------------------
     // Custom sequence
@@ -426,9 +480,11 @@ object BuiltInSequences {
      * substitutes on miss reports success while running the wrong duration and the wrong cues. A null
      * forces the caller to decide, and to say so on screen (see `docs/message-surface.md`).
      *
-     * The lead-in branch is the same property one level out: a race armed with a lead time persists
-     * as `scholastic_race_manager_lead70s` and nothing else, so this is what makes a process death
-     * during the run-up come back on the right clock rather than 70 seconds short.
+     * The lead-in branch is the same property one level out: a race armed with a lead persists as
+     * `scholastic_race_manager_alert60s` and nothing else, so this is what makes a process death
+     * during the run-up come back on the right clock rather than 70 seconds short. Note the id
+     * carries the **box's alert window**, not the total lead it produces — the 60 there is what
+     * yields a 70-second run-up once [LEAD_IN_PREP_SECONDS] is added (see `LeadIn.leadInId`).
      */
     fun resolve(id: String): RaceSequence? =
         all.firstOrNull { it.id == id }
