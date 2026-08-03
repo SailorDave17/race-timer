@@ -65,19 +65,51 @@ object CueTiming {
      */
     const val SYNC_AMPLITUDE = 110
 
+    /**
+     * Sound and buzz time of one pulse of a [CueVoice.PROMPT] cue.
+     *
+     * Shorter than [SYNC_ON] and run at full strength, which is the combination that makes a prompt
+     * read as a *texture* rather than as a count. Five of these back to back is 400 ms of stutter —
+     * one event, felt as a burst — where five short blasts would be 1.5 s of countable pulses. That
+     * distinction is load-bearing: the prompt fires 15 or 60 seconds before a `3 long`, and a race
+     * manager who counts it as a blast pattern has misread an instruction as a signal.
+     */
+    const val PROMPT_ON = 40L
+
+    /** Silence between the pulses of a prompt. Equal to [PROMPT_ON], which is what makes it a stutter. */
+    const val PROMPT_OFF = 40L
+
+    /**
+     * Vibration strength of a prompt — the strongest there is, against 255 for a long blast.
+     *
+     * A prompt is the one cue the wearer must *act* on, and the wrist is the only channel guaranteed
+     * to reach them: the speaker may be muted, and their eyes are on the signal box rather than the
+     * watch. [SYNC_AMPLITUDE] takes the opposite decision for the opposite reason.
+     */
+    const val PROMPT_AMPLITUDE = 255
+
     /** Buzzes in the legacy gun triple-buzz, used by cues that state no [SignalPattern.sustainedMs]. */
     const val GUN_REPEAT = 3
 
     /** Sound/silence of one blast of [pattern], picked by its [SignalPattern.voice]. */
     fun onMs(pattern: SignalPattern, long: Boolean): Long = when (pattern.voice) {
         CueVoice.SYNC -> SYNC_ON
+        CueVoice.PROMPT -> PROMPT_ON
         CueVoice.BLAST -> if (long) LONG_ON else SHORT_ON
     }
 
     /** Silence after one blast of [pattern]. Pairs with [onMs]. */
     fun offMs(pattern: SignalPattern, long: Boolean): Long = when (pattern.voice) {
         CueVoice.SYNC -> SYNC_OFF
+        CueVoice.PROMPT -> PROMPT_OFF
         CueVoice.BLAST -> if (long) LONG_OFF else SHORT_OFF
+    }
+
+    /** Vibration strength of [pattern], by voice. A long blast and a prompt both run at full. */
+    fun amplitude(pattern: SignalPattern, long: Boolean): Int = when (pattern.voice) {
+        CueVoice.SYNC -> SYNC_AMPLITUDE
+        CueVoice.PROMPT -> PROMPT_AMPLITUDE
+        CueVoice.BLAST -> if (long) 255 else 200
     }
 
     /**

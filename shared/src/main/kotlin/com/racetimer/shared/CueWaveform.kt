@@ -70,6 +70,17 @@ object CueWaveform {
     private val SUSTAINED_SEGMENTS = listOf(doubleArrayOf(941.0, 1633.0))
 
     /**
+     * Sine partials of a [CueVoice.PROMPT] pulse — the two highest DTMF *column* tones together.
+     *
+     * Deliberately a pair no DTMF key produces, and deliberately in the gap between the other two
+     * voices: well above the sync tick's 697/1209 so it cannot be heard as one, and far below the
+     * blast's 3700/4000 warble so it cannot be heard as a signal. Pitch is the smaller half of what
+     * separates a prompt anyway — the stutter of [CueTiming.PROMPT_ON] is what carries it — but a
+     * third voice sharing a pitch with either neighbour would be doing the timing no favours.
+     */
+    private val PROMPT_SEGMENTS = listOf(doubleArrayOf(1209.0, 1633.0))
+
+    /**
      * Peak amplitude as a fraction of full scale, before it is split across a tone's partials.
      *
      * Just under full scale so summing two partials cannot clip. Audibility outdoors is the whole
@@ -197,6 +208,7 @@ object CueWaveform {
     private val BlastTone = ToneSpec(BLAST_WARBLE_SEGMENT_MS, BLAST_SEGMENTS)
     private val SyncTone = ToneSpec(0L, SYNC_SEGMENTS)
     private val SustainedTone = ToneSpec(0L, SUSTAINED_SEGMENTS)
+    private val PromptTone = ToneSpec(0L, PROMPT_SEGMENTS)
 
     /** One blast of a cue: [onMs] of [tone], then [offMs] of silence. */
     private class Segment(val onMs: Long, val offMs: Long, val tone: ToneSpec)
@@ -216,6 +228,7 @@ object CueWaveform {
         // a shorter beat than any blast, which is what stops a sailor hearing it as a signal.
         val tone = when (pattern.voice) {
             CueVoice.SYNC -> SyncTone
+            CueVoice.PROMPT -> PromptTone
             CueVoice.BLAST -> BlastTone
         }
         val segments = mutableListOf<Segment>()

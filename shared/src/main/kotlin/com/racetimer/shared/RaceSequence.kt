@@ -29,6 +29,21 @@ enum class CueVoice {
      * sailor must never mistake one for the other.
      */
     SYNC,
+
+    /**
+     * An instruction to the *wearer* to act, right now — not something the fleet is being told.
+     *
+     * One user today: the end of a lead-in's prep stage, where the race manager must press the
+     * signal box or the whole race runs misaligned (see `LeadIn.kt`). That instant is the most
+     * important in the lead-in and it had nothing on it: [SYNC] ticks count *into* a mark and
+     * deliberately are not one, so five ticks left the mark itself silent.
+     *
+     * Distinct from both on both channels, and distinguishable by **texture** rather than by count.
+     * A count can be misheard as a blast pattern — `3 short` is a real cue at 0:30 of this very
+     * sequence — so this is a fast stutter at full strength that reads as one event, not as a number
+     * of blasts. See [CueTiming.PROMPT_ON] and [CueWaveform].
+     */
+    PROMPT,
 }
 
 /**
@@ -68,11 +83,19 @@ data class SignalPattern(
  * @param offsetMs      Milliseconds before the start gun (positive).  The gun itself is 0.
  * @param signal        The blast pattern to play/buzz at this cue.
  * @param isGun         True only for the 0:00 "Start" cue.
+ * @param isLeadIn      True for a cue belonging to the run-up *ahead* of the sequence's own first
+ *                      signal, rather than to the sequence itself — see `LeadIn.kt`. These are the
+ *                      only cues that may sit above [RaceSequence.sequenceMs], and marking them is
+ *                      what lets that value stay the sequence's own duration instead of growing by
+ *                      whatever the run-up happens to be. Nothing else reads it: a lead-in tick is
+ *                      told apart *by the sailor* through [CueVoice.SYNC], the way every other sync
+ *                      tick is.
  */
 data class SequenceCue(
     val offsetMs: Long,
     val signal: SignalPattern,
     val isGun: Boolean = false,
+    val isLeadIn: Boolean = false,
 )
 
 // ---------------------------------------------------------------------------
@@ -90,17 +113,36 @@ data class SequenceCue(
  *                 once the gun fires, instead of settling into [TimerState.FINISHED] and resetting.
  *                 For a race committee (as opposed to a sailor), the gun is not the end of the job —
  *                 it is the moment race duration starts mattering. See [TimerState.COUNTING_UP].
- * @param totalMs  Total countdown duration = the offset of the first cue.
+ * @param leadInMs Silent run-up ahead of the sequence's own first signal, or 0 for a sequence that
+ *                 begins at its first signal the way every built-in does. Set only by
+ *                 [withLeadIn] — see `LeadIn.kt` for what it is for.
  */
 data class RaceSequence(
     val id: String,
     val name: String,
     val cues: List<SequenceCue>,
     val countUpAfterFinish: Boolean = false,
+    val leadInMs: Long = 0L,
 ) {
-    // Computed once at construction rather than on each read: the idle screen reads this every UI
-    // refresh, and a getter re-scanned all ~30 cues each time to return a value that cannot change.
-    val totalMs: Long = cues.maxOfOrNull { it.offsetMs } ?: 0L
+    /**
+     * The sequence's **own** countdown: where its first signal sits, unaffected by any lead-in.
+     *
+     * Reads only the cues that belong to the sequence, so a run-up bolted on top cannot inflate it —
+     * that inflation is exactly the accident to avoid, since a lead-in's ticks fire in the last five
+     * seconds of the lead and so sit at `sequenceMs + 5 s` whatever the lead actually is. Deriving
+     * the countdown from the largest offset would therefore report a 70-second lead as a 5-second
+     * one, silently, and [TimerEngine.start] anchors the gun on exactly that number.
+     */
+    val sequenceMs: Long = cues.filterNot { it.isLeadIn }.maxOfOrNull { it.offsetMs } ?: 0L
+
+    /**
+     * What the clock starts at and what [TimerEngine.start] anchors the gun on: the lead-in, then
+     * the sequence.
+     *
+     * Computed once at construction rather than on each read: the idle screen reads this every UI
+     * refresh, and a getter re-scanned all ~30 cues each time to return a value that cannot change.
+     */
+    val totalMs: Long = sequenceMs + leadInMs
 }
 
 // ---------------------------------------------------------------------------
@@ -241,8 +283,12 @@ object BuiltInSequences {
      * These are not signals and must not be heard as ones, so they carry [CueVoice.SYNC]. Their job
      * is to give a sailor whose watch has drifted a beat of warning *before* the mark, which is the
      * only moment the drift can still be corrected — the mark itself is too late.
+     *
+     * `internal` rather than private because a lead-in's run-up is this same five-tick cadence,
+     * built from this same function (see `LeadIn.kt`). One definition, so the run into a lead-in's
+     * end and the run into a US Sailing signal cannot come to mean two different things.
      */
-    private fun syncRunInto(signalOffsetMs: Long, signalName: String): List<SequenceCue> =
+    internal fun syncRunInto(signalOffsetMs: Long, signalName: String): List<SequenceCue> =
         (5 downTo 1).map { sec ->
             SequenceCue(
                 offsetMs = signalOffsetMs + sec * 1_000L,
@@ -379,9 +425,15 @@ object BuiltInSequences {
      * saved Custom race come back as a US Sailing one: `custom_8m` is not in [all], so a lookup that
      * substitutes on miss reports success while running the wrong duration and the wrong cues. A null
      * forces the caller to decide, and to say so on screen (see `docs/message-surface.md`).
+     *
+     * The lead-in branch is the same property one level out: a race armed with a lead time persists
+     * as `scholastic_race_manager_lead70s` and nothing else, so this is what makes a process death
+     * during the run-up come back on the right clock rather than 70 seconds short.
      */
     fun resolve(id: String): RaceSequence? =
-        all.firstOrNull { it.id == id } ?: customMinutes(id)?.let { custom(it) }
+        all.firstOrNull { it.id == id }
+            ?: leadInFromId(id)
+            ?: customMinutes(id)?.let { custom(it) }
 
     /**
      * A race of [totalMinutes] whole minutes, counted down in the Scholastic/ICSA voice.

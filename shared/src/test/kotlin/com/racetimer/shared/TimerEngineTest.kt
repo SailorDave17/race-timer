@@ -952,6 +952,159 @@ class TimerEngineTest {
         assertNull(engine.msUntilNextCue())
     }
 
+    // --- Lead-in (#104) -------------------------------------------------------
+
+    // A 60 s box alert: 10 s prep + 60 s alert window = a 70 s lead on a 3:00 sequence.
+    private val armed70 = withLeadIn(BuiltInSequences.scholasticRaceManager, 60)!!
+
+    @Test fun `an armed race starts its countdown at the lead plus the sequence`() {
+        engine.load(armed70)
+        engine.start()
+        assertEquals(4 * 60_000L + 10_000L, engine.remainingMs)
+    }
+
+    @Test fun `sync is inert throughout the lead-in`() {
+        // At 4:07 remaining, nearest-minute lands on 4:00 and silently deletes seven seconds of the
+        // lead — the exact misalignment the lead-in exists to prevent, and there is nothing to snap
+        // to anyway because the signal box has not been started yet.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(3_000L)                       // 4:07 remaining
+        val before = engine.remainingMs
+
+        engine.sync()
+
+        assertNull("no snap may be reported", syncedTo)
+        // The anchor must not move: a snap would have jumped this to a whole 4:00.
+        assertEquals(before, engine.remainingMs, 150L)
+    }
+
+    @Test fun `sync works again the moment the sequence proper begins`() {
+        // The refusal is scoped to the run-up, not to the race: a race manager whose watch drifts
+        // during the sequence itself must still be able to snap it, exactly as before.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(70_000L + 5_000L)             // 2:55 remaining, past the 3:00 mark
+        assertFalse(isInLeadIn(armed70, engine.remainingMs))
+
+        engine.sync()
+
+        assertEquals(3 * 60_000L, syncedTo)
+    }
+
+    @Test fun `a sync refused during the lead-in does not arm the double-tap guard`() {
+        // The refusal has to come *before* lastSyncTimeMs is recorded, or a tap during the run-up
+        // swallows the sailor's next real one. The shortest legal lead is the 10 s prep alone, so with the default
+        // 1 s guard the two syncs can never fall close enough together for the ordering to matter —
+        // this widens the guard past the lead deliberately, which is the only way the assertion can
+        // tell a guard armed by a refusal from one that was not.
+        val armed5 = withLeadIn(BuiltInSequences.scholasticRaceManager, BOX_ALERT_NONE)!!
+        engine.load(armed5)
+        engine.start()
+        engine.sync(guardMs = 10_000L)          // refused: still in the lead-in
+        advanceTo(10_100L)                      // just past the mark, well inside the widened guard
+
+        engine.sync(guardMs = 10_000L)
+
+        assertEquals("the first real sync must be honoured", 3 * 60_000L, syncedTo)
+    }
+
+    @Test fun `stage 1 ticks into the press prompt, then stage 2 runs silent`() {
+        // armed70 is a 60 s box alert on a 3:00 sequence: 4:10 total, press at 4:00, sequence at 3:00.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(10_100L)                      // through the whole prep stage
+
+        assertEquals(
+            "five ticks then the press prompt",
+            listOf(245_000L, 244_000L, 243_000L, 242_000L, 241_000L, 240_000L),
+            cues.map { it.offsetMs },
+        )
+        assertTrue("all of stage 1 is lead-in", cues.all { it.isLeadIn })
+        assertEquals(5, cues.count { it.signal.voice == CueVoice.SYNC })
+        assertEquals(CueVoice.PROMPT, cues.last().signal.voice)
+
+        // Stage 2 is the box's alert window and the watch says nothing in it.
+        val afterStageOne = cues.size
+        advanceTo(69_900L)
+        assertEquals("stage 2 must be silent", afterStageOne, cues.size)
+
+        // ...and the sequence's own first signal ends it.
+        advanceTo(70_100L)
+        assertEquals(afterStageOne + 1, cues.size)
+        assertFalse("the 3:00 signal belongs to the sequence", cues.last().isLeadIn)
+        assertEquals(3, cues.last().signal.longBlasts)
+        assertEquals(180_000L, cues.last().offsetMs)
+    }
+
+    @Test fun `an armed race restores mid-lead-in on the right clock`() {
+        // AC 11. The lead lives inside the sequence id, so the revived engine resolves the same
+        // armed sequence and comes back on the same anchor rather than 70 seconds short.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(30_000L)
+        val snap = engine.snapshot()!!
+        assertEquals(armed70.id, snap.sequenceId)
+
+        fakeNow += 10_000L
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        val resolved = BuiltInSequences.resolve(snap.sequenceId)!!
+        val outcome = revived.restore(resolved, snap)
+
+        assertEquals(RestoreOutcome.EXACT, outcome)
+        assertEquals(TimerState.RUNNING, revived.currentState)
+        assertEquals(4 * 60_000L + 10_000L - 40_000L, revived.remainingMs, 50L)
+        assertTrue("still in the run-up", isInLeadIn(resolved, revived.remainingMs))
+    }
+
+    @Test fun `a restore mid-lead-in still has every run-in tick to come`() {
+        engine.load(armed70)
+        engine.start()
+        advanceTo(2_000L)                       // still in the prep stage, before the first tick
+        val snap = engine.snapshot()!!
+
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        revived.restore(BuiltInSequences.resolve(snap.sequenceId)!!, snap)
+        cues.clear()
+        revived.addListener(listener)
+        while (fakeNow < 70_100L) {
+            fakeNow += 100L
+            revived.tick()
+        }
+
+        assertEquals("five ticks and the press prompt", 6, cues.count { it.isLeadIn })
+        assertEquals(1, cues.count { it.signal.voice == CueVoice.PROMPT })
+    }
+
+    @Test fun `a restore past the lead-in has no run-in ticks left`() {
+        // The complement, and the one that would break if restore's `offsetMs <= remaining` filter
+        // ever stopped applying to cues sitting above the sequence's own duration.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(80_000L)                      // past 3:00; the run-in has been and gone
+        val snap = engine.snapshot()!!
+
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        revived.restore(BuiltInSequences.resolve(snap.sequenceId)!!, snap)
+        cues.clear()
+        revived.addListener(listener)
+        while (fakeNow < armed70.totalMs + 1_000L) {
+            fakeNow += 100L
+            revived.tick()
+        }
+
+        assertEquals(0, cues.count { it.isLeadIn })
+        assertTrue("the race still reaches its gun", gunFired)
+    }
+
+    @Test fun `an armed race still counts up after the gun`() {
+        // The lead-in must not cost the race-manager mode the thing that makes it one.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(armed70.totalMs + 2_000L)
+        assertEquals(TimerState.COUNTING_UP, engine.currentState)
+    }
+
     // --- Helper ---------------------------------------------------------------
 
     /** Advance fake clock in 100 ms steps, calling tick() each step. */

@@ -60,12 +60,17 @@ class HapticManager(context: Context) {
                 timings += CueTiming.LONG_OFF; amplitudes += 0
             }
         } else {
-            // A sync tick is lighter and quicker than any blast, so a sailor can tell it from a
-            // signal with the speaker off. Both halves of that difference — timing and amplitude —
-            // come from CueTiming, so the buzz and the tone stay the same length as each other.
-            val sync = pattern.voice == CueVoice.SYNC
-            val strongAmplitude = if (sync) CueTiming.SYNC_AMPLITUDE else 255
-            val shortAmplitude = if (sync) CueTiming.SYNC_AMPLITUDE else 200
+            // Each voice buzzes at its own strength, and the strength comes from CueTiming along
+            // with the timing — so the buzz and the tone stay the same length as each other, and a
+            // wearer can tell the three apart with the speaker off. A sync tick is lighter and
+            // quicker than any blast; a prompt is quicker still and at full strength, because it is
+            // the one cue that has to be *acted on* rather than merely heard.
+            //
+            // Read through CueTiming.amplitude rather than a `voice == SYNC` boolean: a boolean
+            // silently absorbs a third voice into the else branch, which is exactly how a new
+            // enum value ships doing nothing (#59 lost a build to this class of thing).
+            val strongAmplitude = CueTiming.amplitude(pattern, long = true)
+            val shortAmplitude = CueTiming.amplitude(pattern, long = false)
 
             // Long blasts first
             repeat(pattern.longBlasts) {
