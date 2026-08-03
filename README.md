@@ -1,99 +1,238 @@
 # Race Timer — Sailing Start-Sequence Timer
 
-A precise, glanceable start-sequence timer for sailboat racing that runs **standalone on a Wear OS watch** (no phone required on the water).
+A precise, glanceable start-sequence timer for sailboat racing that runs **standalone on a Wear OS
+watch** (no phone required on the water).
+
+Two audiences, one app: a **sailor** counting down to the gun, and a **race committee** sounding the
+signals the fleet is counting down to. The race-manager sequences are not a re-skin — they are voiced
+differently, they keep running after the gun as an elapsed-time race clock, and they can be started
+in step with an external signal box.
+
+📖 **[Full documentation is in the wiki](https://github.com/SailorDave17/race-timer/wiki)** — signal
+tables, the race-manager modes, architecture, and troubleshooting.
 
 ## Features
 
-### Timing Sequences
-- **US Sailing 5-4-1-Go** (RRS 26) — 5-min sequence with Warning, Preparatory, One-minute, and Start signals
-- **US Sailing — Race Manager** — the same 5-min RRS 26 marks for the race committee rather than a sailor, re-voiced for someone *sounding* the signals instead of counting them: 1 long at 5:00, 4:00 and 1:00 (matching the horn), nothing at 3:00 or 2:00, and a five-tick sync run into each of the three signals *and* into the gun in place of a sailor's doubled final five. Like Scholastic — Race Manager it doesn't reset at the gun: the watch keeps running as an elapsed-time race clock (up to `H:MM:SS`), the screen is free to sleep, and a foreground service keeps timing until **End Race** is tapped.
-- **Scholastic / ICSA** — 3-min sequence with dense horn-blast cues (3L, 2L, 1L+3S, 1L, 3S, 2S, 1S × 6, 1L-Start)
-- **Scholastic — Race Manager** — the same Scholastic/ICSA opening (3L, 2L, 1L+3S, 1L) for the race committee rather than a sailor, but its own cadence below the minute: 3S/2S/1S at 0:30/0:20/0:10, then single ticks at 0:05 through 0:01 (no 0:50/0:40 warnings, nothing between 0:09 and 0:06, and the final five aren't doubled the way a sailor's countdown doubles them). Once the gun fires it doesn't reset: the watch keeps running as an elapsed-time race clock (up to `H:MM:SS`), the screen is free to sleep, and a foreground service keeps timing in the background until **End Race** is tapped.
-- **Club 3-2-1-Go** — simple 3-min club racing sequence
-- **Custom** — any whole number of minutes, set on the watch (minimum 1:00, no maximum). One long blast on every whole minute from the top down to and including 1:00, then the Scholastic/ICSA cadence below the minute (0:50/0:40 ticks, 3S/2S/1S at 0:30/0:20/0:10, single ticks 0:10–0:06, doubled final five) and the same sustained gun — so an unfamiliar duration still ends in a countdown you already race to
+### Timing sequences
 
-### Sync Button
-Tap **Sync** at any point during the countdown to snap to the nearest whole minute — absorbs your reaction-time lag when watching the Race Committee's flag. Round-to-nearest by default; round-down available as a toggle.
+| Sequence | Length | For | After the gun |
+|---|---|---|---|
+| **US Sailing 5-4-1-Go** (RRS 26) | 5:00 | Sailor | Resets |
+| **US Sailing — Race Manager** | 5:00 | Committee | Counts up |
+| **Scholastic (ICSA)** | 3:00 | Sailor | Resets |
+| **Scholastic — Race Manager** | 3:00 | Committee | Counts up |
+| **Club 3-2-1-Go** | 3:00 | Sailor | Resets |
+| **Custom** | any whole minutes, min 1:00 | Sailor | Resets |
 
-### Haptics-First Watch UI
-- Big high-contrast MM:SS readout readable in bright sun
-- Color-state background: navy → amber (last minute) → red flash (final 10 s) → green (gun)
-- Distinct haptic patterns per signal: long buzz for long blasts, quick tap for short blasts, triple-buzz for the gun
-- Large **Sync** and **Stop** buttons; one swipe for sequence selection
+Full cue-by-cue tables are on the wiki: **[Race Sequences](https://github.com/SailorDave17/race-timer/wiki/Race-Sequences)**.
+`shared/src/main/kotlin/com/racetimer/shared/RaceSequence.kt` is the authoritative source if anything
+disagrees with the app.
+
+- **Sailor sequences** are voiced for the wrist rather than for the horn. US Sailing uses short
+  blasts throughout, because a sailor cannot count one 500 ms buzz against another without looking;
+  the two cues that matter procedurally (prep up at 4:00, prep down at 1:00) are doubled so they
+  stand out from the plain minute ticks.
+- **Every sequence shares the last five seconds** — 0:05 to 0:01 doubled — so a sailor never has to
+  remember which sequence is loaded to know what the final five mean.
+- **Custom** encodes its duration in the sequence id (`custom_8m`), which is what lets a killed
+  process come back at the right duration rather than as a built-in.
+
+### Race-manager modes
+
+**US Sailing — Race Manager** and **Scholastic — Race Manager** are the committee side of their
+sailor sequences. They differ in three ways that matter:
+
+- **Re-voiced for someone sounding the signals**, not counting them — 1 long at the marks the horn
+  sounds, silence at the cross-check marks a sailor uses (3:00 and 2:00 on US Sailing; 0:50 and 0:40
+  on Scholastic), and no doubled final five.
+- **The gun is not the end.** The clock keeps running as an elapsed-time race clock (up to `H:MM:SS`),
+  the screen is free to sleep, and a foreground service keeps timing until **End Race** is tapped —
+  which freezes the final time on screen rather than resetting.
+- **A signal-box lead-in.** See below.
+
+### Signal-box lead-in
+
+On the committee boat the watch is not the only thing making noise: the fleet hears the signal box,
+the race manager hears their wrist. Whatever gap a thumb introduces between starting the two is a gap
+the fleet races to for the whole sequence, and no mid-run Sync can close it.
+
+So the watch waits — in **two** stages, because a box does not begin its sequence when you press it:
+
+```
+4:10  tap Start
+  |   PREP — 10 s to get a hand to the box. Last five seconds tick.
+4:00  PRESS THE BOX — a distinct stutter cue, the one cue that must be acted on
+  |   ALERT WINDOW — the box sounds its own alert here; the watch stays silent
+3:00  the sequence's own first signal, and confirmation the two agree
+  |   ...the sequence exactly as it always was...
+0:00  gun
+```
+
+The alert window is the **box's** setting, not a total — that is the number printed on the mode chart
+on the back of the unit. Presets are **none / 15 s (iStart Dinghy) / 60 s (iStart Rule 26)**, or dial
+any value from 5 s to 2:00. Reached through the **Lead-in** button, which appears next to Start on
+race-manager sequences only: a sailor has no box to sync to, and a sailor who triggers it by accident
+starts their race late.
+
+Like Custom, the setting lives inside the sequence id (`scholastic_race_manager_alert60s`), so a
+process death during the run-up comes back on the right clock.
+
+### Sync button
+
+Tap **Sync** during the countdown to snap to the nearest whole minute — this absorbs the
+reaction-time lag between the Race Committee's flag reaching the top of the staff and your thumb
+landing. Round-to-nearest by default.
+
+Sync is deliberately **unavailable during a lead-in**: there is nothing to snap to yet, and snapping
+4:07 to 4:00 on a 3:00 sequence would silently delete seven seconds of the very run-up the lead-in
+exists to protect. The button is removed rather than disabled, because a control that takes the tap
+and does nothing reads as broken.
+
+### Three cue voices
+
+A cue's tone and its vibration read the same pattern and land on the same blast boundaries, so a cue
+sounds the shape it feels. What kind of thing a cue *is* rides on a separate axis:
+
+| Voice | What it is | How it reads |
+|---|---|---|
+| **Blast** | A race signal — what the committee is sounding | 500 ms long / 150 ms short, full strength |
+| **Sync** | A wrist-only tick counting *into* a signal | 60 ms, reduced amplitude — never mistakable for a signal |
+| **Prompt** | An instruction to the *wearer* to act now | 5 × 40 ms at full strength — a stutter read as one event, not a count |
+
+The prompt is a texture rather than a count on purpose: `3 short` is a real cue at 0:30 of the very
+sequence a lead-in precedes, and a race manager who counts the prompt as a blast pattern has misread
+an instruction as a signal.
+
+### Haptics-first watch UI
+
+- Big high-contrast MM:SS readout, driven to **maximum panel brightness** while a race is on screen
+- Colour-state background: navy → amber (last minute) → red flash (final 10 s) → green (gun)
+- Distinct haptic patterns per signal, per the voice table above
+- Large **Sync** / **Stop** buttons, **End Race** in race-manager count-up; one swipe to the picker
+- A transient banner below the readout for notices that need no action, and a persistent status line
+  under the sequence name for ones that do — see [`docs/message-surface.md`](docs/message-surface.md)
 
 ### Reliability
-- **Monotonic clock** — anchored to `elapsedRealtimeNanos()`, immune to NTP/wall-clock changes
-- **Foreground service + Ongoing Activity** — countdown survives screen-off and app backgrounding
-- **Keep-screen-on** — display stays on for the full countdown; clears the moment the sequence ends, or the moment the gun fires in either race-manager mode (**US Sailing — Race Manager**, **Scholastic — Race Manager**), so an elapsed-time count-up can run with the screen asleep
-- **State persistence** — the running gun time is snapshotted to `SharedPreferences`. A killed process is restored **exactly** (the monotonic anchor survives, immune to NTP). After a device restart the timer is recovered best-effort from wall-clock and prompts you to tap **Sync** to confirm against the flag. The snapshot names the sequence as well as the time, so a **Custom** race comes back at its own duration rather than as a built-in. Reopening after a kill shows that race's own clock, still counting, and offers **Resume** or **Start over** instead of deciding for you — for every sequence, including the race-manager count-up.
 
-## Project Structure
+- **Monotonic clock** — anchored to `elapsedRealtimeNanos()`, immune to NTP and wall-clock changes
+- **Rendered cue audio** — each cue is rendered to PCM and written to a reused `AudioTrack` in one
+  piece, so blast lengths are exactly what `CueTiming` states. The `ToneGenerator` path this replaced
+  treated its duration as a *cap*: 500 ms delivered 512 ms five times and 520 ms once in the same race
+- **Scheduled cues, not polled** — cues are scheduled against the anchor rather than sampled by a
+  tick loop, which took cue accuracy from ±200 ms to ±13 ms on hardware
+- **Foreground service + Ongoing Activity** — the countdown survives screen-off and backgrounding
+- **Screen policy is a table, not a habit** — keep-awake and max-brightness are two pure functions of
+  timer state in `shared/ScreenPolicy.kt`, and they deliberately disagree on exactly one state so a
+  test can assert the divergence
+- **State persistence** — the gun time is snapshotted to `SharedPreferences`. A killed process is
+  restored **exactly** (the monotonic anchor survives). After a device restart the timer is recovered
+  best-effort from wall-clock and prompts you to tap **Sync** to confirm against the flag. Reopening
+  after a kill offers **Resume** or **Start over** rather than deciding for you
+
+## Project structure
 
 ```
 race-timer/
-├── shared/           # Pure Kotlin timer engine (no UI dependency)
+├── shared/           # Pure Kotlin — no Android dependency, JVM-testable
 │   └── src/
 │       ├── main/kotlin/com/racetimer/shared/
-│       │   ├── RaceSequence.kt   — sequence & cue data models, built-in sequences
-│       │   └── TimerEngine.kt    — monotonic engine, sync, state persistence
-│       └── test/                 — unit tests (JVM, no device needed)
+│       │   ├── RaceSequence.kt   — cue/sequence models, the six built-in sequences
+│       │   ├── TimerEngine.kt    — monotonic engine, sync, state machine, persistence
+│       │   ├── LeadIn.kt         — the two-stage signal-box run-up and its id encoding
+│       │   ├── CueTiming.kt      — blast/tick/prompt durations, shared by both channels
+│       │   ├── CueWaveform.kt    — a cue rendered to PCM
+│       │   ├── ScreenPolicy.kt   — keep-awake and max-brightness, per timer state
+│       │   ├── RestorePlan.kt    — what a saved race may be restored to, and when
+│       │   ├── CountdownFormat.kt— MM:SS and H:MM:SS rendering
+│       │   └── BannerLayout.kt   — notice geometry inside a round screen
+│       └── test/                 — JVM unit tests, no device needed
 └── wear/             # Wear OS standalone app
     └── src/main/
         ├── kotlin/com/racetimer/wear/
-        │   ├── MainActivity.kt         — Compose UI, service binding, screen-on
-        │   ├── TimerService.kt         — foreground service, tick loop, cue feedback
-        │   ├── HapticManager.kt        — signal → VibrationEffect patterns
-        │   ├── ToneManager.kt          — audible alert beep paired with each haptic
+        │   ├── MainActivity.kt         — Compose UI, service binding, screen policy
+        │   ├── TimerService.kt         — foreground service, cue scheduling, feedback
+        │   ├── HapticManager.kt        — cue → VibrationEffect waveform
+        │   ├── ToneManager.kt          — cue → rendered AudioTrack buffer
+        │   ├── SystemMonotonicClock.kt — the engine's clock, on Android
         │   ├── RaceTimerApplication.kt — notification channel creation
         │   └── ui/
-        │       ├── Theme.kt            — Wear Compose MaterialTheme
-        │       ├── TimerScreen.kt      — main countdown face
+        │       ├── Theme.kt
+        │       ├── TimerScreen.kt            — countdown face
         │       ├── SequencePickerScreen.kt
-        │       └── CustomDurationScreen.kt — whole-minute stepper for the Custom sequence
+        │       ├── CustomDurationScreen.kt   — whole-minute stepper for Custom
+        │       ├── LeadInPickerScreen.kt     — box-alert presets
+        │       └── LeadInDurationScreen.kt   — dialled box-alert value
         └── res/
 ```
+
+The dependency direction is one-way and worth preserving: `wear` depends on `shared`, never the
+reverse. Keeping `shared` free of Android types is what lets the whole timing core run on the JVM in
+seconds with no emulator — and it is where the rules that would otherwise get written twice, and
+drift, are made assertable.
 
 ## Build
 
 ### Requirements
+
 - Android Studio Hedgehog (2023.1) or newer, **or** VS Code with the Gradle for Java extension
-- Android SDK with:
-  - Wear OS emulator image (API 30 / Wear OS 3.5+)
-  - Build-tools 34
+- JDK 17 (AGP 8.2 refuses anything lower); `:shared` declares a JVM 8 toolchain, which
+  `settings.gradle.kts` resolves via the Foojay plugin rather than requiring a local install
+- Android SDK with a Wear OS emulator image (API 30 / Wear OS 3.5+) and Build-tools 34
 
 ### Commands
+
 ```bash
+# Run shared module unit tests (JVM only — no device needed). Fast feedback loop.
+./gradlew :shared:test
+
 # Build the Wear OS debug APK
 ./gradlew :wear:assembleDebug
-
-# Run shared module unit tests (no device needed)
-./gradlew :shared:test
 
 # Install on a connected Wear OS device / emulator
 ./gradlew :wear:installDebug
 ```
 
-> **VS Code users**: install the *Gradle for Java* and *Kotlin* extensions. Use the Gradle sidebar to run tasks, or the terminal with `./gradlew`. For the emulator, launch Android Studio's AVD Manager once to create a Wear OS virtual device.
+Those first two are exactly what CI enforces on every pull request — see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
-## Tech Stack
+> **VS Code users**: install the *Gradle for Java* and *Kotlin* extensions and use the checked-in
+> `race-timer.code-workspace`. For the emulator, launch Android Studio's AVD Manager once to create a
+> Wear OS virtual device.
+
+Deploying to a real watch — pairing over adb-over-Wi-Fi, and confirming which APK actually landed —
+is in [`docs/watch-setup.md`](docs/watch-setup.md).
+
+## Tech stack
 
 | Layer | Technology |
 |-------|-----------|
-| Language | Kotlin 1.9 |
-| Build | Gradle 8.4 / AGP 8.2 |
+| Language | Kotlin 1.9.22 |
+| Build | Gradle 8.4 / AGP 8.2.2 |
 | Watch UI | Jetpack Compose for Wear OS 1.3 |
 | Navigation | Wear Compose Navigation |
-| Timing | `SystemClock.elapsedRealtime()` (monotonic) |
-| Background | Android `ForegroundService` + Wear `OngoingActivity` |
+| Timing | `SystemClock.elapsedRealtimeNanos()` (monotonic) |
+| Cue audio | `AudioTrack`, PCM rendered per cue |
+| Background | Android `ForegroundService` (`specialUse`) + Wear `OngoingActivity` |
 | State | `SharedPreferences` (boot-anchored gun snapshot) |
 | Min SDK | 30 (Wear OS 3.5 / Android 11) |
-| Target SDK | 34 |
+| Compile / Target SDK | 34 |
 
-## Roadmap
+## Status and roadmap
 
-| Phase | Features |
-|-------|---------|
-| **MVP (current)** | Standalone Wear OS app — 5 built-in sequences (US Sailing, US Sailing — Race Manager, Scholastic, Scholastic — Race Manager, Club), Sync, haptics, foreground service, keep-screen-on |
-| V1.1 | Named custom presets, round-down sync toggle, mute/haptics settings, Wear Tile + complication |
-| V1.2 | Android phone companion app (sequence picker, config, countdown mirror) |
-| Later | Rolling/chained starts, mic airhorn auto-sync, OCS/recall handling |
+The app is feature-complete for its own use and runs on hardware. The current push is **getting it
+distributable** — [epic #66](https://github.com/SailorDave17/race-timer/issues/66), Google Play
+internal testing.
+
+| Milestone | Scope |
+|---|---|
+| **Shipped** | Six sequences including both race-manager modes, signal-box lead-in, Sync, rendered cue audio, scheduled cues, foreground service, screen policy, restore-after-kill |
+| **Play internal testing** ([#66](https://github.com/SailorDave17/race-timer/issues/66)) | Developer account, upload keystore, icon set, store listing and screenshots, privacy policy, App content declarations, first internal build |
+| **Blocking that** | `compileSdk`/`targetSdk` 35 before the **2026-08-31** Wear OS deadline ([#69](https://github.com/SailorDave17/race-timer/issues/69)), which needs the AGP 8.2.2 → 8.6+ toolchain bump first ([#68](https://github.com/SailorDave17/race-timer/issues/68)) |
+| **Known open defects** | Cues are silent in vibrate mode on some watches ([#95](https://github.com/SailorDave17/race-timer/issues/95)), max-brightness caps at 600 nits and ignores the light sensor ([#100](https://github.com/SailorDave17/race-timer/issues/100)), first-cue audio trails its haptic ([#98](https://github.com/SailorDave17/race-timer/issues/98)) |
+| **Later** | Named custom presets, round-down sync toggle, Wear Tile + complication, phone companion, rolling/chained starts |
+
+---
+
+> **On-water disclaimer.** Race Timer is a training and convenience aid. Under the Racing Rules of
+> Sailing the Race Committee's **visual** signals are definitive; sound signals are only for
+> attention. Sail the flags, not the watch.
