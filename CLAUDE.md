@@ -38,5 +38,5 @@ Start, via the `ACTION_START` restore path.
   `adb shell pm path com.racetimer.wear`, pull it, sha256 against
   `wear/build/outputs/apk/debug/wear-debug.apk`.
 
-Watch pairing details and the adb pair-port gotcha are recorded in the bmad repo at
+Watch pairing details and the adb pair-port gotcha are recorded in the cairn repo at
 `memory/reference/wear-os-adb-pairing-2026-07-30.md`.
