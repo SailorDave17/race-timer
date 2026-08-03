@@ -19,14 +19,20 @@ import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.CueTiming
+import com.racetimer.shared.NO_CAPTURED_ELAPSED_MS
+import com.racetimer.shared.NO_GUN_ELAPSED_MS
+import com.racetimer.shared.NO_GUN_WALL_MS
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
+import com.racetimer.shared.StartPlan
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.formatCountdown
 import com.racetimer.shared.formatElapsed
+import com.racetimer.shared.snapshotFrom
+import com.racetimer.shared.startPlan
 
 /**
  * Foreground service that keeps the [TimerEngine] alive while the screen is off or the
@@ -183,40 +189,35 @@ class TimerService : Service() {
                 tone.warmUp(sequence.cues.map { it.signal })
 
                 // Start over, explicitly asked for. The sailor was shown the saved race and chose
-                // not to resume it, so it is discarded here rather than left to be picked up by the
-                // restore branch below — or offered again on the next launch.
+                // not to resume it, so it is discarded here rather than left to be offered again on
+                // the next launch. It is no longer what stops the restore below from firing —
+                // [startPlan] takes `freshStart` as an input of its own, so that guard no longer
+                // rests on these two statements keeping their order (#64).
                 val freshStart = intent.getBooleanExtra(EXTRA_FRESH_START, false)
                 if (freshStart) clearPersistedState()
 
-                // Check if we should restore from saved state
-                val savedGunElapsed = prefs.getLong(PREF_GUN_ELAPSED, -1L)
-                val savedGunWall = prefs.getLong(PREF_GUN_WALL_CLOCK, -1L)
-                val savedCapturedElapsed = prefs.getLong(PREF_CAPTURED_ELAPSED, Long.MIN_VALUE)
-                val savedSeqId = prefs.getString(PREF_SEQUENCE_ID, null)
-
-                if (savedGunWall > 0 && savedCapturedElapsed != Long.MIN_VALUE &&
-                    savedSeqId == sequenceId && engine.currentState == TimerState.IDLE) {
-                    val snapshot = TimerEngine.Snapshot(
-                        sequenceId = savedSeqId,
-                        gunElapsedMs = savedGunElapsed,
-                        gunWallMs = savedGunWall,
-                        capturedElapsedMs = savedCapturedElapsed,
-                    )
-                    lastRestoreOutcome = engine.restore(sequence, snapshot)
-                    if (lastRestoreOutcome == RestoreOutcome.EXPIRED) {
-                        // The gun fired while the process was dead, so there is no race to resume —
-                        // and restore leaves the engine FINISHED, which with no Reset button would
-                        // strand the screen on "GO!". The sailor tapped Start, so give them a start:
-                        // drop the spent snapshot and run the sequence from the top. The UI says so
-                        // (see consumeRestoreNotice) rather than silently substituting a fresh race.
-                        clearPersistedState()
+                // Restore or run from the top — decided in `shared/`, from the same reading of the
+                // persisted keys the pre-start screen's Resume offer is built on, so the offer and
+                // what the tap does cannot disagree.
+                when (val plan = startPlan(freshStart, savedSnapshot(prefs), sequenceId, engine.currentState)) {
+                    is StartPlan.Resume -> {
+                        lastRestoreOutcome = engine.restore(sequence, plan.snapshot)
+                        if (lastRestoreOutcome == RestoreOutcome.EXPIRED) {
+                            // The gun fired while the process was dead, so there is no race to resume —
+                            // and restore leaves the engine FINISHED, which with no Reset button would
+                            // strand the screen on "GO!". The sailor tapped Start, so give them a start:
+                            // drop the spent snapshot and run the sequence from the top. The UI says so
+                            // (see consumeRestoreNotice) rather than silently substituting a fresh race.
+                            clearPersistedState()
+                            engine.load(sequence)
+                            engine.start()
+                        }
+                    }
+                    StartPlan.FromTheTop -> {
                         engine.load(sequence)
                         engine.start()
+                        lastRestoreOutcome = null
                     }
-                } else {
-                    engine.load(sequence)
-                    engine.start()
-                    lastRestoreOutcome = null
                 }
                 pendingRestoreNotice = lastRestoreOutcome
 
@@ -613,21 +614,24 @@ class TimerService : Service() {
          * the same four keys — they are written together by `persistSnapshot` and cleared together,
          * and a caller that re-read them separately could catch them mid-edit.
          */
-        fun savedSnapshot(context: Context): TimerEngine.Snapshot? {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val sequenceId = prefs.getString(PREF_SEQUENCE_ID, null) ?: return null
-            val gunWall = prefs.getLong(PREF_GUN_WALL_CLOCK, -1L)
-            val capturedElapsed = prefs.getLong(PREF_CAPTURED_ELAPSED, Long.MIN_VALUE)
-            // The same two guards `onStartCommand` restores under, so the offer on screen and what a
-            // tap actually does cannot disagree about whether there is a race to come back to.
-            if (gunWall <= 0L || capturedElapsed == Long.MIN_VALUE) return null
-            return TimerEngine.Snapshot(
-                sequenceId = sequenceId,
-                gunElapsedMs = prefs.getLong(PREF_GUN_ELAPSED, -1L),
-                gunWallMs = gunWall,
-                capturedElapsedMs = capturedElapsed,
-            )
-        }
+        fun savedSnapshot(context: Context): TimerEngine.Snapshot? =
+            savedSnapshot(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))
+
+        /**
+         * The same reading, for a caller that already holds the prefs — `onStartCommand`, which
+         * restores under it.
+         *
+         * The service used to read the four keys inline and apply its own copy of the guards. Two
+         * copies of one rule is the shape every defect in this path has had, so there is now one
+         * read here and one decision in [snapshotFrom]; the activity's offer and the service's
+         * restore cannot disagree about whether a race exists, because they are the same call.
+         */
+        private fun savedSnapshot(prefs: SharedPreferences): TimerEngine.Snapshot? = snapshotFrom(
+            sequenceId = prefs.getString(PREF_SEQUENCE_ID, null),
+            gunElapsedMs = prefs.getLong(PREF_GUN_ELAPSED, NO_GUN_ELAPSED_MS),
+            gunWallMs = prefs.getLong(PREF_GUN_WALL_CLOCK, NO_GUN_WALL_MS),
+            capturedElapsedMs = prefs.getLong(PREF_CAPTURED_ELAPSED, NO_CAPTURED_ELAPSED_MS),
+        )
 
         /**
          * @param freshStart true to discard any saved race and run [sequenceId] from the top. False

@@ -18,6 +18,7 @@ import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable as wearComposable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.LaunchNotice
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
@@ -28,6 +29,7 @@ import com.racetimer.shared.discardedOnStartRemainingMs
 import com.racetimer.shared.forcesMaxBrightness
 import com.racetimer.shared.formatCountdown
 import com.racetimer.shared.keepsScreenOn
+import com.racetimer.shared.launchPlan
 import com.racetimer.shared.resumeOfferRemainingMs
 import com.racetimer.wear.ui.CustomDurationScreen
 import com.racetimer.wear.ui.DEFAULT_CUSTOM_MINUTES
@@ -327,13 +329,14 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Re-select the sequence of a race still persisted from an earlier process, and offer it back.
+     * Open on whatever the last process left behind: a race still running, or failing that the
+     * sequence the sailor last picked.
      *
-     * A snapshot only outlives the process while a race is unfinished — Stop and the post-gun
-     * teardown both clear it — so finding one means there is a race to come back to, and the
-     * sequence the sailor should be looking at is that one, not the default. It also has to be the
-     * id [handleResume] sends: the service will only restore when the two match (see
-     * `TimerService.savedSnapshot`).
+     * The decision itself is [launchPlan], in `shared/`, where the JVM suite can hold it — including
+     * the #57 regression this method exists to prevent, where a killed Scholastic race came back as a
+     * fresh 5-minute US Sailing one because the activity relaunched holding the default and never
+     * asked persistence what had been running. What is left here is the part that genuinely needs an
+     * Activity: reading the two records, and applying the answer to the screen.
      *
      * An id nothing answers to is announced rather than absorbed. Tier 1 per `docs/message-surface.md`
      * — the same tier its neighbours in `announceRestoreOutcome` use, since this is news about a race
@@ -341,61 +344,30 @@ class MainActivity : ComponentActivity() {
      * clearing: the next Start writes its own over the top.
      */
     private fun restorePendingSelection() {
-        val snapshot = TimerService.savedSnapshot(this) ?: return restorePickedSelection()
-        val saved = BuiltInSequences.resolve(snapshot.sequenceId)
-        if (saved == null) {
-            showTransientMessage("Saved race unreadable — starting fresh")
-            // The race is gone, but the remembered pick is separate state and may be perfectly
-            // readable — falling back to it beats dropping to US Sailing on top of the bad news.
-            return restorePickedSelection()
-        }
-        applySelection(saved)
-        // Reopen the stepper on the restored race's own length rather than the default, so a Custom
-        // race the sailor wants to re-run is one tap from where they left it.
-        BuiltInSequences.customMinutes(saved.id)?.let { customMinutes = it }
-
-        // A saved race past its gun is spent and there is nothing to resume — except for a
-        // count-up sequence, where the gun is where the race committee's job *starts*. Offering
-        // Resume on a spent countdown would promise a race that no longer exists; the service's
-        // EXPIRED path and its "Old race ended" banner still cover a stale snapshot if one is
-        // reached by tapping Start.
-        // The same rule the refresh re-applies on every tick. `saved.id` is passed as the selection
-        // because [applySelection] above has just made it exactly that, so the id half is satisfied
-        // by construction here and only starts biting once the sailor picks something else.
-        val remaining = resumeOfferRemainingMs(
-            snapshot,
-            saved,
-            saved.id,
+        val plan = launchPlan(
+            TimerService.savedSnapshot(this),
+            TimerService.pickedSequenceId(this),
             SystemMonotonicClock.elapsedMs(),
             System.currentTimeMillis(),
         )
-        if (remaining != null) {
-            pendingResume = snapshot to saved
-        }
+        plan.sequence?.let { applySelection(it) }
+        // Reopen the stepper on the restored race's own length rather than the default, so a Custom
+        // race the sailor wants to re-run is one tap from where they left it. Null leaves whatever
+        // was already dialled in alone.
+        plan.customMinutes?.let { customMinutes = it }
+        // Already paired with the sequence it runs, so there is nothing to look up and nothing to get
+        // wrong: a race is only ever offered on its own sequence.
+        pendingResume = plan.resumable
+        plan.notice?.let { showTransientMessage(messageFor(it)) }
     }
 
     /**
-     * Open on the sequence the sailor last chose, rather than the US Sailing default (#88).
-     *
-     * Reached only when no race survived — a saved race outranks a remembered pick, because it *is* a
-     * pick, made more recently and with a race attached.
-     *
-     * Deliberately does nothing when there is nothing stored: a first-ever launch has no choice to
-     * honour and US Sailing is the right thing to show. An id nothing answers to gets the same
-     * treatment as an unreadable snapshot — announced, not absorbed, so the sailor learns the app is
-     * not showing what they picked instead of quietly racing the wrong sequence (#51's rule).
+     * The words for a [LaunchNotice]. They stay here because `shared/` has no resources and no
+     * business holding UI copy — it decides *that* the sailor must be told, not how it reads.
      */
-    private fun restorePickedSelection() {
-        val id = TimerService.pickedSequenceId(this) ?: return
-        val picked = BuiltInSequences.resolve(id)
-        if (picked == null) {
-            showTransientMessage("Saved sequence unreadable — using default")
-            return
-        }
-        applySelection(picked)
-        // Same reason as the snapshot path: a Custom race the sailor runs repeatedly should reopen the
-        // stepper on its own length, not on the default.
-        BuiltInSequences.customMinutes(picked.id)?.let { customMinutes = it }
+    private fun messageFor(notice: LaunchNotice): String = when (notice) {
+        LaunchNotice.SAVED_RACE_UNREADABLE -> "Saved race unreadable — starting fresh"
+        LaunchNotice.PICKED_SEQUENCE_UNREADABLE -> "Saved sequence unreadable — using default"
     }
 
     /**
