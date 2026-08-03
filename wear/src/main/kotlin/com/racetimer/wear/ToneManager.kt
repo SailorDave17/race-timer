@@ -182,6 +182,20 @@ class ToneManager(context: Context) {
 
     private val releaseRunnable = Runnable { releaseAudioAndQuit() }
 
+    /**
+     * What runs once a cue has finished sounding. See the posting in [submit] for why each part is
+     * here rather than on the cue's own path.
+     *
+     * A field rather than a lambda at the post site so [startTrack] can move it: it is posted against
+     * the cue's *nominal* start, and a cue that starts late has to take its housekeeping with it or
+     * the reset lands inside the sound (#98).
+     */
+    private val housekeepingRunnable = Runnable {
+        logDelivered()
+        armKeepAlive()
+        resetTrack()
+    }
+
     /** Marks the messages belonging to a cue, so cancelling one cannot cancel [warmUp]. */
     private val cueToken = Any()
 
@@ -371,7 +385,7 @@ class ToneManager(context: Context) {
         soundingUntilMs = startAtMs + durationMs
 
         handler.postAtTime({ loadTrack(pcm) }, cueToken, SystemClock.uptimeMillis())
-        handler.postAtTime({ startTrack(startAtMs) }, cueToken, startAtMs)
+        handler.postAtTime({ startTrack(startAtMs, durationMs) }, cueToken, startAtMs)
         // Housekeeping for the *next* cue, deliberately done once this one has finished sounding.
         // The keep-alive is re-armed here so it cannot lapse mid-race between two widely spaced cues,
         // and the track is reset here because `pause` and `flush` are round trips to the audio server
@@ -381,14 +395,15 @@ class ToneManager(context: Context) {
         // [CUE_TAIL_MARGIN_MS] past the cue's nominal end, not on it: the hardware is still draining
         // buffered audio at that point, and flushing into the tail would clip the end off a cue —
         // which for the gun would be the worst possible thing to shorten.
+        //
+        // Posted here against the *nominal* end so it is scheduled unconditionally — including on the
+        // paths where the cue never starts at all, which still need the keep-alive re-armed and the
+        // track emptied. [startTrack] moves it when the start actually slipped; see there for why a
+        // margin measured from a time the cue did not start at is not a margin.
         handler.postAtTime(
-            {
-                logDelivered()
-                armKeepAlive()
-                resetTrack()
-            },
+            housekeepingRunnable,
             cueToken,
-            startAtMs + durationMs + CUE_TAIL_MARGIN_MS,
+            CueTiming.resetAtMs(startAtMs, startAtMs, durationMs, CUE_TAIL_MARGIN_MS),
         )
     }
 
@@ -501,9 +516,23 @@ class ToneManager(context: Context) {
         return
     }
 
-    /** Start the loaded cue, and log how far its start missed [startAtMs]. */
-    private fun startTrack(startAtMs: Long): Unit = synchronized(audioLock) {
+    /**
+     * Start the loaded cue, and log how far its start missed [startAtMs].
+     *
+     * Also carries the cue's housekeeping forward when the start slipped. [submit] posts that against
+     * the cue's *nominal* end, which is the only time it knows — but a cue that starts late still
+     * sounds for its full [durationMs], so the reset would land [CUE_TAIL_MARGIN_MS] minus the
+     * overrun into a cue that is still playing, and `flush` cuts it off there. Measured on an
+     * SM-R925U before the warm-up moved (#98): a first cue starting 645 ms late delivered **92160 of
+     * 108000 frames — 1920 ms of a 2250 ms cue** — so the defect was not only that the cue was late
+     * but that it was then cut short, silently, with every call still reporting success.
+     *
+     * Re-posted rather than posted only here so the guarantee in [submit] is kept: a cue that never
+     * starts still has to re-arm the keep-alive and empty the track.
+     */
+    private fun startTrack(startAtMs: Long, durationMs: Long): Unit = synchronized(audioLock) {
         val audioTrack = track ?: return
+        val enteredMs = SystemClock.uptimeMillis()
         try {
             audioTrack.play()
         } catch (e: IllegalStateException) {
@@ -511,7 +540,12 @@ class ToneManager(context: Context) {
             releaseTrackLocked()
             return
         }
-        logDispatch(startAtMs, audioTrack)
+        // Taken after `play()` returns, not before it: the call itself blocks for as much as a few
+        // hundred milliseconds when it collides with service startup (#98), and the sound cannot have
+        // begun before it came back. Both the log and the housekeeping want the later of the two.
+        val startedMs = SystemClock.uptimeMillis()
+        logDispatch(startAtMs, enteredMs, startedMs, audioTrack)
+        rescheduleHousekeeping(startAtMs, startedMs, durationMs)
 
         val remainder = pendingSamples ?: return
         pendingSamples = null
@@ -526,16 +560,55 @@ class ToneManager(context: Context) {
     }
 
     /**
-     * Report how far the cue's start missed its deadline.
+     * Move this cue's housekeeping to sit after the sound it is actually going to make.
+     *
+     * A no-op on the normal path, where the cue started on time and the margin [submit] posted is
+     * already measured from the right instant.
+     *
+     * [toneHandler] is read directly rather than through [obtainHandler] on purpose: this runs with
+     * [audioLock] held, `obtainHandler` is `@Synchronized` on the instance, and [releaseAudioAndQuit]
+     * takes those two in the opposite order — so calling it here would be the one place in the class
+     * that could deadlock. The field is `@Volatile` and this method only ever runs *on* the tone
+     * thread, so it cannot be null by the time we are here.
+     */
+    private fun rescheduleHousekeeping(startAtMs: Long, startedMs: Long, durationMs: Long) {
+        if (startedMs <= startAtMs) return
+        val handler = toneHandler ?: return
+        soundingUntilMs = startedMs + durationMs
+        handler.removeCallbacks(housekeepingRunnable)
+        handler.postAtTime(
+            housekeepingRunnable,
+            cueToken,
+            CueTiming.resetAtMs(startAtMs, startedMs, durationMs, CUE_TAIL_MARGIN_MS),
+        )
+    }
+
+    /**
+     * Report how far the cue's start missed its deadline, and which half of the path it lost it in.
      *
      * Off unless someone asks for it: `adb shell setprop log.tag.ToneManager DEBUG`. Worth less than
      * it was before #61 — a late start shifts the whole cue, where the old per-blast version of this
      * was measuring the thing that could distort one. Kept because it is still the only way to tell a
      * late cue from a late *race*, and because it is what caught the per-cue track build.
+     *
+     * `lateMs` alone was not enough to close #98. It reports the miss and says nothing about where the
+     * miss came from, and the two candidates want opposite fixes: `wakeMs` is the tone thread failing
+     * to run this message at [startAtMs] — a scheduling or contention problem, fixed by taking work
+     * off the queue ahead of it — while `playMs` is [AudioTrack.play] itself blocking, which no
+     * amount of queue discipline can touch because it is a round trip into the audio server.
      */
-    private fun logDispatch(startAtMs: Long, audioTrack: AudioTrack) {
+    private fun logDispatch(
+        startAtMs: Long,
+        enteredMs: Long,
+        startedMs: Long,
+        audioTrack: AudioTrack,
+    ) {
         if (!Log.isLoggable(TAG, Log.DEBUG)) return
-        Log.d(TAG, "cue lateMs=${SystemClock.uptimeMillis() - startAtMs} rateHz=$sampleRateHz")
+        Log.d(
+            TAG,
+            "cue lateMs=${startedMs - startAtMs} wakeMs=${enteredMs - startAtMs} " +
+                "playMs=${startedMs - enteredMs} rateHz=$sampleRateHz",
+        )
         headAtCueStart = audioTrack.playbackHeadPosition
     }
 

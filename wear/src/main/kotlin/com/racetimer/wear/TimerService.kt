@@ -175,6 +175,35 @@ class TimerService : Service() {
         tone = ToneManager(this).also { it.prepare() }
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         engine.addListener(engineListener)
+        warmUpPickedSequence()
+    }
+
+    /**
+     * Start rendering the sequence the sailor last picked, at the earliest moment in the process that
+     * anything knows what it is (#98).
+     *
+     * This is the earliest hook that works, and the two obvious ones do not. `onStartCommand` is far
+     * too late — it fires the first cue itself, a few lines below its own `warmUp` call. And the
+     * activity's `onServiceConnected` *looks* early but is not: it is a main-thread callback, so it
+     * queues behind Compose's first composition. Measured on an SM-R925U, warming up from there
+     * started the first render **453 ms after first paint** — in other words after the Start button
+     * the sailor is about to tap already existed, which is exactly the window that had to be beaten.
+     * This method runs in `onCreate`, ~1.3 s earlier, and gets the first cue rendered before first
+     * paint rather than after it.
+     *
+     * Reads the persisted pick rather than taking a parameter because there is nobody to pass one: the
+     * service is created by the activity's `bindService` before the activity has said anything. Where
+     * the two disagree — a saved race on a different sequence, or the sailor changing the pick — the
+     * activity calls [warmUpCues] and this render was a cheap wrong guess, not a wasted one, since
+     * cue shapes are shared across sequences and cached by shape.
+     *
+     * Silent on a miss on purpose. Nothing here is required for a race to run correctly; a sequence
+     * that fails to resolve simply renders on demand the way it always did.
+     */
+    private fun warmUpPickedSequence() {
+        val id = pickedSequenceId(this) ?: return
+        val sequence = BuiltInSequences.resolve(id) ?: return
+        tone.warmUp(sequence.cues.map { it.signal })
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -183,11 +212,13 @@ class TimerService : Service() {
                 val sequenceId = intent.getStringExtra(EXTRA_SEQUENCE_ID) ?: BuiltInSequences.usSailing.id
                 val sequence = findSequence(sequenceId)
 
-                // Before anything else in this branch: synthesising a cue costs tens to hundreds of
-                // milliseconds on a watch, and the first cue of a race is due the instant the engine
-                // starts. Rendering here, in cue order, means the work overlaps the persist / wake
-                // lock / startForeground path that already sits between start and the first cue
-                // (#62) instead of landing on top of it.
+                // Backstop only. The render that matters was posted when the sailor picked the
+                // sequence (see [warmUpCues]) — this call is here for the paths that never went
+                // through the activity's selection, and costs a map lookup per cue when they did.
+                //
+                // It cannot be the primary warm-up, which is what #98 measured: `engine.tick()` a few
+                // lines below fires the first cue on *this* thread, so the render thread this posts to
+                // has no head start at all and the tone thread renders the cue inline anyway.
                 tone.warmUp(sequence.cues.map { it.signal })
 
                 // Start over, explicitly asked for. The sailor was shown the saved race and chose
@@ -305,6 +336,34 @@ class TimerService : Service() {
         // either, since a race is recovered from the persisted snapshot when the sailor next taps
         // Start (see the ACTION_START restore path), not by the service coming back on its own.
         return START_NOT_STICKY
+    }
+
+    /**
+     * Render [sequence]'s cues now, ahead of any race that might run them (#98).
+     *
+     * Called by the activity the moment it knows which sequence is selected — on binding, and again
+     * on every pick — because that is seconds before Start and the render needs seconds.
+     *
+     * `onStartCommand` warms up too and that call is now a backstop rather than the real one. It
+     * could not be the real one: it runs on the main thread a few lines above the `engine.tick()`
+     * that fires the first cue, so the render thread it posts to starts *level* with the cue it is
+     * meant to be ahead of. Measured on an SM-R925U with `log.tag.ToneManager DEBUG`, the two threads
+     * began the same 108000-sample buffer within ~32 ms of each other and the render thread — at
+     * `THREAD_PRIORITY_DEFAULT` against the tone thread's `URGENT_AUDIO` — finished 291 ms *after*
+     * the tone thread had already rendered it inline. The first cue of a cold race came out 607-675
+     * ms late across four runs, every millisecond of it spent rendering rather than scheduling.
+     *
+     * So the fix is a head start, not more priority: a faster loser is still a loser when both start
+     * together. The activity binds with `BIND_AUTO_CREATE` in `onStart`, and the watch takes ~3.3 s
+     * from launch to first paint, so by the time there is a Start button to tap the work is long
+     * since posted.
+     *
+     * Safe to call as often as the selection changes — [ToneManager.warmUp] renders each distinct cue
+     * shape once and the shapes are shared across sequences, so flicking through the picker re-renders
+     * almost nothing.
+     */
+    fun warmUpCues(sequence: RaceSequence) {
+        tone.warmUp(sequence.cues.map { it.signal })
     }
 
     override fun onDestroy() {

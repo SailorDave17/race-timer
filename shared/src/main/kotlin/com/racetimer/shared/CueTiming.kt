@@ -131,4 +131,30 @@ object CueTiming {
             pattern.longBlasts * (onMs(pattern, long = true) + offMs(pattern, long = true)) +
                 pattern.shortBlasts * (onMs(pattern, long = false) + offMs(pattern, long = false))
     }
+
+    /**
+     * When the audio track carrying a cue may be emptied, given when the cue *actually* started.
+     *
+     * `ToneManager` resets its track between cues — `pause` then `flush` — because those are round
+     * trips to the audio server and doing them here rather than on the next cue's deadline is worth
+     * more than the whole of its lead-in. The reset therefore has to sit after the sound, and
+     * [marginMs] past it rather than on it, because the hardware is still draining buffered audio at
+     * a cue's nominal end and flushing into that tail cuts the end off the cue.
+     *
+     * The rule is here rather than at the one call site because it was **wrong** there, and silently
+     * (#98). The reset was scheduled off [scheduledStartMs] — the only time known when the cue was
+     * submitted — so a cue that started late kept its original reset time and lost the overrun off its
+     * end. Measured on an SM-R925U, a first cue starting 645 ms late delivered **1920 ms of a 2250 ms
+     * cue**, with every call still reporting success. That is a cue quietly shortened, which for the
+     * three-second gun would be the worst thing in the app to shorten.
+     *
+     * Takes the later of the two starts rather than always the actual one, so a cue that somehow ran
+     * *early* cannot pull its own reset forward into itself.
+     */
+    fun resetAtMs(
+        scheduledStartMs: Long,
+        actualStartMs: Long,
+        durationMs: Long,
+        marginMs: Long,
+    ): Long = maxOf(scheduledStartMs, actualStartMs) + durationMs + marginMs
 }
