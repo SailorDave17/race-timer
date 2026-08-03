@@ -231,6 +231,9 @@ internal testing.
 | **Known open defects** | Cues are silent in vibrate mode on some watches ([#95](https://github.com/SailorDave17/race-timer/issues/95)), max-brightness caps at 600 nits and ignores the light sensor ([#100](https://github.com/SailorDave17/race-timer/issues/100)), first-cue audio trails its haptic ([#98](https://github.com/SailorDave17/race-timer/issues/98)) |
 | **Later** | Named custom presets, round-down sync toggle, Wear Tile + complication, phone companion, rolling/chained starts |
 
+The Google Play account the app publishes under — and why publishing from a different one would create
+a separate app — is in [`docs/play-store-account.md`](docs/play-store-account.md).
+
 ---
 
 > **On-water disclaimer.** Race Timer is a training and convenience aid. Under the Racing Rules of
