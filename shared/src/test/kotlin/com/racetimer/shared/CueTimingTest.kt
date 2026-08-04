@@ -135,12 +135,13 @@ class CueTimingTest {
         // 10_645, so the sound runs to 12_895 — and the reset the submit path had already posted was
         // for 12_550, which lands 345 ms *inside* a cue still playing. Flushing there is what
         // delivered 1920 ms of a 2250 ms cue with every call reporting success.
-        val late = CueTiming.resetAtMs(10_000L, 10_645L, threeLongMs, tailMarginMs)
-        assertEquals(10_645L + 2_250L + 300L, late)
-        assertTrue(
-            "reset at $late still lands inside a cue that sounds until ${10_645L + threeLongMs}",
-            late >= 10_645L + threeLongMs,
-        )
+        // One assertion, not two. A trailing `assertTrue(late >= 10_645 + threeLongMs)` looked like
+        // the property check behind the arithmetic and was dead: the line above pins `late` to
+        // actual + duration + margin, while that bound omits the margin, so it carried exactly
+        // `tailMarginMs` of guaranteed slack and no value of the constants could have reddened it.
+        // The property it appeared to enforce is enforced for real — on this very slip — by
+        // `no slip puts the reset inside the cue` below.
+        assertEquals(10_645L + 2_250L + 300L, CueTiming.resetAtMs(10_000L, 10_645L, threeLongMs, tailMarginMs))
     }
 
     @Test fun `no slip puts the reset inside the cue`() {

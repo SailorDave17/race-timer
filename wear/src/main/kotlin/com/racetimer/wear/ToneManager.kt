@@ -562,8 +562,17 @@ class ToneManager(context: Context) {
     /**
      * Move this cue's housekeeping to sit after the sound it is actually going to make.
      *
-     * A no-op on the normal path, where the cue started on time and the margin [submit] posted is
-     * already measured from the right instant.
+     * In practice this reposts on **every** cue that sounds, and the early return is close to
+     * unreachable: [submit] posts `startTrack` with `postAtTime`, which cannot dispatch before
+     * [startAtMs], so `startedMs >= startAtMs` always and the guard is exact equality rather than a
+     * tolerance — it would need the thread wake *and* the `play()` binder round trip to land inside
+     * one millisecond. The smallest slip measured across #98's runs was 4 ms. The genuinely
+     * exceptional path is the opposite one: this is skipped only when [startTrack] returns before
+     * reaching it, which is the "cue never starts at all" case [submit]'s own posting covers.
+     *
+     * The `<=` and [CueTiming.resetAtMs]'s `maxOf` are still deliberate — they keep a cue that somehow
+     * ran early from pulling its own reset forward into itself — but that is future-proofing, not the
+     * common case.
      *
      * [toneHandler] is read directly rather than through [obtainHandler] on purpose: this runs with
      * [audioLock] held, `obtainHandler` is `@Synchronized` on the instance, and [releaseAudioAndQuit]

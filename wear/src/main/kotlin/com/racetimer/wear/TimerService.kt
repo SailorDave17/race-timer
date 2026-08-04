@@ -197,11 +197,22 @@ class TimerService : Service() {
      * activity calls [warmUpCues] and this render was a cheap wrong guess, not a wasted one, since
      * cue shapes are shared across sequences and cached by shape.
      *
-     * Silent on a miss on purpose. Nothing here is required for a race to run correctly; a sequence
-     * that fails to resolve simply renders on demand the way it always did.
+     * **Falls back to the default rather than returning**, which is the whole reason this reads a
+     * default at all. `PREF_PICKED_SEQUENCE_ID` is written by exactly one caller —
+     * `MainActivity.applySelection` — and on a first-ever launch the activity never reaches it: with
+     * no pick and no saved race, `launchPlan` returns an all-null plan, so `plan.sequence?.let` never
+     * fires. Nor can the race snapshot backfill it, since `clearPersistedState()` runs at every
+     * post-gun teardown. So a sailor who only ever races the default would have skipped this warm-up
+     * on **every** launch, not just the first, and silently fallen back to the activity's
+     * `onServiceConnected` call — the path measured at 453 ms *after* first paint, which is the
+     * window this method exists to beat. Defaulting here matches what `onStartCommand` and
+     * `MainActivity.selectedSequence` already assume, and costs one `warmUp` whose shapes are cached.
+     *
+     * Silent on an unresolvable id on purpose. Nothing here is required for a race to run correctly —
+     * the activity warms up again on binding, and `playCue` still renders on demand below that.
      */
     private fun warmUpPickedSequence() {
-        val id = pickedSequenceId(this) ?: return
+        val id = pickedSequenceId(this) ?: BuiltInSequences.usSailing.id
         val sequence = BuiltInSequences.resolve(id) ?: return
         tone.warmUp(sequence.cues.map { it.signal })
     }
@@ -275,14 +286,23 @@ class TimerService : Service() {
                 // couple of handler posts — `ToneManager.playCue` hands the cue to the tone thread and
                 // returns — single-digit milliseconds against a multi-second budget.
                 //
-                // Firing this early does leave #61's `warmUp` less time to win the pre-render race, and
-                // it will now usually lose it: the render thread is started a few lines above and a cue
-                // costs 27-861 ms to synthesise depending on how contended that thread is. Still a
-                // strict improvement, because losing the race is not a wait — `ToneManager.cueFor`
-                // reads a `ConcurrentHashMap` and re-renders on the tone thread rather than blocking on
-                // the render thread. The cue therefore sounds one render after *dispatch* in either
-                // arrangement, and dispatch is the part that moved. The cost is one duplicated render,
-                // which that class already accounts wasted work rather than a fault.
+                // Firing this early leaves the `warmUp` above no time at all to render — but since #98
+                // that no longer decides anything, because the render that matters was posted long
+                // before this method ran: `warmUpPickedSequence()` in `onCreate`, and the activity's
+                // own calls on binding and on every pick. `cueFor` normally finds the buffer already in
+                // its map, so this cue costs a lookup rather than a synthesis.
+                //
+                // (Before #98 this paragraph read the other way — that `warmUp` "will now usually lose"
+                // the race and the cost was one duplicated render. That was accurate while
+                // `onStartCommand` held the only `warmUp` call site, and it is what the fix disproved:
+                // the render thread was started a few lines above, so it did not lose a race it started
+                // behind — it started *level*, and finished 291 ms after the tone thread had already
+                // rendered the same buffer inline.)
+                //
+                // The old reasoning still describes the fallback: if no pre-render reached the map,
+                // losing is not a wait — `ToneManager.cueFor` reads a `ConcurrentHashMap` and re-renders
+                // on the tone thread rather than blocking on the render thread, costing one duplicated
+                // render, which that class already accounts wasted work rather than a fault.
                 //
                 // The restore path wants this too, and said so first: `TimerEngine.restore` keeps cues
                 // with `offsetMs <= remaining` precisely so that "a cue sitting exactly on `remaining`
