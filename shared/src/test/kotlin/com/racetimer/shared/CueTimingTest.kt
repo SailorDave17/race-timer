@@ -112,4 +112,61 @@ class CueTimingTest {
             betweenPairsMs >= 2 * insidePairMs,
         )
     }
+
+    // --- resetAtMs --------------------------------------------------------------
+
+    // The tail margin ToneManager actually passes. Restated here rather than imported because it
+    // lives in the wear module, which this one cannot see — so if it changes there, these numbers
+    // stop describing the shipped behaviour and that is worth a deliberate edit.
+    private val tailMarginMs = 300L
+
+    // The Scholastic 3 long, the cue #98 was measured on: 3 x (500 + 250).
+    private val threeLongMs = 2_250L
+
+    @Test fun `a cue that starts on time resets a margin past its own end`() {
+        assertEquals(
+            10_000L + 2_250L + 300L,
+            CueTiming.resetAtMs(10_000L, 10_000L, threeLongMs, tailMarginMs),
+        )
+    }
+
+    @Test fun `a cue that starts late carries its reset with it`() {
+        // The #98 regression, at the measured slip. Scheduled at 10_000, play() did not return until
+        // 10_645, so the sound runs to 12_895 — and the reset the submit path had already posted was
+        // for 12_550, which lands 345 ms *inside* a cue still playing. Flushing there is what
+        // delivered 1920 ms of a 2250 ms cue with every call reporting success.
+        // One assertion, not two. A trailing `assertTrue(late >= 10_645 + threeLongMs)` looked like
+        // the property check behind the arithmetic and was dead: the line above pins `late` to
+        // actual + duration + margin, while that bound omits the margin, so it carried exactly
+        // `tailMarginMs` of guaranteed slack and no value of the constants could have reddened it.
+        // The property it appeared to enforce is enforced for real — on this very slip — by
+        // `no slip puts the reset inside the cue` below.
+        assertEquals(10_645L + 2_250L + 300L, CueTiming.resetAtMs(10_000L, 10_645L, threeLongMs, tailMarginMs))
+    }
+
+    @Test fun `no slip puts the reset inside the cue`() {
+        // The property, rather than the arithmetic: whatever the overrun, the track is never emptied
+        // while it is still sounding. Slips span the range measured on an SM-R925U — an on-time cue,
+        // the play() collision with startForeground, and the old inline-render worst case.
+        val scheduledMs = 10_000L
+        for (slipMs in listOf(0L, 4L, 33L, 113L, 245L, 316L, 645L, 675L)) {
+            val startedMs = scheduledMs + slipMs
+            val resetMs = CueTiming.resetAtMs(scheduledMs, startedMs, threeLongMs, tailMarginMs)
+            assertTrue(
+                "slip $slipMs ms: reset at $resetMs cuts into a cue sounding until " +
+                    "${startedMs + threeLongMs}",
+                resetMs >= startedMs + threeLongMs,
+            )
+        }
+    }
+
+    @Test fun `a cue cannot pull its reset forward by starting early`() {
+        // The other direction, and the reason this takes the later of the two rather than simply
+        // trusting the actual start. Nothing in the app starts a cue early today; the guard is here
+        // so that a future change which does cannot shorten the gun by doing so.
+        assertEquals(
+            10_000L + 2_250L + 300L,
+            CueTiming.resetAtMs(10_000L, 9_500L, threeLongMs, tailMarginMs),
+        )
+    }
 }

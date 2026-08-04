@@ -69,6 +69,11 @@ class MainActivity : ComponentActivity() {
             timerService = lb.service
             serviceBound = true
             lb.service.engine.addListener(engineListener)
+            // The earliest moment the selection and the service both exist, and so the earliest the
+            // cues of the race about to be run can start rendering (#98). [restorePendingSelection]
+            // has already run in onCreate — it is what puts the launch's sequence in
+            // [selectedSequence] — but binding is asynchronous and there was no service to tell.
+            lb.service.warmUpCues(selectedSequence)
             refreshUiState()
         }
 
@@ -391,6 +396,10 @@ class MainActivity : ComponentActivity() {
         // exists to rule out. The lead the race manager last used is remembered separately, as a
         // value the picker opens on rather than as a race waiting to be started.
         TimerService.savePickedSequenceId(this, leadInBaseId(seq.id))
+        // Start rendering this sequence's cues now rather than when Start is tapped (#98). Null on
+        // the launch path, where this runs from onCreate before onStart has bound — onServiceConnected
+        // makes the same call as soon as there is something to call it on.
+        timerService?.warmUpCues(seq)
     }
 
     /**
