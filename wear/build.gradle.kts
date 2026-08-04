@@ -5,12 +5,14 @@ plugins {
 
 android {
     namespace = "com.racetimer.wear"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.racetimer.wear"
         minSdk = 30
-        targetSdk = 34
+        // Wear OS is a carve-out from the general Play target-API rule: API 35 by 2026-08-31,
+        // where regular apps must reach 36. See #69.
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
     }
