@@ -1,0 +1,95 @@
+#!/bin/sh
+# Refuse to push to an integration branch when this repo's own checks fail.
+#
+# This file is a generic driver and is byte-identical in every repo. What
+# differs per repo is `githooks/checks` beside it - one shell command per line.
+#
+# Why this exists rather than branch protection: GitHub gates both classic
+# branch protection AND repository rulesets behind GitHub Pro for *private*
+# repos. Measured 2026-08-04 - both API calls return
+#
+#     403 "Upgrade to GitHub Pro or make this repository public"
+#
+# cairn, cohssa-attendance and maverick-smart-home are private, so the server
+# side cannot be made to hold the line at all. race-timer is public and IS
+# protected properly; there this is a fast local echo of the same rule, which
+# is worth having anyway - it fails in seconds instead of after a CI round trip.
+#
+# It is a genuinely weaker guarantee and the difference matters. Server-side
+# protection is enforced against every client; this runs on one machine, in one
+# checkout, and `--no-verify` skips it silently. It stops the habit, not an
+# adversary - which is the actual failure mode here, since the thing being
+# defended against is pushing without thinking.
+#
+# INSTALL (per machine, per clone - .git/ is not tracked):
+#
+#     git config core.hooksPath githooks
+#
+# Verify with `git config core.hooksPath`. Note the trap this repo is built
+# around: an uninstalled hook produces no error and no output, and every symptom
+# is an absence. See memory/global/documented-is-not-installed-2026-08-02.md.
+
+PROTECTED="develop main master"
+REPO_ROOT=$(git rev-parse --show-toplevel)
+CHECKS_FILE="$REPO_ROOT/githooks/checks"
+
+# pre-push receives "<local ref> <local sha> <remote ref> <remote sha>" per ref
+# on stdin. Only integration branches are gated; feature branches push freely,
+# because that is where the PR gets its CI run in the first place.
+#
+# The `|| [ -n "$remote_ref" ]` is load-bearing and was found by mutation
+# testing: a final line with no trailing newline makes `read` return false, so
+# the loop body never runs, `pushing_protected` stays 0 and the hook exits 0.
+# It fails OPEN - it allows the push while looking like it checked. Git always
+# terminates its lines, so this never fires in practice, which is exactly what
+# makes it the dangerous kind of bug. Same family as Windows hazard 7: a guard
+# that does not stop is not a guard.
+pushing_protected=0
+while read -r _local_ref _local_sha remote_ref _remote_sha || [ -n "$remote_ref" ]; do
+    [ -n "$remote_ref" ] || continue
+    for branch in $PROTECTED; do
+        if [ "$remote_ref" = "refs/heads/$branch" ]; then
+            pushing_protected=1
+        fi
+    done
+    remote_ref=""
+done
+
+[ "$pushing_protected" -eq 1 ] || exit 0
+
+if [ ! -f "$CHECKS_FILE" ]; then
+    echo "pre-push: no githooks/checks in this repo - nothing to run."
+    echo "          An empty gate is not a passing gate. Add one, or remove"
+    echo "          core.hooksPath so the absence is visible."
+    exit 0
+fi
+
+echo "pre-push: integration branch - running local checks first"
+
+status=0
+while IFS= read -r check || [ -n "$check" ]; do
+    case "$check" in
+        ''|'#'*) continue ;;
+    esac
+    if output=$(cd "$REPO_ROOT" && eval "$check" 2>&1); then
+        echo "  ok    $check"
+    else
+        echo "  FAIL  $check"
+        echo "$output" | tail -25 | sed 's/^/        /'
+        status=1
+    fi
+done < "$CHECKS_FILE"
+
+if [ "$status" -ne 0 ]; then
+    cat <<'MSG'
+
+pre-push: refusing. A check that fails here fails in CI too, and pushing to an
+integration branch is the point at which that stops being cheap to fix.
+
+To override deliberately:  git push --no-verify
+MSG
+    exit 1
+fi
+
+echo "pre-push: all checks passed"
+exit 0
