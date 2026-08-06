@@ -69,6 +69,45 @@ android {
     }
 }
 
+// Retain the release bundle and its R8 mapping outside build/ (#127).
+//
+// `build/outputs/` is wiped by `clean` and excluded by .gitignore, so the mapping a future crash
+// report has to be deobfuscated against does not survive the next build. Both are copied into
+// release-archive/v<versionCode>/ at the repo root, which neither touches. versionCode is the stamp
+// because it is the value Play makes permanently unique per upload — see docs/release-signing.md.
+//
+// The task asserts its inputs rather than copying what it finds: a copy with a missing source is a
+// silent no-op, and an empty archive is indistinguishable from one that was never needed.
+val releaseVersionCode = android.defaultConfig.versionCode
+val releaseBundle = layout.buildDirectory.file("outputs/bundle/release/wear-release.aab")
+val releaseMapping = layout.buildDirectory.file("outputs/mapping/release/mapping.txt")
+
+val archiveReleaseArtifacts = tasks.register("archiveReleaseArtifacts") {
+    group = "publishing"
+    description = "Copies the release bundle and R8 mapping into release-archive/v<versionCode>/."
+    doLast {
+        val bundle = releaseBundle.get().asFile
+        val mapping = releaseMapping.get().asFile
+        // Plain ASCII in these messages on purpose: a Windows console renders an em dash here as a
+        // replacement character, which reads as corruption at the moment the build is already failing.
+        check(bundle.isFile) { "No release bundle at ${bundle.path} - run :wear:bundleRelease first." }
+        check(mapping.isFile) {
+            "No R8 mapping at ${mapping.path}. isMinifyEnabled must stay true for the release build, " +
+                "or a crash report from this bundle cannot be deobfuscated."
+        }
+        val destination = rootProject.layout.projectDirectory.dir("release-archive/v$releaseVersionCode").asFile
+        destination.mkdirs()
+        bundle.copyTo(destination.resolve(bundle.name), overwrite = true)
+        mapping.copyTo(destination.resolve("mapping.txt"), overwrite = true)
+        logger.lifecycle("Archived ${bundle.name} and mapping.txt to ${destination.path}")
+    }
+}
+
+// AGP creates bundleRelease lazily, so it does not exist while this script is being configured —
+// tasks.named("bundleRelease") here fails the build outright with "Task with name 'bundleRelease'
+// not found". A live filtered collection matches it whenever AGP gets round to adding it.
+tasks.matching { it.name == "bundleRelease" }.configureEach { finalizedBy(archiveReleaseArtifacts) }
+
 dependencies {
     implementation(project(":shared"))
 

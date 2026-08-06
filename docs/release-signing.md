@@ -43,6 +43,44 @@ move to CI signing is deferred as #81 until the release process is boring.
 Build a signed bundle with `./gradlew :wear:bundleRelease`; the output is
 `wear/build/outputs/bundle/release/wear-release.aab`.
 
+### Always check the bundle is actually signed
+
+`BUILD SUCCESSFUL` does not mean signed. Because the `signingConfig` is created only when
+`keystore.properties` exists, a machine missing that file builds an **unsigned** bundle and reports
+success — *measured 2026-08-06 (#127)*, when the keystore had gone missing from this laptop and
+`:wear:bundleRelease` completed in 1m41s producing an unsigned `.aab` and a
+`wear-release-unsigned.apk`, with nothing in the build output saying so.
+
+So the signature is a separate question from the build, and it has to be asked separately:
+
+```bash
+keytool -printcert -jarfile wear/build/outputs/bundle/release/wear-release.aab
+```
+
+`Not a signed jar file` is the failure. A signed bundle prints the certificate, and its SHA-256 must
+match the fingerprint above. The APK carries the same tell in its filename: `wear-release.apk` when
+signed, `wear-release-unsigned.apk` when not.
+
+## Release artefacts and crash reports
+
+`:wear:bundleRelease` is finalized by `archiveReleaseArtifacts`, which copies the bundle and its R8
+mapping to `release-archive/v<versionCode>/` at the repo root. That directory is gitignored, and it
+exists because `build/outputs/` is wiped by `clean` — a crash report filed after the next build would
+otherwise have no mapping to deobfuscate against.
+
+Two things to know about what the mapping is worth here:
+
+- **The app's own frames are already readable.** `proguard-rules.pro` keeps `com.racetimer.**`
+  wholesale, so R8 renames only library code and `mapping.txt` maps only library frames. That keep is
+  documented in place, including the fact that no measured failure sits behind it; narrowing it is
+  #128's to verify.
+- **The archive is local-only until it is uploaded.** Play Console takes the mapping alongside the
+  bundle (#79) and deobfuscates server-side, which is what makes it durable. Until that upload
+  happens, `release-archive/` lives on one laptop — the same shape of risk that lost the upload
+  keystore's local copy on 2026-08-06.
+
+Archived per upload, alongside the `versionCode` bump the release commit carries.
+
 ## Version strategy
 
 Set in `wear/build.gradle.kts` `defaultConfig`, currently `versionCode = 1` / `versionName = "1.0"`.
