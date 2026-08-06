@@ -24,6 +24,11 @@ keystore.properties
 *.apk
 *.aab
 
+# Retained release artefacts (bundle + R8 mapping, stamped by versionCode). Kept out of git because
+# a mapping is ~17 MB and changes every build; it is durable only once uploaded — see
+# docs/release-signing.md.
+release-archive/
+
 # macOS
 .DS_Store
 
