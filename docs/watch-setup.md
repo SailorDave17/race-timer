@@ -141,6 +141,57 @@ identical.
 
 See [CLAUDE.md](../CLAUDE.md) for the orientation and foreground-service constraints themselves.
 
+## Display stuck upside down
+
+The watch's display rotation can get stuck 180 degrees off, leaving the race screen upside down. **This
+is a device fault, not an app defect** — Race Timer declares no `screenOrientation` and holds no
+settings permission, so it can neither cause nor clear it (see [CLAUDE.md](../CLAUDE.md)). `pm clear`
+does not help either.
+
+**Remedy, confirmed on hardware 2026-08-06. Both steps are required:**
+
+```bash
+adb shell settings put system user_rotation 0    # persist the correct value
+adb reboot                                       # apply it; silent + exit 0 means accepted
+```
+
+After this the watch booted upright *and* stayed upright when lifted off the charger. Wireless
+debugging is off after a reboot and needs re-enabling by hand.
+
+Do this before a regatta, not at one — the remedy needs adb and a machine to run it from.
+
+### What does not work
+
+- **A bare reboot.** Measured — the watch booted straight back into the fault and sat upside down for
+  about 50 minutes. The setting write is what makes the reboot work; the reboot alone re-applies the
+  same wrong persisted value.
+- **`wm user-rotation lock 0`.** Exits 0 and changes nothing. Skip it.
+- **A tilt, off the charger.** On the charger a tilt corrects it temporarily; off the charger nothing
+  does, and a race is always the undocked case.
+
+### Reading the state
+
+```bash
+adb shell dumpsys window | grep mCurrentRotation
+```
+
+`ROTATION_180` is **upright** on this watch and `ROTATION_0` is the **fault** — inverted from what the
+names suggest, because the panel is mounted 180 degrees to the framebuffer and software compensates.
+Three instruments look authoritative here and are not:
+
+| Instrument | Why not |
+| --- | --- |
+| `screencap` | Renders the buffer upright in *both* states. Measured twice against a panel confirmed upside down by eye. Any conclusion resting on "the screenshot looked fine" is no evidence either way |
+| `mRotation`, `mDisplayRotation` | Constants on this device. Both read a value naming "180" on a perfectly healthy watch |
+| `settings get system user_rotation` | The right thing to check as a *configuration* — `2` is the fault condition — but useless as a change-detector: it stayed at `2` across 240 samples and two complete flip cycles, including the sample the display flipped in |
+
+`adb shell 'logcat -d -v time | grep "Computed rotation="'` timestamps every rotation decision the
+system makes, which is the instrument that finally settled this.
+
+Tracked as [#115](https://github.com/SailorDave17/race-timer/issues/115). What writes `user_rotation = 2`
+is still unknown after five sightings, so the remedy above is a repair and not a prevention — expect
+it to recur.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -149,5 +200,6 @@ See [CLAUDE.md](../CLAUDE.md) for the orientation and foreground-service constra
 | Watch not in `adb devices` after a reboot | Connect address changed | `adb mdns services` to rediscover; pairing itself persists |
 | `ping` fails | Different network, or AP client isolation | Fix the network before touching adb |
 | *No matching toolchains found* | JVM 8 toolchain absent and resolver not applied | Confirm the Foojay plugin block in `settings.gradle.kts` is intact |
+| Watch display is upside down and stays that way off the charger | Device-level rotation stuck; `user_rotation = 2` | Write the setting, then reboot — see [Display stuck upside down](#display-stuck-upside-down). A bare reboot does not clear it |
 | Change seems to have no effect on the watch | Stale APK on device | Compare hashes as above |
 | Service dies shortly after start with `ForegroundServiceDidNotStartInTimeException` | A sticky restart delivering a null intent | `TimerService` returns `START_NOT_STICKY` on purpose — see CLAUDE.md before changing it |
