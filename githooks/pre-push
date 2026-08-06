@@ -1,5 +1,6 @@
 #!/bin/sh
-# Refuse to push to an integration branch when this repo's own checks fail.
+# Refuse a local push to an owner-only branch outright, and gate the one branch
+# that may be pushed directly behind this repo's own checks.
 #
 # This file is a generic driver and is byte-identical in every repo. What
 # differs per repo is `githooks/checks` beside it - one shell command per line.
@@ -29,33 +30,109 @@
 # around: an uninstalled hook produces no error and no output, and every symptom
 # is an absence. See memory/global/documented-is-not-installed-2026-08-02.md.
 
-PROTECTED="develop main master"
+# Two lists, not one, and the distinction is the point (owner directive
+# 2026-08-05, after a measurement showed the single-list version did not confine
+# anything). The old `PROTECTED` list ran the repo's checks and then ALLOWED the
+# push when they passed - measured on all four repos, `push origin develop`
+# exited 0 printing "all checks passed". A checks gate is not a branch gate.
+#
+#   OWNER_ONLY   refused outright. No check can earn the push. These branches are
+#                entered by a pull request the owner merges in the GitHub UI, so a
+#                local push to one is always a mistake or a habit.
+#   DIRECT_OK    the push is allowed IF the repo's own checks pass. Read from
+#                `githooks/direct-push-ok`, which is per-repo and ABSENT in most
+#                of them - so the default is that no branch may be pushed
+#                directly, and adding the file is a deliberate act.
+#
+# Only cairn has that file, containing `cairn--live`, because cairn is its own
+# runtime: a skill or memory note takes effect by existing on the branch running
+# sessions read, so a PR there is latency rather than review. Every other repo
+# deploys its content and keeps the PR.
+#
+# Feature branches are untouched in every repo - that is where the PR gets its
+# CI run in the first place.
+OWNER_ONLY="develop main master"
 REPO_ROOT=$(git rev-parse --show-toplevel)
 CHECKS_FILE="$REPO_ROOT/githooks/checks"
+DIRECT_OK_FILE="$REPO_ROOT/githooks/direct-push-ok"
+OWNER_ONLY_EXTRA="$REPO_ROOT/githooks/owner-only"
+
+# A repo whose integration branch is not one of the three default names says so
+# here (Taskr's is `rebuild/v1`). Appended, never replacing: a config file that
+# could REMOVE develop from the refused list would be a way to reintroduce the
+# gap this change closes.
+if [ -f "$OWNER_ONLY_EXTRA" ]; then
+    while IFS= read -r extra || [ -n "$extra" ]; do
+        case "$extra" in ''|'#'*) continue ;; esac
+        OWNER_ONLY="$OWNER_ONLY $extra"
+    done < "$OWNER_ONLY_EXTRA"
+fi
+
+branch_listed_in_file() {  # $1 = branch, $2 = file
+    [ -f "$2" ] || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in ''|'#'*) continue ;; esac
+        [ "$line" = "$1" ] && return 0
+    done < "$2"
+    return 1
+}
 
 # pre-push receives "<local ref> <local sha> <remote ref> <remote sha>" per ref
-# on stdin. Only integration branches are gated; feature branches push freely,
-# because that is where the PR gets its CI run in the first place.
+# on stdin. A tag or any non-branch ref is skipped; feature branches fall through
+# both lists and push freely.
 #
 # The `|| [ -n "$remote_ref" ]` is load-bearing and was found by mutation
 # testing: a final line with no trailing newline makes `read` return false, so
-# the loop body never runs, `pushing_protected` stays 0 and the hook exits 0.
+# the loop body never runs, both accumulators stay empty and the hook exits 0.
 # It fails OPEN - it allows the push while looking like it checked. Git always
 # terminates its lines, so this never fires in practice, which is exactly what
 # makes it the dangerous kind of bug. Same family as Windows hazard 7: a guard
 # that does not stop is not a guard.
-pushing_protected=0
+#
+# Note what that bug now costs: with the refusal branch below, failing open no
+# longer merely skips some checks, it permits a push to `develop`. The mutation
+# test at the bottom of this change covers exactly that line.
+pushing_owner_only=""
+pushing_direct_ok=0
 while read -r _local_ref _local_sha remote_ref _remote_sha || [ -n "$remote_ref" ]; do
     [ -n "$remote_ref" ] || continue
-    for branch in $PROTECTED; do
-        if [ "$remote_ref" = "refs/heads/$branch" ]; then
-            pushing_protected=1
+    case "$remote_ref" in
+        refs/heads/*) pushed_branch=${remote_ref#refs/heads/} ;;
+        *) remote_ref=""; continue ;;
+    esac
+    for branch in $OWNER_ONLY; do
+        if [ "$pushed_branch" = "$branch" ]; then
+            pushing_owner_only="$pushing_owner_only $pushed_branch"
         fi
     done
+    if branch_listed_in_file "$pushed_branch" "$DIRECT_OK_FILE"; then
+        pushing_direct_ok=1
+    fi
     remote_ref=""
 done
 
-[ "$pushing_protected" -eq 1 ] || exit 0
+# Refusal comes first and is unconditional: a ref in both lists is a
+# misconfiguration, and the safe reading of an ambiguous config is no.
+if [ -n "$pushing_owner_only" ]; then
+    cat <<MSG
+
+pre-push: REFUSING to push to$pushing_owner_only.
+
+These branches are entered by a pull request the owner merges in the GitHub UI.
+No local check can earn this push, which is why nothing was run.
+
+  - Working on a sibling repo? Push a feature branch and open a PR into its
+    integration branch.
+  - Working in cairn? Push \`cairn--live\` directly - that is the one branch in
+    this workspace with a direct-push allowance, and \`develop\` there is the
+    owner's validated fallback copy that must stay reachable only by hand.
+
+To override deliberately:  git push --no-verify
+MSG
+    exit 1
+fi
+
+[ "$pushing_direct_ok" -eq 1 ] || exit 0
 
 if [ ! -f "$CHECKS_FILE" ]; then
     echo "pre-push: no githooks/checks in this repo - nothing to run."
@@ -64,7 +141,7 @@ if [ ! -f "$CHECKS_FILE" ]; then
     exit 0
 fi
 
-echo "pre-push: integration branch - running local checks first"
+echo "pre-push: direct-push branch - running local checks first"
 
 status=0
 while IFS= read -r check || [ -n "$check" ]; do
