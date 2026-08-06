@@ -273,7 +273,9 @@ class TimerService : Service() {
         val previous = audio.getStreamVolume(stream)
         // Disk first. See the ordering note above — this is the line that makes the next one safe.
         saveRaisedCueVolume(this, stream, previous)
-        if (!setStreamVolumeOrNull(audio, stream, target)) {
+        val raised = setStreamVolumeChecked(audio, stream, target)
+        cueVolumeRefused = !raised
+        if (!raised) {
             // The platform refused. Do not leave a record claiming we changed something we did not:
             // a stranded record would have the next launch "restore" a volume the sailor has since
             // set themselves.
@@ -299,31 +301,57 @@ class TimerService : Service() {
         // Clear the record either way. A record we cannot act on is one that will be acted on at some
         // arbitrary later launch, against a volume that has moved on since — worse than losing it.
         clearRaisedCueVolume(this)
-        if (audio != null) setStreamVolumeOrNull(audio, record.stream, record.previousVolume)
+        // Result deliberately ignored, and [cueVolumeRefused] deliberately not touched. That flag is a
+        // statement about the race being armed — whether these cues can be made audible — and a failed
+        // *restore* says nothing about that. Setting it here would leave a stale warning armed for the
+        // next race, which is the shape that makes a warning worthless: always on, so never read.
+        if (audio != null) setStreamVolumeChecked(audio, record.stream, record.previousVolume)
     }
 
     /**
-     * `setStreamVolume`, returning whether it took.
+     * `setStreamVolume`, returning whether it **actually took** — which is not the same as whether it
+     * threw.
      *
-     * The refusal that matters is Do Not Disturb: with zen mode on, the platform throws
-     * [SecurityException] unless the app holds `ACCESS_NOTIFICATION_POLICY` — a permission the sailor
-     * has to grant through a system settings screen, and the same one this story already rejected for
-     * the ringer approach. So DND is an accepted limit rather than something to force, and this
-     * records it instead of crashing under it: a race that cannot be made louder still runs, at
-     * whatever volume the watch is at, and [cueVolumeRefused] is what #96 will read to tell the sailor
-     * before the start rather than at it.
+     * ### The read-back is the whole point of this function
+     *
+     * The documented refusal is Do Not Disturb: with zen mode on, the platform is specified to throw
+     * [SecurityException] unless the app holds `ACCESS_NOTIFICATION_POLICY`, a permission the sailor
+     * must grant through a system settings screen and the same one this story already rejected for the
+     * ringer approach. That is what this originally caught, and catching it was not enough.
+     *
+     * *Measured on an SM-R925U, 2026-08-06*: under `zen_mode=2`, `setStreamVolume(STREAM_MUSIC, 11, 0)`
+     * **threw nothing and changed nothing**. The stream stayed at 0 and came back `Muted: true`, while
+     * the app — trusting the absence of an exception — recorded a raise it had not made, believed the
+     * race was audible, and left [cueVolumeRefused] false. So the sailor would have run a silent start
+     * with the one signal that could have warned them switched off by the failure itself.
+     *
+     * Nothing downstream could have caught it either: `ToneManager` goes on logging `delivered N
+     * frames` at full duration, because frames are delivered to a stream the mixer is muting. The
+     * frame log is honest about the object it names and blind to this.
+     *
+     * So the only trustworthy answer to *did the volume change* is to read the volume back, and to ask
+     * about the mute flag separately — a stream can hold the index you asked for and still be muted.
+     *
+     * The exception path is kept, because it is what the platform documents and what other devices and
+     * Android versions may well do. Both roads lead here: the race runs on whatever volume the watch
+     * has, nothing crashes, and the caller is told the truth so #96 can warn before the start rather
+     * than at it. Losing a race to an exception raised while trying to make it louder would be the
+     * worst possible trade.
      */
-    private fun setStreamVolumeOrNull(audio: AudioManager, stream: Int, volume: Int): Boolean =
+    private fun setStreamVolumeChecked(audio: AudioManager, stream: Int, volume: Int): Boolean =
         try {
             audio.setStreamVolume(stream, volume, 0)
-            cueVolumeRefused = false
-            true
+            val took = audio.getStreamVolume(stream) == volume && !audio.isStreamMute(stream)
+            if (!took) {
+                Log.w(
+                    TAG,
+                    "Stream $stream volume did not take: asked $volume, " +
+                        "read ${audio.getStreamVolume(stream)}, muted=${audio.isStreamMute(stream)}",
+                )
+            }
+            took
         } catch (e: SecurityException) {
-            // Not rethrown and not silent. The race is more important than the volume, and losing the
-            // race to an exception raised while trying to make it louder would be the worst possible
-            // trade.
             Log.w(TAG, "Refused permission to set stream $stream volume (Do Not Disturb?)", e)
-            cueVolumeRefused = true
             false
         }
 
