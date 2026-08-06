@@ -152,17 +152,6 @@ class MainActivity : ComponentActivity() {
     private var lastBoxAlertSeconds: Int = DEFAULT_BOX_ALERT_SECONDS
 
     /**
-     * The reroute setting's current value, for the picker's toggle (#95).
-     *
-     * Compose state rather than a plain field because the toggle has to redraw when it is flipped.
-     * The *authority* is the preference, not this — [TimerService] reads that directly when a race is
-     * armed, so this is a mirror for the UI and never something the audio path consults. Two readers
-     * of one stored value, rather than a value passed between them, which is what keeps them from
-     * disagreeing about a setting the sailor changed.
-     */
-    private var audibleInSilentMode by mutableStateOf(TimerService.DEFAULT_AUDIBLE_IN_SILENT_MODE)
-
-    /**
      * The race left behind by an earlier process, and the sequence it was running.
      *
      * Held rather than reduced to a number on launch because the saved race's gun is fixed in the
@@ -317,15 +306,6 @@ class MainActivity : ComponentActivity() {
                                 navController.popBackStack()
                             },
                             onCustomSelected = { navController.navigate(NAV_CUSTOM) },
-                            audibleInSilentMode = audibleInSilentMode,
-                            onAudibleInSilentModeChange = { enabled ->
-                                audibleInSilentMode = enabled
-                                // Written straight through rather than gathered up and saved on exit:
-                                // the sailor may well swipe away rather than tapping a sequence, and a
-                                // setting that only survives one of the two ways off a screen is worse
-                                // than one that does not persist at all, because it looks like it works.
-                                TimerService.saveAudibleInSilentMode(this@MainActivity, enabled)
-                            },
                         )
                     }
                     wearComposable(NAV_CUSTOM) {
@@ -464,10 +444,6 @@ class MainActivity : ComponentActivity() {
         // Read before the plan is applied and independently of it: the lead-time picker opens on
         // this whether or not a race survived, and it is a preference rather than part of any race.
         lastBoxAlertSeconds = TimerService.lastBoxAlertSeconds(this)
-        // Same reasoning, and the same storage — a preference that outlives every race (#95). Read
-        // here rather than in the composable so the toggle is never briefly drawn on the default and
-        // then corrected, which on a setting about silence would read as the app having forgotten.
-        audibleInSilentMode = TimerService.audibleInSilentMode(this)
         val plan = launchPlan(
             TimerService.savedSnapshot(this),
             TimerService.pickedSequenceId(this),

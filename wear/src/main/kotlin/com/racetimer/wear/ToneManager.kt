@@ -21,6 +21,24 @@ import com.racetimer.shared.CueWaveform
 import com.racetimer.shared.SignalPattern
 
 /**
+ * The legacy stream type a [CueStream] means, for the APIs that still take one (#95).
+ *
+ * Top-level and `internal` rather than a member of [ToneManager]'s private companion, because
+ * [TimerService] needs the same answer to raise that stream's volume — and the one thing this file
+ * must not do is let a second copy of this mapping exist. Every audio and restore defect this app has
+ * shipped came from one rule written out twice; `resumeOfferRemainingMs` was even duplicated
+ * *inverted*. The playback path and the volume path read this same function or they read nothing.
+ *
+ * It stays in the `wear` module rather than moving to `shared/` alongside [com.racetimer.shared.cueStream]
+ * for the ordinary reason: the values are `AudioManager` constants, and `shared/` is pure JVM so that
+ * CI can run its tests without a device.
+ */
+internal fun legacyStreamFor(route: CueStream): Int = when (route) {
+    CueStream.ALARM -> AudioManager.STREAM_ALARM
+    CueStream.MEDIA -> AudioManager.STREAM_MUSIC
+}
+
+/**
  * Plays the audible half of a race cue, alongside the haptic half in [HapticManager].
  *
  * A cue's tones land on the same blast boundaries as its vibration — both channels read
@@ -868,12 +886,6 @@ class ToneManager(context: Context) {
         fun usageFor(route: CueStream): Int = when (route) {
             CueStream.ALARM -> AudioAttributes.USAGE_ALARM
             CueStream.MEDIA -> AudioAttributes.USAGE_MEDIA
-        }
-
-        /** The same choice for the two legacy APIs that still take a stream type. */
-        fun legacyStreamFor(route: CueStream): Int = when (route) {
-            CueStream.ALARM -> AudioManager.STREAM_ALARM
-            CueStream.MEDIA -> AudioManager.STREAM_MUSIC
         }
 
         /** The device's native output rate for a route's stream, or [FALLBACK_SAMPLE_RATE_HZ]. */
