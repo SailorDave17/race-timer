@@ -14,6 +14,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
+import com.racetimer.shared.CueStream
 import com.racetimer.shared.CueTiming
 import com.racetimer.shared.CueVoice
 import com.racetimer.shared.CueWaveform
@@ -81,6 +82,15 @@ import com.racetimer.shared.SignalPattern
  * late each cue started and how long its preparation took. Note what that does and does not cover —
  * it measures when [AudioTrack.play] was *called*, never when sound emerged. Anything about audible
  * evenness has to be confirmed on a wrist.
+ *
+ * ### Which output the cue goes to (#95)
+ *
+ * Not a constant. `USAGE_ALARM` is the right answer on a healthy device and the *silent* one on a
+ * watch whose alarm stream is aliased into the ringer-affected set — which is the case on the
+ * SM-R925U this app is developed against, where vibrate mode silences every cue while the countdown
+ * and the haptics carry on as normal. The decision is a pure rule in `shared/CueAudioRoute.kt`; this
+ * class is told the answer through [prepare] and rebuilds its track when it changes, because the
+ * stream is fixed at track-build time and cannot be moved on a live one.
  *
  * Audio is best-effort by design. A watch may have no speaker at all, and the audio stack can refuse
  * to hand out a track. Every failure path here logs and returns, so the caller's vibration is never
@@ -203,29 +213,78 @@ class ToneManager(context: Context) {
         appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_AUDIO_OUTPUT)
 
     /**
+     * Which output the cues are currently built for (#95). Decided by [com.racetimer.shared.cueStream]
+     * and handed in by [prepare]; see there for why it can change and what changing it costs.
+     *
+     * [CueStream.ALARM] until told otherwise, so a caller that never routes gets exactly the
+     * behaviour this class had before #95.
+     */
+    @Volatile private var route: CueStream = CueStream.ALARM
+
+    /**
      * The output's own sample rate.
      *
      * Read from the device rather than assumed, and used unchanged, because anything else would be
      * resampled on the way out — and a resampler is exactly the kind of thing that would quietly put
      * back the rounding this fix removed. 48 kHz on the SM-R925U.
+     *
+     * A `var` since #95, because it is a property of the stream and the stream can change. In practice
+     * both report the same rate on this hardware, but "in practice" is not a thing to render a buffer
+     * against: [CueWaveform] renders at whatever this says, so a rate that moved under a cached buffer
+     * would play it at the wrong pitch *and* the wrong length, with nothing throwing. [prepare] drops
+     * the cache when it changes rather than assuming it cannot.
      */
-    private val sampleRateHz: Int =
-        try {
-            AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_ALARM)
-        } catch (e: RuntimeException) {
-            Log.w(TAG, "Native output rate unavailable; falling back to $FALLBACK_SAMPLE_RATE_HZ", e)
-            FALLBACK_SAMPLE_RATE_HZ
-        }
+    @Volatile private var sampleRateHz: Int = nativeRateFor(CueStream.ALARM)
 
     /**
-     * Build the track and open the audio output ahead of the first cue.
+     * Build the track and open the audio output ahead of the first cue, for [newRoute].
      *
      * Without this, both costs land on whichever cue sounds first — and the first cue of a race
      * fires within a couple of hundred milliseconds of the service starting, so it is the least
      * affordable place to put them.
+     *
+     * ### Why this takes a route rather than reading one
+     *
+     * The stream is baked into the [AudioTrack] at build time — it is an [AudioAttributes] on the
+     * builder, not a property that can be set on a live track — so "which stream" has to be known
+     * before there is a track, and a change means building a new one. That is why the decision is
+     * made by the caller (which has the [android.media.AudioManager] and the sailor's setting) and
+     * arrives here rather than being read from a preference by this class.
+     *
+     * ### Safe to call repeatedly, and worth calling twice
+     *
+     * A call naming the route already in force does nothing but the ordinary prepare. That matters
+     * because the service calls this **twice**: once in `onCreate`, which is early enough for the
+     * build to be free, and again when a race is armed, because the sailor can flip the watch to
+     * vibrate mode in between and the track built in `onCreate` would then be the silent one.
+     *
+     * The second call costs nothing in the normal case and costs a track rebuild — measured at
+     * 89-182 ms of `getOutputForAttr` / `releaseOutput` round trips — when the route actually moved.
+     * That lands ahead of the first cue and will delay it, which is a deliberate trade: the
+     * alternative is not a punctual cue, it is no cue at all. It cannot be deferred to *after* the
+     * first cue either, since that is the cue this exists to make audible.
      */
-    fun prepare() {
+    fun prepare(newRoute: CueStream) {
         obtainHandler().post {
+            if (newRoute != route) {
+                route = newRoute
+                val newRate = nativeRateFor(newRoute)
+                if (newRate != sampleRateHz) {
+                    // Every cached buffer was rendered against the old rate. Dropping them costs a
+                    // re-render; keeping them would play the gun at the wrong speed and report success.
+                    Log.w(TAG, "Output rate changed $sampleRateHz -> $newRate with the stream; re-rendering")
+                    sampleRateHz = newRate
+                    cueBuffers.clear()
+                    beepBuffer = null
+                }
+                // The track carries the old stream in its attributes and the keep-alive holds the old
+                // output open, so both have to go. They are rebuilt immediately below rather than
+                // lazily on the first cue, which is the whole point of preparing.
+                synchronized(audioLock) {
+                    releaseAudioLocked()
+                    initFailed = false
+                }
+            }
             synchronized(audioLock) { obtainTrackLocked() }
             armKeepAlive()
             beepBuffer()
@@ -686,8 +745,10 @@ class ToneManager(context: Context) {
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         // USAGE_ALARM so the cue carries outdoors: on Wear it is the loudest stream
-                        // and the one users leave up for alerts, unlike media or notification.
-                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        // and the one users leave up for alerts, unlike media or notification. The
+                        // exception is a watch that has silenced the alarm path along with the ringer,
+                        // where it is not the loudest stream but the mute one — see [route] and #95.
+                        .setUsage(usageFor(route))
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build(),
                 )
@@ -725,7 +786,10 @@ class ToneManager(context: Context) {
         synchronized(audioLock) {
             if (!hasAudioOutput) return
             val generator = keepAliveGenerator ?: try {
-                ToneGenerator(AudioManager.STREAM_ALARM, 0).also { keepAliveGenerator = it }
+                // The same stream the cues are on, or it holds the wrong output open and the cue pays
+                // the `startOutput` this exists to prevent — silently, since a keep-alive that works
+                // and a keep-alive on the wrong stream look identical from here (#95).
+                ToneGenerator(legacyStreamFor(route), 0).also { keepAliveGenerator = it }
             } catch (e: RuntimeException) {
                 Log.w(TAG, "Keep-alive generator unavailable; cues may start late", e)
                 return
@@ -793,6 +857,33 @@ class ToneManager(context: Context) {
 
     private companion object {
         const val TAG = "ToneManager"
+
+        /**
+         * The [AudioAttributes] usage a [CueStream] means, for the modern [AudioTrack] path.
+         *
+         * `USAGE_MEDIA` rather than `USAGE_ASSISTANCE_SONIFICATION` for the rerouted case: the point
+         * is to land on `STREAM_MUSIC`, which is the one stream measured to be neither aliased nor in
+         * this device's ringer-affected mask (#95).
+         */
+        fun usageFor(route: CueStream): Int = when (route) {
+            CueStream.ALARM -> AudioAttributes.USAGE_ALARM
+            CueStream.MEDIA -> AudioAttributes.USAGE_MEDIA
+        }
+
+        /** The same choice for the two legacy APIs that still take a stream type. */
+        fun legacyStreamFor(route: CueStream): Int = when (route) {
+            CueStream.ALARM -> AudioManager.STREAM_ALARM
+            CueStream.MEDIA -> AudioManager.STREAM_MUSIC
+        }
+
+        /** The device's native output rate for a route's stream, or [FALLBACK_SAMPLE_RATE_HZ]. */
+        fun nativeRateFor(route: CueStream): Int =
+            try {
+                AudioTrack.getNativeOutputSampleRate(legacyStreamFor(route))
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "Native output rate unavailable; falling back to $FALLBACK_SAMPLE_RATE_HZ", e)
+                FALLBACK_SAMPLE_RATE_HZ
+            }
 
         const val THREAD_NAME = "RaceTimerTone"
 

@@ -13,3 +13,15 @@ gradlew.bat    text eol=crlf
 *.md    text
 *.pro   text
 *.xml   text
+
+# githooks/ holds a POSIX shell script plus plain-text list files that
+# githooks/pre-push reads line by line. This machine has core.autocrlf=true, so
+# without this rule they check out CRLF and `rebuild/v1\r` stops equalling
+# `rebuild/v1` - the branch then falls through the owner-only list and is pushed
+# as if it were a feature branch. Measured on Taskr 2026-08-05: the file was
+# present, correct in the repo, `git status` clean, and the guard silently off.
+#
+# The hook strips a trailing CR itself as well. Neither half replaces the other:
+# .gitattributes governs checkout and so fixes the files in repos that carry it,
+# while the in-hook strip covers any clone or repo that does not.
+/githooks/*    text eol=lf

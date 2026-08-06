@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.media.AudioManager
 import android.os.Binder
 import android.os.Handler
 import android.os.IBinder
@@ -18,7 +19,9 @@ import androidx.core.app.NotificationCompat
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.CueStream
 import com.racetimer.shared.CueTiming
+import com.racetimer.shared.cueStream
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.isValidBoxAlert
 import com.racetimer.shared.NO_CAPTURED_ELAPSED_MS
@@ -172,10 +175,30 @@ class TimerService : Service() {
     override fun onCreate() {
         super.onCreate()
         haptic = HapticManager(this)
-        tone = ToneManager(this).also { it.prepare() }
+        tone = ToneManager(this).also { it.prepare(currentCueStream()) }
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         engine.addListener(engineListener)
         warmUpPickedSequence()
+    }
+
+    /**
+     * Which output the cues should use right now (#95).
+     *
+     * Read at the moment it is asked for rather than cached, because both of its device inputs are
+     * things the sailor can change between the service being created and a race being armed — putting
+     * the watch on silent while walking to the boat is the ordinary case, not an edge one.
+     *
+     * Falls back to [CueStream.ALARM] when there is no [AudioManager] to ask. That is the pre-#95
+     * behaviour, and it is the right way to be wrong here: an unnecessary reroute would move every
+     * race onto the media slider on the strength of a failed system-service lookup.
+     */
+    private fun currentCueStream(): CueStream {
+        val audio = getSystemService(AudioManager::class.java) ?: return CueStream.ALARM
+        return cueStream(
+            overrideEnabled = audibleInSilentMode(this),
+            ringerSilenced = audio.ringerMode != AudioManager.RINGER_MODE_NORMAL,
+            alarmVolume = audio.getStreamVolume(AudioManager.STREAM_ALARM),
+        )
     }
 
     /**
@@ -222,6 +245,18 @@ class TimerService : Service() {
             ACTION_START -> {
                 val sequenceId = intent.getStringExtra(EXTRA_SEQUENCE_ID) ?: BuiltInSequences.usSailing.id
                 val sequence = findSequence(sequenceId)
+
+                // Re-decide which output the cues go to, now, while there is still time to rebuild the
+                // track if the answer moved (#95). `onCreate` already made this call, but that was as
+                // much as several minutes ago and the two inputs it reads — ringer mode and the alarm
+                // slider — belong to the sailor, not to us. A watch put on silent between launching the
+                // app and pressing Start is the exact scenario this story exists for, and reading the
+                // route only at `onCreate` would miss it while looking like it was handled.
+                //
+                // Posted to the tone thread ahead of the `engine.tick()` below, so a rebuild that is
+                // needed happens before the first cue rather than under it. In the ordinary case the
+                // route has not moved and this costs one comparison.
+                tone.prepare(currentCueStream())
 
                 // Backstop only. The render that matters was posted when the sailor picked the
                 // sequence (see [warmUpCues]) — this call is here for the paths that never went
@@ -682,6 +717,27 @@ class TimerService : Service() {
          */
         private const val PREF_LAST_BOX_ALERT = "last_box_alert_seconds"
 
+        /**
+         * Whether cues should be rerouted to stay audible when the watch is silenced (#95).
+         *
+         * The third key that is a *preference* rather than race state, so it sits with the two above
+         * and outside [clearPersistedState] for the same reason they do — and note that
+         * [clearPersistedState] removes its four keys **by name**. A `clear()` there would silently
+         * take this with it, which is the #88 defect exactly: the app would honour the sailor's choice
+         * for as long as a race was running and forget it the moment one ended.
+         */
+        private const val PREF_AUDIBLE_IN_SILENT_MODE = "audible_in_silent_mode"
+
+        /**
+         * On, unless the sailor says otherwise.
+         *
+         * Sounding the signals is the whole purpose of the app and a sailor running a start has
+         * already chosen to hear them, so a silent race timer is a safety failure rather than an
+         * inconvenience. Off-by-default would leave the hazard live for everyone who never finds the
+         * setting, which is most people.
+         */
+        const val DEFAULT_AUDIBLE_IN_SILENT_MODE = true
+
         private const val TICK_INTERVAL_MS = 50L
 
         /** Time the UI keeps showing "GO!" *after* the gun cue itself has finished sounding. */
@@ -753,6 +809,19 @@ class TimerService : Service() {
         fun pickedSequenceId(context: Context): String? =
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(PREF_PICKED_SEQUENCE_ID, null)
+
+        /** Remember whether cues should be rerouted to stay audible on a silenced watch (#95). */
+        fun saveAudibleInSilentMode(context: Context, enabled: Boolean) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_AUDIBLE_IN_SILENT_MODE, enabled)
+                .apply()
+        }
+
+        /** The sailor's choice, or [DEFAULT_AUDIBLE_IN_SILENT_MODE] on a watch that has never set it. */
+        fun audibleInSilentMode(context: Context): Boolean =
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(PREF_AUDIBLE_IN_SILENT_MODE, DEFAULT_AUDIBLE_IN_SILENT_MODE)
 
         /** Remember [seconds] as the lead the lead-time picker should reopen on. */
         fun saveLastBoxAlertSeconds(context: Context, seconds: Int) {

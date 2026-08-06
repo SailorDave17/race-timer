@@ -145,6 +145,7 @@ echo "pre-push: direct-push branch - running local checks first"
 
 status=0
 while IFS= read -r check || [ -n "$check" ]; do
+    check=${check%$CR}
     case "$check" in
         ''|'#'*) continue ;;
     esac
