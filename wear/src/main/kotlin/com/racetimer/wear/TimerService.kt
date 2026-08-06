@@ -15,6 +15,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
@@ -28,6 +29,7 @@ import com.racetimer.shared.NO_CAPTURED_ELAPSED_MS
 import com.racetimer.shared.NO_GUN_ELAPSED_MS
 import com.racetimer.shared.NO_GUN_WALL_MS
 import com.racetimer.shared.RaceSequence
+import com.racetimer.shared.raisedCueVolume
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.StartPlan
@@ -154,6 +156,18 @@ class TimerService : Service() {
     private var gunTeardownPending = false
 
     /**
+     * Whether the platform refused to raise the cue stream for this race (#95).
+     *
+     * True only after a [SecurityException] from `setStreamVolume`, which in practice means Do Not
+     * Disturb without `ACCESS_NOTIFICATION_POLICY`. Kept rather than discarded because it is the one
+     * case where the app knows the cues may be too quiet and cannot fix it — which is exactly what #96
+     * has to tell the sailor *before* the start rather than at it. Nothing reads it yet; it exists so
+     * that the condition is observable instead of being swallowed at the point it is discovered.
+     */
+    @Volatile var cueVolumeRefused = false
+        private set
+
+    /**
      * Runs once the gun cue has finished sounding and "GO!" has had its [GUN_LINGER_MS] on screen.
      *
      * [TimerEngine.reset] is what puts the screen back to the pre-race countdown. The timer face has
@@ -175,6 +189,23 @@ class TimerService : Service() {
     override fun onCreate() {
         super.onCreate()
         haptic = HapticManager(this)
+        // Pay back a volume a previous process raised and never got to restore (#95). This is the
+        // recovery half of the persist-before-writing ordering in [ensureCueStreamAudible], and it is
+        // what makes raising a device volume mid-race a keepable promise rather than the unkeepable
+        // one #65 rejected for screen brightness. No-op in the ordinary case, where teardown already
+        // discharged it.
+        //
+        // Here rather than in the activity because the service is what raised it: a watch whose app
+        // was killed mid-race and never reopened still gets its volume back the next time anything
+        // starts this service, and `onCreate` is the earliest point that is true.
+        //
+        // **Before** the route is read below, and that order matters. A stranded raise on the alarm
+        // stream would otherwise have `currentCueStream` read the volume *we* left behind and conclude
+        // the alarm path is healthy — deciding the route from this app's own residue rather than from
+        // the sailor's setting. The race-arm re-read would correct it, so this is a transiently wrong
+        // warm-up rather than a wrong race, but there is no reason to accept even that when the fix is
+        // two lines higher up.
+        restoreRaisedCueVolume()
         tone = ToneManager(this).also { it.prepare(currentCueStream()) }
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         engine.addListener(engineListener)
@@ -195,11 +226,106 @@ class TimerService : Service() {
     private fun currentCueStream(): CueStream {
         val audio = getSystemService(AudioManager::class.java) ?: return CueStream.ALARM
         return cueStream(
-            overrideEnabled = audibleInSilentMode(this),
             ringerSilenced = audio.ringerMode != AudioManager.RINGER_MODE_NORMAL,
             alarmVolume = audio.getStreamVolume(AudioManager.STREAM_ALARM),
         )
     }
+
+    /**
+     * Raise the cue stream to an audible floor for this race, remembering what it was (#95).
+     *
+     * ### Why this exists at all
+     *
+     * [currentCueStream] picks a stream the ringer has not muted. That is necessary and not
+     * sufficient: the stream it picks has a volume slider of its own, and on a silenced watch the
+     * answer is [CueStream.MEDIA] — a slider the sailor has no particular reason to have raised, and
+     * every reason to have lowered at some point for something unrelated. A cue routed perfectly onto
+     * a stream at zero is exactly as silent as the defect this story started from.
+     *
+     * ### The ordering is the whole design, not an implementation detail
+     *
+     * The previous volume is written to disk **before** the new one is written to the device. That
+     * ordering is what makes this safe to do at all, and it is the reason #65 rejected the equivalent
+     * move for screen brightness: a process killed between the two writes leaves the watch changed
+     * with nothing left that knows what it was. Persisting first turns that from an unkeepable promise
+     * into a recoverable one — [restoreRaisedCueVolume] runs at teardown in the ordinary case, and at
+     * [onCreate] for the case where there was no ordinary case.
+     *
+     * A crash *before* the device write leaves a stranded record and an unchanged volume, which the
+     * restore then "corrects" to the value it already holds. Harmless, and the right way round: the
+     * failure that costs nothing is the one to have.
+     *
+     * ### Nothing to do is the common case
+     *
+     * [raisedCueVolume] returns null when the stream is already at or above the floor, and null means
+     * *touch nothing* — no device write, no persisted record, nothing to restore. A watch with its
+     * volume up runs a race exactly as it did before this story, which is what makes "nothing outside
+     * a race changes" true rather than merely intended.
+     */
+    private fun ensureCueStreamAudible(route: CueStream) {
+        val audio = getSystemService(AudioManager::class.java) ?: return
+        val stream = legacyStreamFor(route)
+        val target = raisedCueVolume(
+            currentVolume = audio.getStreamVolume(stream),
+            maxVolume = audio.getStreamMaxVolume(stream),
+        ) ?: return
+
+        val previous = audio.getStreamVolume(stream)
+        // Disk first. See the ordering note above — this is the line that makes the next one safe.
+        saveRaisedCueVolume(this, stream, previous)
+        if (!setStreamVolumeOrNull(audio, stream, target)) {
+            // The platform refused. Do not leave a record claiming we changed something we did not:
+            // a stranded record would have the next launch "restore" a volume the sailor has since
+            // set themselves.
+            clearRaisedCueVolume(this)
+        }
+    }
+
+    /**
+     * Put back whatever [ensureCueStreamAudible] raised, if anything.
+     *
+     * Idempotent by construction — with no persisted record there is nothing to do — because it is
+     * called from three places that can each run without the others: the ordinary teardown, service
+     * destruction, and [onCreate] recovering from a process that never reached either.
+     *
+     * The sailor's own volume changes during a race are deliberately **not** preserved. Restoring the
+     * value from before the race is the promise made, and reading the volume again at the end to see
+     * whether it moved would need a way to tell the sailor's change from ours, which the platform does
+     * not offer. Putting back what we found is the honest version.
+     */
+    private fun restoreRaisedCueVolume() {
+        val record = raisedCueVolumeRecord(this) ?: return
+        val audio = getSystemService(AudioManager::class.java)
+        // Clear the record either way. A record we cannot act on is one that will be acted on at some
+        // arbitrary later launch, against a volume that has moved on since — worse than losing it.
+        clearRaisedCueVolume(this)
+        if (audio != null) setStreamVolumeOrNull(audio, record.stream, record.previousVolume)
+    }
+
+    /**
+     * `setStreamVolume`, returning whether it took.
+     *
+     * The refusal that matters is Do Not Disturb: with zen mode on, the platform throws
+     * [SecurityException] unless the app holds `ACCESS_NOTIFICATION_POLICY` — a permission the sailor
+     * has to grant through a system settings screen, and the same one this story already rejected for
+     * the ringer approach. So DND is an accepted limit rather than something to force, and this
+     * records it instead of crashing under it: a race that cannot be made louder still runs, at
+     * whatever volume the watch is at, and [cueVolumeRefused] is what #96 will read to tell the sailor
+     * before the start rather than at it.
+     */
+    private fun setStreamVolumeOrNull(audio: AudioManager, stream: Int, volume: Int): Boolean =
+        try {
+            audio.setStreamVolume(stream, volume, 0)
+            cueVolumeRefused = false
+            true
+        } catch (e: SecurityException) {
+            // Not rethrown and not silent. The race is more important than the volume, and losing the
+            // race to an exception raised while trying to make it louder would be the worst possible
+            // trade.
+            Log.w(TAG, "Refused permission to set stream $stream volume (Do Not Disturb?)", e)
+            cueVolumeRefused = true
+            false
+        }
 
     /**
      * Start rendering the sequence the sailor last picked, at the earliest moment in the process that
@@ -256,7 +382,15 @@ class TimerService : Service() {
                 // Posted to the tone thread ahead of the `engine.tick()` below, so a rebuild that is
                 // needed happens before the first cue rather than under it. In the ordinary case the
                 // route has not moved and this costs one comparison.
-                tone.prepare(currentCueStream())
+                val route = currentCueStream()
+                tone.prepare(route)
+
+                // Then make sure the stream just chosen can actually be heard (#95). Routing alone
+                // leaves one hole: the media slider is a separate control and can be at zero, so a
+                // correctly-rerouted cue still makes no sound. This is the half that closes it, and it
+                // runs here rather than in `onCreate` for the same reason the route does — the sailor
+                // may have touched the volume since.
+                ensureCueStreamAudible(route)
 
                 // Backstop only. The render that matters was posted when the sailor picked the
                 // sequence (see [warmUpCues]) — this call is here for the paths that never went
@@ -425,6 +559,11 @@ class TimerService : Service() {
         handler.removeCallbacks(tickRunnable)
         handler.removeCallbacks(cueRunnable)
         releaseWakeLock()
+        // Third and last of the restore points (#95), for the paths that reach destruction without
+        // going through [stopForegroundAndCleanup] — the system reclaiming the service, or the sailor
+        // swiping the app away mid-race. Idempotent: with the obligation already discharged there is
+        // no record left to act on.
+        restoreRaisedCueVolume()
         tone.release()
         engine.removeListener(engineListener)
         super.onDestroy()
@@ -518,6 +657,10 @@ class TimerService : Service() {
         handler.removeCallbacks(tickRunnable)
         handler.removeCallbacks(cueRunnable)
         releaseWakeLock()
+        // The ordinary end of a race, and so the ordinary place the borrowed volume goes back (#95).
+        // Before `clearPersistedState()` only for readability — the two touch different keys, since
+        // this obligation is deliberately not part of the race snapshot.
+        restoreRaisedCueVolume()
         clearPersistedState()
         postedNotificationText = null
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -672,6 +815,8 @@ class TimerService : Service() {
         BuiltInSequences.resolve(id) ?: BuiltInSequences.usSailing
 
     companion object {
+        private const val TAG = "TimerService"
+
         const val ACTION_START = "com.racetimer.wear.ACTION_START"
         const val ACTION_SYNC = "com.racetimer.wear.ACTION_SYNC"
         const val ACTION_STOP = "com.racetimer.wear.ACTION_STOP"
@@ -718,25 +863,27 @@ class TimerService : Service() {
         private const val PREF_LAST_BOX_ALERT = "last_box_alert_seconds"
 
         /**
-         * Whether cues should be rerouted to stay audible when the watch is silenced (#95).
+         * The stream whose volume a running race raised, and what it was before (#95).
          *
-         * The third key that is a *preference* rather than race state, so it sits with the two above
-         * and outside [clearPersistedState] for the same reason they do — and note that
-         * [clearPersistedState] removes its four keys **by name**. A `clear()` there would silently
-         * take this with it, which is the #88 defect exactly: the app would honour the sailor's choice
-         * for as long as a race was running and forget it the moment one ended.
-         */
-        private const val PREF_AUDIBLE_IN_SILENT_MODE = "audible_in_silent_mode"
-
-        /**
-         * On, unless the sailor says otherwise.
+         * Two keys rather than one because the restore has to name a stream: the route is decided per
+         * race, so the race that raised the volume may have been on a different stream from whatever
+         * the next launch would choose. Restoring the right value onto the wrong stream is a way of
+         * being wrong that reads as working.
          *
-         * Sounding the signals is the whole purpose of the app and a sailor running a start has
-         * already chosen to hear them, so a silent race timer is a safety failure rather than an
-         * inconvenience. Off-by-default would leave the hazard live for everyone who never finds the
-         * setting, which is most people.
+         * These are **not** preferences and not race state — they are an obligation. They exist only
+         * between a race raising a volume and something putting it back, and their whole purpose is to
+         * survive the case where "something putting it back" never runs because the process died. They
+         * therefore sit outside [clearPersistedState] like the preferences above, but for the opposite
+         * reason: a preference must outlive a race because the sailor chose it, while this must outlive
+         * a race because nobody chose for it to end that way.
+         *
+         * `NO_RAISED_VOLUME` rather than `-1` scattered at the call sites, because "no record" has to be
+         * distinguishable from a genuine volume of 0 — which is precisely the value this feature exists
+         * to encounter.
          */
-        const val DEFAULT_AUDIBLE_IN_SILENT_MODE = true
+        private const val PREF_RAISED_STREAM = "raised_cue_stream"
+        private const val PREF_RAISED_PREVIOUS_VOLUME = "raised_cue_previous_volume"
+        private const val NO_RAISED_VOLUME = -1
 
         private const val TICK_INTERVAL_MS = 50L
 
@@ -810,18 +957,44 @@ class TimerService : Service() {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(PREF_PICKED_SEQUENCE_ID, null)
 
-        /** Remember whether cues should be rerouted to stay audible on a silenced watch (#95). */
-        fun saveAudibleInSilentMode(context: Context, enabled: Boolean) {
+        /** A volume a race raised and owes back: which stream, and what it held before (#95). */
+        data class RaisedCueVolume(val stream: Int, val previousVolume: Int)
+
+        /**
+         * Record what the cue stream held before a race raised it — **before** raising it.
+         *
+         * `commit()`, not `apply()`, and this is the one place in this file where that is worth the
+         * blocking write. `apply()` returns immediately and persists on a background thread, which
+         * would leave exactly the window this record exists to close: the device volume changed and
+         * the note of what it was still in flight when the process dies. The write is a few
+         * milliseconds, once per race that needs it, on the way into a countdown that has not started.
+         */
+        fun saveRaisedCueVolume(context: Context, stream: Int, previousVolume: Int) {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
-                .putBoolean(PREF_AUDIBLE_IN_SILENT_MODE, enabled)
-                .apply()
+                .putInt(PREF_RAISED_STREAM, stream)
+                .putInt(PREF_RAISED_PREVIOUS_VOLUME, previousVolume)
+                .commit()
         }
 
-        /** The sailor's choice, or [DEFAULT_AUDIBLE_IN_SILENT_MODE] on a watch that has never set it. */
-        fun audibleInSilentMode(context: Context): Boolean =
+        /** The outstanding volume obligation, or null when a race owes nothing. */
+        fun raisedCueVolumeRecord(context: Context): RaisedCueVolume? {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val previous = prefs.getInt(PREF_RAISED_PREVIOUS_VOLUME, NO_RAISED_VOLUME)
+            if (previous == NO_RAISED_VOLUME) return null
+            val stream = prefs.getInt(PREF_RAISED_STREAM, NO_RAISED_VOLUME)
+            if (stream == NO_RAISED_VOLUME) return null
+            return RaisedCueVolume(stream, previous)
+        }
+
+        /** Discharge the obligation. Removed **by name**, per the #88 rule this file already carries. */
+        fun clearRaisedCueVolume(context: Context) {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getBoolean(PREF_AUDIBLE_IN_SILENT_MODE, DEFAULT_AUDIBLE_IN_SILENT_MODE)
+                .edit()
+                .remove(PREF_RAISED_STREAM)
+                .remove(PREF_RAISED_PREVIOUS_VOLUME)
+                .apply()
+        }
 
         /** Remember [seconds] as the lead the lead-time picker should reopen on. */
         fun saveLastBoxAlertSeconds(context: Context, seconds: Int) {

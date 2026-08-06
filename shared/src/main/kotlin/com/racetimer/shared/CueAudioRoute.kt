@@ -53,19 +53,29 @@ enum class CueStream {
  * are silent; this changes only the races that are currently producing no sound at all, so the
  * baseline it departs from is silence rather than a working cue.
  *
+ * ### There is no opt-out, and that is deliberate
+ *
+ * This function used to take an `overrideEnabled` flag — the sailor's setting, default on, whose off
+ * position restored the silence exactly. Removed on owner directive 2026-08-06: *the race timer must
+ * never not have audible cues, regardless of the watch's status.* Sounding the signals is the entire
+ * purpose of the app, so a setting able to silence it is a safety failure with a toggle in front of
+ * it. There is now no value the sailor can set, and no state the watch can be in, that makes this
+ * return a stream the ringer has muted.
+ *
+ * Choosing an audible stream is only half of that promise. The other half is [raisedCueVolume]: the
+ * stream this picks can itself be turned down to nothing.
+ *
  * ### What the inputs are, and the one that is not what you would reach for
  *
- * @param overrideEnabled the sailor's setting, default on. Off restores today's behaviour exactly —
- *   vibrate mode silences the cues — which is what makes the setting a genuine opt-out rather than
- *   decoration.
  * @param ringerSilenced true when the ringer is in vibrate or silent mode, i.e. `getRingerMode() !=
  *   RINGER_MODE_NORMAL`. This is deliberately *not* a volume read on `STREAM_ALARM`, and that is worth
  *   stating because a volume read is the obvious choice and it does not work: the aliasing above means
- *   `getStreamVolume(STREAM_ALARM)` returns **15** in precisely the case where the cue is inaudible.
- *   It reports on the stream you named, not the stream the mixer takes the volume from, and no public
- *   API resolves the alias. So the ringer is the honest signal available here — with the limitation
- *   stated rather than hidden: an alarm stream muted some *other* way is not detected, and is #96's
- *   territory.
+ *   `getStreamVolume(STREAM_ALARM)` returns a healthy non-zero value in precisely the case where the
+ *   cue is inaudible — measured at **10** on a silenced SM-R925U while the stream it actually reads
+ *   from sat at 0. It reports on the stream you named, not the stream the mixer takes the volume from,
+ *   and no public API resolves the alias. So the ringer is the honest signal available here, with its
+ *   limitation stated rather than hidden: an alarm stream muted some *other* way is not detected by
+ *   this input, which is what the next one is for.
  * @param alarmVolume `getStreamVolume(STREAM_ALARM)`, kept as a second trigger rather than the primary
  *   one. It is worthless for the aliased case above and correct for the ordinary one — a sailor who has
  *   simply dialled the alarm slider to zero in normal ringer mode — so it costs one comparison and
@@ -73,12 +83,63 @@ enum class CueStream {
  *   enough to reroute, because being wrong towards audible is the cheap direction.
  */
 fun cueStream(
-    overrideEnabled: Boolean,
     ringerSilenced: Boolean,
     alarmVolume: Int,
 ): CueStream = when {
-    !overrideEnabled -> CueStream.ALARM
     ringerSilenced -> CueStream.MEDIA
     alarmVolume <= 0 -> CueStream.MEDIA
     else -> CueStream.ALARM
+}
+
+/**
+ * How loud the cue stream has to be, as a percentage of that stream's own maximum.
+ *
+ * Not 100. A race timer pinned to a watch's maximum is unpleasant at the wrist and startling at the
+ * gun, and #61's loudness — the figure actually verified on the water — was measured nowhere near a
+ * forced maximum. This is a floor for being *certainly heard*, in the same sense as #65's brightness
+ * override: enough to do the job, not the most the hardware can do.
+ *
+ * Kept as a named constant carrying its reason because a bare `70` in the middle of the audio path is
+ * exactly the kind of number that gets "tidied" to 100 by someone reading it as a volume rather than
+ * as a threshold.
+ */
+const val CUE_VOLUME_FLOOR_PERCENT = 70
+
+/**
+ * The volume to raise the cue stream to for a race, or `null` when it is already loud enough (#95).
+ *
+ * ### Why routing alone was not enough
+ *
+ * [cueStream] answers *which* output, and on a silenced watch that answer is [CueStream.MEDIA]. But
+ * the media slider is a separate control, which the sailor may have dialled to zero for entirely
+ * unrelated reasons — so a correctly-routed cue can still make no sound whatsoever. Routing moved the
+ * failure; it did not remove it. This is the half that removes it.
+ *
+ * ### Why `null` rather than "the volume it already has"
+ *
+ * The caller has to be able to tell *nothing to do* from *set it to exactly what it is already*,
+ * because those two differ in their side effects even though they agree about the resulting volume. A
+ * race that changed no device state has nothing to restore afterwards and cannot strand a raised
+ * volume if the process is killed — so the common case, a watch whose volume is already up, is
+ * required to touch nothing at all. `null` is what makes "nothing outside a race changes" a checkable
+ * claim rather than an aspiration.
+ *
+ * ### It never lowers
+ *
+ * A sailor whose volume is already above the floor has said something about how loud they want their
+ * race, and this has no business contradicting them. The return is a floor, never a target.
+ *
+ * @param currentVolume `getStreamVolume(stream)` for the stream [cueStream] chose.
+ * @param maxVolume `getStreamMaxVolume(stream)` for that same stream. A non-positive value is the
+ *   device saying the stream has no usable range, and the honest response to that is to change nothing
+ *   rather than to compute a floor out of it.
+ */
+fun raisedCueVolume(currentVolume: Int, maxVolume: Int): Int? {
+    if (maxVolume <= 0) return null
+    // Integer ceiling. A floor that rounded *down* would sit below the percentage it claims, and on
+    // the small indexes a watch uses — max 15 on the SM-R925U — one step of rounding is a whole step
+    // of real loudness.
+    val floor = ((maxVolume * CUE_VOLUME_FLOOR_PERCENT) + 99) / 100
+    val target = floor.coerceIn(1, maxVolume)
+    return if (currentVolume < target) target else null
 }
