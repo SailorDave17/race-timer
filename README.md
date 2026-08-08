@@ -175,7 +175,7 @@ drift, are made assertable.
 ### Requirements
 
 - Android Studio Hedgehog (2023.1) or newer, **or** VS Code with the Gradle for Java extension
-- JDK 17 (AGP 8.2 refuses anything lower); `:shared` declares a JVM 8 toolchain, which
+- JDK 17 (AGP 8.x refuses anything lower); `:shared` declares a JVM 8 toolchain, which
   `settings.gradle.kts` resolves via the Foojay plugin rather than requiring a local install
 - Android SDK with a Wear OS emulator image (API 30 / Wear OS 3.5+) and Build-tools 34
 
@@ -207,7 +207,7 @@ is in [`docs/watch-setup.md`](docs/watch-setup.md).
 | Layer | Technology |
 |-------|-----------|
 | Language | Kotlin 1.9.22 |
-| Build | Gradle 8.4 / AGP 8.2.2 |
+| Build | Gradle 8.9 / AGP 8.6.1 |
 | Watch UI | Jetpack Compose for Wear OS 1.3 |
 | Navigation | Wear Compose Navigation |
 | Timing | `SystemClock.elapsedRealtimeNanos()` (monotonic) |
@@ -215,7 +215,7 @@ is in [`docs/watch-setup.md`](docs/watch-setup.md).
 | Background | Android `ForegroundService` (`specialUse`) + Wear `OngoingActivity` |
 | State | `SharedPreferences` (boot-anchored gun snapshot) |
 | Min SDK | 30 (Wear OS 3.5 / Android 11) |
-| Compile / Target SDK | 34 |
+| Compile / Target SDK | 35 |
 
 ## Status and roadmap
 
@@ -227,8 +227,8 @@ internal testing.
 |---|---|
 | **Shipped** | Six sequences including both race-manager modes, signal-box lead-in, Sync, rendered cue audio, scheduled cues, foreground service, screen policy, restore-after-kill |
 | **Play internal testing** ([#66](https://github.com/SailorDave17/race-timer/issues/66)) | Developer account, upload keystore, icon set, store listing and screenshots, privacy policy, App content declarations, first internal build |
-| **Blocking that** | `compileSdk`/`targetSdk` 35 before the **2026-08-31** Wear OS deadline ([#69](https://github.com/SailorDave17/race-timer/issues/69)), which needs the AGP 8.2.2 → 8.6+ toolchain bump first ([#68](https://github.com/SailorDave17/race-timer/issues/68)) |
-| **Known open defects** | Cues are silent in vibrate mode on some watches ([#95](https://github.com/SailorDave17/race-timer/issues/95)), max-brightness caps at 600 nits and ignores the light sensor ([#100](https://github.com/SailorDave17/race-timer/issues/100)), first-cue audio trails its haptic ([#98](https://github.com/SailorDave17/race-timer/issues/98)) |
+| **Shipped toward that** | `compileSdk`/`targetSdk` 35 ([#116](https://github.com/SailorDave17/race-timer/pull/116), closing [#69](https://github.com/SailorDave17/race-timer/issues/69)) on the AGP 8.6.1 / Gradle 8.9 toolchain ([#111](https://github.com/SailorDave17/race-timer/pull/111), closing [#68](https://github.com/SailorDave17/race-timer/issues/68)) — the 2026-08-31 Wear OS deadline is met |
+| **Known open defects** | No pre-start warning when Do Not Disturb has silenced the cues ([#96](https://github.com/SailorDave17/race-timer/issues/96)), first-cue audio trails its haptic ([#98](https://github.com/SailorDave17/race-timer/issues/98)), the display can stick 180° off — a device fault, not the app ([#115](https://github.com/SailorDave17/race-timer/issues/115)) |
 | **Later** | Named custom presets, round-down sync toggle, Wear Tile + complication, phone companion, rolling/chained starts |
 
 The Google Play account the app publishes under — and why publishing from a different one would create

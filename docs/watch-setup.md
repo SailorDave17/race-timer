@@ -96,8 +96,8 @@ step 5 alone is usually enough.
 
 The app installs as `com.racetimer.wear`.
 
-`minSdk 30` / `compileSdk 34` / `targetSdk 34` install cleanly on this Android 16 (API 36) watch. No
-`compileSdk` bump has been needed; don't raise it speculatively.
+The SDK-34 build installed cleanly on this Android 16 (API 36) watch; the app has since moved to
+`compileSdk`/`targetSdk` 35 (#69) with no install change expected.
 
 ### Confirm what actually landed
 
