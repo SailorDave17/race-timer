@@ -16,3 +16,8 @@
 # up in a release build that merely compiles; it shows up on the watch. #127 is scoped to what a
 # session can verify, and this is not that.
 -keep class com.racetimer.** { *; }
+
+# TEMPORARY MUTATION - proving CI goes red on an R8 failure (#129 AC 4).
+# Reverted in the very next commit. If you are reading this on develop, something
+# went wrong: this line must never survive past the revert commit.
+-keepp class com.racetimer.** { *; }
