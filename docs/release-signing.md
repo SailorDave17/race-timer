@@ -112,7 +112,11 @@ stores**, and neither is in this repo:
 | Half | Where it lives |
 |---|---|
 | `race-timer-upload.jks` | Google Drive, 4,296 bytes, linked from #71 |
-| Store password and key password | **Google Password Manager**, under the entry for this keystore |
+| Store password and key password | **Google Password Manager**, entry `race-timer-upload-keystore.com`, username `upload` |
+
+**One secret, not two.** `storePassword` and `keyPassword` hold the **same value** for this keystore, so the
+manager entry stores one password and both properties take it. The entry's *username* field carries the key
+alias, `upload`, which is the third thing a restore needs and is otherwise easy to forget.
 
 **What this protects against, and what it does not.** Owner decision, 2026-08-10. The two halves are
 in separate stores, so no single folder holds both and a shared Drive link discloses nothing usable.
