@@ -85,17 +85,24 @@ MAINTAINER NOTES — remove this block before publishing.
 1. Fill in [DATE OF PUBLICATION] and [CONTACT EMAIL] before publishing. Consider a dedicated address
    rather than a personal one; this URL is public and gets scraped.
 
-2. Every factual claim here was checked against the tree on 2026-08-01 and is currently true:
+2. Every factual claim here was checked against the tree on 2026-08-01 and RE-CHECKED on 2026-08-09,
+   after PRs #113, #116 and #132 had merged. All still true:
    - No INTERNET permission in wear/src/main/AndroidManifest.xml.
    - A grep across wear/src, shared/src, both build files and the version catalog for
      http/okhttp/retrofit/firebase/analytics/crashlytics/URL(/Socket returned nothing.
    - The four persisted keys are PREF_SEQUENCE_ID, PREF_GUN_ELAPSED, PREF_GUN_WALL_CLOCK and
      PREF_CAPTURED_ELAPSED, written to the "race_timer_state" prefs file
-     (TimerService.kt:473-476, :517).
+     (TimerService.kt:804-807, constants at :857-861).
    - The wake lock is PARTIAL and acquired with a timeout of remaining race + margin
-     (TimerService.kt:369-384).
+     (TimerService.kt:710-712, released at :717).
    - The five declared permissions are exactly the four rows in the table plus
-     FOREGROUND_SERVICE_SPECIAL_USE, which shares a row with FOREGROUND_SERVICE.
+     FOREGROUND_SERVICE_SPECIAL_USE, which shares a row with FOREGROUND_SERVICE. The manifest also
+     gained uses-feature android.hardware.audio.output required="false" (#95/#132) -- a feature, not
+     a permission, so the table above stays complete.
+
+   The line numbers above had all drifted by 2026-08-09 (they read :473-476, :517 and :369-384, none
+   of which point at the code they named). Re-cite them whenever this note is re-checked; a stale
+   citation is how a check that was really run stops being reproducible.
 
 3. THIS POLICY IS A DEPENDENCY OF THE MANIFEST. If a permission is added, or any networking or
    third-party SDK is introduced, this file is wrong the moment that change merges. Treat a manifest

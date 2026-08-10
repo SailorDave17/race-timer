@@ -93,24 +93,33 @@ Racing timer — keeps the start-sequence running while the screen is off
 
 ## Maintainer notes — not for Play Console
 
-Every claim above was checked against the tree on 2026-08-01:
+Every claim above was checked against the tree on 2026-08-01 and **re-checked on 2026-08-09**, after
+PRs #113, #116 and #132 had merged:
 
 - `wear/src/main/AndroidManifest.xml` declares exactly `FOREGROUND_SERVICE`,
   `FOREGROUND_SERVICE_SPECIAL_USE`, `WAKE_LOCK`, `POST_NOTIFICATIONS`, `VIBRATE`. No `INTERNET`, no
-  location, no body sensors, no boot-completed receiver.
-- `TimerService.kt` returns `START_NOT_STICKY` (see the comment there and the *Foreground service*
-  section of `CLAUDE.md` for why — a sticky restart arrives with a null intent, matches no branch,
-  and `startForeground()` would never run).
-- The wake lock is `PARTIAL_WAKE_LOCK`, acquired with `remainingMs + WAKE_LOCK_MARGIN_MS` and released
-  in `releaseWakeLock()` on teardown.
-- `OngoingActivity` is built and posted for the life of the service.
+  location, no body sensors, no boot-completed receiver. The only manifest addition since the first
+  check is `uses-feature android.hardware.audio.output required="false"` (from #95/#132) — a feature,
+  not a permission, so no claim above is affected.
+- `TimerService.kt` returns `START_NOT_STICKY` (`:555`; see the comment there and the *Foreground
+  service* section of `CLAUDE.md` for why — a sticky restart arrives with a null intent, matches no
+  branch, and `startForeground()` would never run).
+- The wake lock is `PARTIAL_WAKE_LOCK` (`:712`), acquired with `remainingMs + WAKE_LOCK_MARGIN_MS`
+  (`:710`, margin `30_000L` at `:922`) and released in `releaseWakeLock()` (`:717`) on teardown.
+- `OngoingActivity` is built and posted for the life of the service (`:668`).
 - The timing claim is deliberately phrased as "a few tens of milliseconds" rather than a hard number.
-  The measured figure is **±13 ms** for cue dispatch (hardware-measured, recorded in the bmad repo at
+  The measured figure is **±13 ms** for cue dispatch (hardware-measured, recorded in the cairn repo at
   `memory/projects/race-timer-cue-audio-timing-2026-08-01.md`, down from ±200 ms when cues were polled
-  for every 50 ms). But **#62 is open**: the *first* cue of a race currently fires ~170 ms after the
-  countdown anchor, and **#61** tracks tone overshoot. Quoting ±13 ms to Play would be stating as
-  shipped behaviour something an open bug contradicts. Understate it; the argument does not need the
-  precision, only the fact that sub-second accuracy is the point of the app.
+  for every 50 ms), and mid-race cues measure 3–58 ms against their own deadlines. But the **first cue
+  of every race** still misses by **138–297 ms**: the track is paused and flushed after each cue, so
+  that `play()` re-pays `startOutput`. That is **#114**, open — and **#98** stays open until it lands.
+  Quoting ±13 ms to Play would be stating as shipped behaviour something an open bug contradicts.
+  Understate it; the argument does not need the precision, only the fact that sub-second accuracy is
+  the point of the app.
+
+  *Tightening this claim is **#82**'s job, not this document's.* #82 is worded "once #61 and #62
+  close" and both did close — but the hedge outlived them, because #114 replaced their reason rather
+  than removing it. #82 therefore waits on #114, not on its own stated trigger.
 
 Two notes on strategy:
 
