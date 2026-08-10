@@ -1105,6 +1105,61 @@ class TimerEngineTest {
         assertEquals(TimerState.COUNTING_UP, engine.currentState)
     }
 
+    // --- Sync extends the countdown, without bound (#126) ----------------------
+
+    @Test fun `each round-up sync pushes the gun further out than it was`() {
+        // The premise behind TimerService re-arming its wake lock on ACTION_SYNC. A sync is a
+        // *correction*, and a single one is bounded at half a minute — but it is bounded per sync,
+        // not per race, and nothing in the engine caps the total.
+        engine.load(BuiltInSequences.scholastic)
+        engine.start()
+        val atStart = engine.remainingMs
+
+        // Just past the half-minute mark each time, which is where nearest-minute rounds up.
+        fakeNow = 29_999L
+        engine.sync()
+        val afterOne = engine.remainingMs + fakeNow
+
+        assertTrue(
+            "a round-up sync should push the gun later, but the race got no longer: " +
+                "$atStart -> $afterOne",
+            afterOne > atStart,
+        )
+    }
+
+    @Test fun `repeated syncs extend a race by more than any single sync could`() {
+        // This is the part that defeats a fixed margin sized off the countdown at start. Three
+        // round-up syncs move the gun by ~90 s in total, and there is nothing stopping a fourth: the
+        // only limits are the 1 s double-tap guard and how long the race manager keeps tapping.
+        //
+        // Deliberately asserted as "more than one sync's worth" rather than against
+        // TimerService.WAKE_LOCK_MARGIN_MS, which lives in the wear module and is not visible here.
+        // Pinning a number copied across that boundary would make this test agree with a constant
+        // instead of with the behaviour, and the constant is free to change.
+        engine.load(BuiltInSequences.scholastic)
+        engine.start()
+        val atStart = engine.remainingMs
+
+        var extension = 0L
+        for (round in 1..3) {
+            // Wind forward to the point where exactly 2:30.001 remains, so nearest-minute snaps up
+            // to 3:00 and the gun moves ~30 s further out. Recomputed each round because the
+            // previous sync moved the anchor.
+            fakeNow += engine.remainingMs - 150_001L
+            val before = engine.remainingMs
+            engine.sync()
+            val moved = engine.remainingMs - before
+            assertTrue("sync $round did not round up (moved ${moved}ms)", moved > 25_000L)
+            extension += moved
+        }
+
+        assertTrue(
+            "three syncs should extend the race well past what one can (was ${extension}ms)",
+            extension > 60_000L,
+        )
+        assertEquals(atStart + extension, engine.remainingMs + fakeNow)
+    }
+
     // --- Helper ---------------------------------------------------------------
 
     /** Advance fake clock in 100 ms steps, calling tick() each step. */
