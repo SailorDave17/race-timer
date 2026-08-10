@@ -632,4 +632,39 @@ class RaceSequenceTest {
         assertEquals("long blasts at $offsetMs ms", longBlasts, cue!!.signal.longBlasts)
         assertEquals("short blasts at $offsetMs ms", shortBlasts, cue.signal.shortBlasts)
     }
+
+    // --- Nothing fires after the gun (#126) -------------------------------------
+
+    @Test fun `no built-in sequence has a cue after the gun`() {
+        // Load-bearing for the doze answer in docs/timing-accuracy.md, and stated there as a fact
+        // about the sequences rather than a hope. TimerService releases the wake lock at the gun for
+        // a countUpAfterFinish sequence — deliberately, since a committee count-up is unbounded and
+        // has nothing left to sound — and lets the watch suspend for the rest of the race.
+        //
+        // That is safe only while the cue queue is empty by then. A cue at a negative offset would
+        // be a cue scheduled into a window where the CPU is allowed to sleep and the handler posts on
+        // the uptime clock, so it could be deferred indefinitely with nothing reporting it. The
+        // reasoning lives in a document; this is what stops the document quietly becoming wrong.
+        for (sequence in BuiltInSequences.all) {
+            val afterGun = sequence.cues.filter { it.offsetMs < 0L }
+            assertTrue(
+                "${sequence.id} has ${afterGun.size} cue(s) after the gun: " +
+                    afterGun.map { it.signal.label },
+                afterGun.isEmpty(),
+            )
+        }
+    }
+
+    @Test fun `every count-up sequence ends on its gun`() {
+        // The sharper half of the rule above, aimed at exactly the sequences that release the wake
+        // lock: it is not enough that no cue sits *after* the gun — the gun must be the last cue, so
+        // the queue is provably drained at the moment COUNTING_UP begins.
+        val countUp = BuiltInSequences.all.filter { it.countUpAfterFinish }
+        assertTrue("no count-up sequences found; this test has stopped testing anything", countUp.isNotEmpty())
+        for (sequence in countUp) {
+            val last = sequence.cues.last()
+            assertTrue("${sequence.id} does not end on its gun", last.isGun)
+            assertEquals("${sequence.id} gun is not at offset 0", 0L, last.offsetMs)
+        }
+    }
 }

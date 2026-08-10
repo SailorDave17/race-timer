@@ -36,6 +36,7 @@ import com.racetimer.shared.StartPlan
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.TimingProbe
 import com.racetimer.shared.formatCountdown
 import com.racetimer.shared.formatElapsed
 import com.racetimer.shared.snapshotFrom
@@ -151,6 +152,15 @@ class TimerService : Service() {
 
     /** How long the cue that fired most recently occupies the wrist and speaker. */
     private var lastCueDurationMs = 0L
+
+    /**
+     * [TimingProbe.sleepDivergenceMs] as it read when this race started, or null outside a race.
+     *
+     * The zero point for every `sleptMs` in the cue log. Taken per race rather than once per process
+     * because the absolute divergence is dominated by however long the watch sat off the wrist before
+     * anyone opened the app, which is a number about the watch's morning and not about the race.
+     */
+    private var raceSleepBaselineMs: Long? = null
 
     /** Set while [gunTeardownRunnable] is posted, so the tick loop doesn't tear down ahead of it. */
     private var gunTeardownPending = false
@@ -462,6 +472,16 @@ class TimerService : Service() {
                 }
                 pendingRestoreNotice = lastRestoreOutcome
 
+                // Zero the doze probe before the first cue can fire (#126). It has to be here rather
+                // than below with the other startup work, because the `engine.tick()` a few lines
+                // down dispatches any cue that is already due — and the first cue of every sequence
+                // we ship is due at the instant the gun is anchored, so it would otherwise be the one
+                // cue in the race logged against no baseline.
+                raceSleepBaselineMs = TimingProbe.sleepDivergenceMs(
+                    elapsedRealtimeMs = SystemClock.elapsedRealtime(),
+                    uptimeMs = SystemClock.uptimeMillis(),
+                )
+
                 // Sound whatever is already due, synchronously, ahead of the startup work below (#62).
                 //
                 // The first cue of every sequence we ship sits at `offsetMs == totalMs` — Scholastic's
@@ -516,6 +536,27 @@ class TimerService : Service() {
                 // A snap re-anchors the gun and re-queues the unfired cues, so whatever was armed is
                 // now aimed at the wrong moment.
                 scheduleNextCue()
+                // ...and the wake lock is aimed at the wrong moment too (#126). [acquireWakeLock]
+                // sizes its timeout from `engine.remainingMs` at the instant it is called, and until
+                // this line it was only ever called from ACTION_START — so the lock protected the
+                // race the sailor started, not the race they now have. A sync rounds *up* about half
+                // the time, moving the gun as much as 30 s later, and [WAKE_LOCK_MARGIN_MS] is 30 s:
+                // two round-up syncs spend the whole margin and the lock then expires with cues still
+                // pending. What happens next is the #126 question exactly — the CPU is free to
+                // suspend, and both [scheduleNextCue] and [tickRunnable] post on the *uptime* clock,
+                // which does not advance through suspend.
+                //
+                // Nothing about the countdown looks wrong while this is happening, which is why it
+                // survived: [TimerEngine] anchors on the monotonic clock, so the displayed time stays
+                // exact and only the moment of *noticing* a cue slips. Same signature as #58.
+                //
+                // Unconditional within RUNNING rather than conditional on the sync being accepted:
+                // [TimerEngine.sync] refuses silently in a lead-in and under the double-tap guard, and
+                // re-arming after a refused sync is a no-op that costs one binder call, while missing
+                // an accepted one is the bug. The state check is what matters — an ACTION_SYNC can be
+                // delivered to a service the system created just to carry it (see below), where there
+                // is no race to hold a lock for.
+                if (engine.currentState == TimerState.RUNNING) acquireWakeLock()
                 // The intent can land on a service the system created just to deliver it — the app
                 // was killed, or the race has already ended. There is then nothing to sync and no
                 // countdown to hold open, so don't leave a started service sitting idle. COUNTING_UP
@@ -685,6 +726,7 @@ class TimerService : Service() {
         handler.removeCallbacks(tickRunnable)
         handler.removeCallbacks(cueRunnable)
         releaseWakeLock()
+        raceSleepBaselineMs = null
         // The ordinary end of a race, and so the ordinary place the borrowed volume goes back (#95).
         // Before `clearPersistedState()` only for readability — the two touch different keys, since
         // this obligation is deliberately not part of the race snapshot.
@@ -719,6 +761,56 @@ class TimerService : Service() {
         wakeLock = null
     }
 
+    // --- Doze / dispatch probe (#126) -----------------------------------------
+
+    /**
+     * Report where a cue actually landed, and whether the watch was asleep on the way there.
+     *
+     * Behind `setprop log.tag.TimerService DEBUG`, the same gate `ToneManager` uses, because this is
+     * a measurement channel and not something a shipped race should be paying for.
+     *
+     * **This is the line to read for a screen-off timing question, and `ToneManager`'s `cue lateMs=`
+     * is not.** That one starts its stopwatch at the moment the cue was handed to the tone thread —
+     * i.e. after everything this line measures has already happened — so a cue deferred four seconds
+     * by a suspended CPU still reports a single-digit `lateMs` there. Two plausible-looking numbers
+     * with the same name, and only one of them can answer #126.
+     *
+     * The four fields, and why each is here:
+     *
+     * - `errorMs` — how late the cue was against the boundary the *sequence* put it on. The number
+     *   #126's third criterion asks for. Its scheduled counterpart is not logged because it is not a
+     *   separate fact: `offsetMs` is the schedule.
+     * - `sleptMs` — deep sleep since this race started, from the divergence of Android's two clocks.
+     *   The only field here the app cannot influence by being wrong, which makes it the control: a
+     *   run with a large `errorMs` and `sleptMs=0` is a scheduling fault, and the same `errorMs` with
+     *   `sleptMs` to match is doze. Those want opposite fixes, and `errorMs` alone cannot tell them
+     *   apart — the same split that `wakeMs`/`playMs` exists for in `ToneManager` (#98).
+     * - `wakeLock` — whether the lock was still held when the cue fired. A timed
+     *   `PARTIAL_WAKE_LOCK` expires silently, so without this the difference between "the lock did
+     *   its job" and "the lock was gone and the watch simply happened not to sleep" is invisible.
+     *   This is the field that settles whether the ACTION_SYNC re-arm above was needed.
+     * - `screenOn` — because a screen-on run proves nothing about doze, and a run whose log says
+     *   `screenOn=true` throughout is a run that has to be done again. Cheaper to record than to
+     *   re-derive from a session transcript afterwards.
+     */
+    private fun logCueDispatch(cue: SequenceCue) {
+        if (!Log.isLoggable(TAG, Log.DEBUG)) return
+        val baseline = raceSleepBaselineMs
+        val sleptMs = if (baseline == null) "unknown" else TimingProbe.deepSleepSinceMs(
+            elapsedRealtimeMs = SystemClock.elapsedRealtime(),
+            uptimeMs = SystemClock.uptimeMillis(),
+            baselineDivergenceMs = baseline,
+        ).toString()
+        val pm = getSystemService(PowerManager::class.java)
+        Log.d(
+            TAG,
+            "cue offsetMs=${cue.offsetMs} label=${cue.signal.label} " +
+                "errorMs=${TimingProbe.dispatchErrorMs(cue.offsetMs, engine.remainingMs)} " +
+                "sleptMs=$sleptMs wakeLock=${wakeLock?.isHeld == true} " +
+                "screenOn=${pm?.isInteractive == true}",
+        )
+    }
+
     // --- Tick loop ------------------------------------------------------------
 
     private fun scheduleTickLoop() {
@@ -750,6 +842,11 @@ class TimerService : Service() {
 
     private val engineListener = object : TimerListener {
         override fun onCue(cue: SequenceCue) {
+            // Read the clock before doing anything with it. `haptic.play` is a binder call into the
+            // vibrator service and `tone.playCue` posts to the tone thread, so sampling after them
+            // would charge their cost to the scheduler and overstate every dispatch error by however
+            // busy the system happened to be.
+            logCueDispatch(cue)
             // Vibration first, always: audio is best-effort and must never gate the haptic.
             haptic.play(cue.signal, isGun = cue.isGun)
             tone.playCue(cue.signal)
