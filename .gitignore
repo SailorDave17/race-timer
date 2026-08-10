@@ -18,7 +18,7 @@ local.properties
 # Signing keystore files and the local signing config that names them
 *.jks
 *.keystore
-keystore.properties
+keystore.properties*
 
 # Generated APK/AAB files
 *.apk

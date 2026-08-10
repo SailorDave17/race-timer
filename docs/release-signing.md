@@ -58,8 +58,31 @@ keytool -printcert -jarfile wear/build/outputs/bundle/release/wear-release.aab
 ```
 
 `Not a signed jar file` is the failure. A signed bundle prints the certificate, and its SHA-256 must
-match the fingerprint above. The APK carries the same tell in its filename: `wear-release.apk` when
-signed, `wear-release-unsigned.apk` when not.
+match the fingerprint above.
+
+**Do not run that command against the APK.** `keytool -printcert -jarfile` reads **v1 JAR signatures
+only**, and AGP signs this app with APK Signature Scheme v2 without emitting v1 — so on a correctly
+signed APK it prints `Not a signed jar file` *and exits 0*. Measured 2026-08-10 (#127) on an APK that
+`apksigner` verified against the fingerprint above in the same minute. The command is right for the
+bundle and reports the opposite of the truth for the APK.
+
+Use `apksigner`, which exits non-zero when verification actually fails:
+
+```bash
+apksigner verify --print-certs wear/build/outputs/apk/release/wear-release.apk
+```
+
+Two consequences worth stating rather than rediscovering:
+
+- **Never test keytool's exit code.** `keytool ... && echo signed` prints `signed` in both
+  directions. Check the output.
+- **The two tools spell the fingerprint differently** — keytool colon-separated uppercase
+  (`91:8A:82:...`), apksigner bare lowercase (`918a8257...`). Strip separators and casefold before
+  comparing, or an identical certificate reads as a mismatch.
+
+The APK also carries a cruder tell in its filename: `wear-release.apk` when signed,
+`wear-release-unsigned.apk` when not. That one needs no tooling, but it says only that *something*
+signed it, never *with what*.
 
 ## Release artefacts and crash reports
 
@@ -80,6 +103,75 @@ Two things to know about what the mapping is worth here:
   keystore's local copy on 2026-08-06.
 
 Archived per upload, alongside the `versionCode` bump the release commit carries.
+
+## Restoring the upload key on a new machine
+
+The key is only as recoverable as its weakest half. Both halves are backed up, in **two different
+stores**, and neither is in this repo:
+
+| Half | Where it lives |
+|---|---|
+| `race-timer-upload.jks` | Google Drive, 4,296 bytes, linked from #71 |
+| Store password and key password | **Google Password Manager**, entry `race-timer-upload-keystore.com`, username `upload` |
+
+**One secret, not two.** `storePassword` and `keyPassword` hold the **same value** for this keystore, so the
+manager entry stores one password and both properties take it. The entry's *username* field carries the key
+alias, `upload`, which is the third thing a restore needs and is otherwise easy to forget.
+
+**What this protects against, and what it does not.** Owner decision, 2026-08-10. The two halves are
+in separate stores, so no single folder holds both and a shared Drive link discloses nothing usable.
+They are behind the **same Google account**, so that account is the single control that matters: 2FA
+on it is what this arrangement rests on, and it is load-bearing rather than advisory. The rejected
+alternative was a password manager on an independent account, which removes the shared-account
+exposure at the cost of a second tool to maintain; it stays the upgrade path if this key ever guards
+something already published.
+
+### The procedure
+
+Agents do not move key material — that division held through #71 and #127 and it holds here. The
+owner performs steps 1 and 2; an agent can verify from step 3 down, by metadata and hash only.
+
+1. Download `race-timer-upload.jks` from Drive to `C:/Users/HSCCo/keys/`. Confirm **4,296 bytes**; a
+   different size means a different file, and the fingerprint check below will fail anyway.
+2. Recreate `keystore.properties` at the repo root using the template in *Local signing config*
+   above, taking both passwords from Google Password Manager. It is gitignored and stays local.
+3. Build: `./gradlew :wear:clean :wear:bundleRelease`. **`BUILD SUCCESSFUL` proves nothing here** —
+   see *Always check the bundle is actually signed*. A missing or wrong `keystore.properties` yields
+   an unsigned bundle and the same green line.
+4. Verify the certificate is the one this project is known by:
+
+   ```bash
+   keytool -printcert -jarfile wear/build/outputs/bundle/release/wear-release.aab
+   ```
+
+   The SHA-256 must equal the fingerprint recorded under *The upload key* above, which is the value
+   established on #71:
+
+   ```
+   91:8A:82:57:4C:74:BC:3A:96:70:79:94:60:4A:53:5D:77:E3:10:18:54:5A:9B:83:C5:C0:08:AB:FE:2D:C8:F6
+   ```
+
+   Anything else — including `Not a signed jar file` — means the restore did not work. Do not upload
+   the bundle.
+
+**A procedure that has never been run is a claim, not a recovery path** — so this one gets
+rehearsed, not merely written. #133 tracks the rehearsal and its result.
+
+## Losing the upload key: which side of the line this project is on
+
+**Nothing has been uploaded to Play yet** — `versionCode` is still `1` and no track has received a
+bundle. That places this project on the **cheap** side of the line, and it is worth knowing the line
+moves permanently at the first upload:
+
+- **Before the first upload** — losing the upload key costs a `keytool` run. Generate a new keystore,
+  update `keystore.properties`, record the new fingerprint here. No one outside this repo has seen
+  the old key, so nothing depends on it. Free.
+- **After the first upload** — the key is registered with Play App Signing as *the* accepted upload
+  identity. Replacing it is a **Google support request**, not a local command: you generate a new key,
+  raise a request to register it, and wait. Uploads are blocked until it is granted.
+
+So the recovery path above is cheap insurance today and becomes load-bearing the moment #79 pushes the
+first bundle. That is the deadline on this work, and it is not a date.
 
 ## Version strategy
 
