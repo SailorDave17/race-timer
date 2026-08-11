@@ -40,7 +40,13 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.racetimer.shared.BANNER_MAX_WIDTH_FRACTION
 import com.racetimer.shared.BANNER_TOP_FRACTION
+import com.racetimer.shared.BG_FINAL_TEN_ARGB
+import com.racetimer.shared.TIER1_SCRIM_ARGB
+import com.racetimer.shared.TIER1_TEXT_ARGB
+import com.racetimer.shared.TIER3_SCRIM_ARGB
+import com.racetimer.shared.TIER3_TEXT_ARGB
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.backgroundArgbFor
 import com.racetimer.shared.bannerFitsRoundScreen
 import com.racetimer.shared.formatCountdown
 import com.racetimer.shared.formatElapsed
@@ -53,21 +59,14 @@ private const val MESSAGE_DURATION_MS = 3_000L
 // Background colour states
 // ---------------------------------------------------------------------------
 
-private val BG_NORMAL = Color(0xFF1A1A2E)      // deep navy — calm
-private val BG_ONE_MINUTE = Color(0xFFA0660A)  // amber — inside 1 minute
-private val BG_FINAL_TEN = Color(0xFF7B0000)   // dark red — final 10 s
-private val BG_FINISHED = Color(0xFF005000)    // dark green — gun fired
+// The four background states, and the rule picking between them, live in
+// `shared/MessageContrast.kt` — the contrast guard has to measure the same values the screen
+// renders, so there is one definition and this file reads it (#123).
+private val BG_FINAL_TEN = Color(BG_FINAL_TEN_ARGB)
 
 /** Pick the background colour for the given [remainingMs] and [state]. */
-private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color = when {
-    // Both read as "this run is complete" — RACE_ENDED is a race committee's equivalent of the
-    // gun having fired, just held open for review instead of lingering for a few seconds.
-    state == TimerState.FINISHED || state == TimerState.RACE_ENDED -> BG_FINISHED
-    state != TimerState.RUNNING  -> BG_NORMAL
-    remainingMs <= 10_000L       -> BG_FINAL_TEN
-    remainingMs <= 60_000L       -> BG_ONE_MINUTE
-    else                         -> BG_NORMAL
-}
+private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
+    Color(backgroundArgbFor(remainingMs, state))
 
 // ---------------------------------------------------------------------------
 // Main timer screen
@@ -171,14 +170,24 @@ fun TimerScreen(
             )
 
             // Degraded-recovery prompt: gun was reconstructed best-effort, confirm against the flag.
+            //
+            // Scrimmed (#123). This is the one Tier 3 line that can be on screen during a *running*
+            // race, so it is the one that meets the amber one-minute background — where the bare
+            // amber text it used to be computed 2.93 : 1 against a 4.5 : 1 bar, on the screen a
+            // sailor reads under stress. The scrim is Tier 1's, opaque, so the tier has one contrast
+            // case rather than four; `MessageContrastTest` asserts it and asserts the old bare text
+            // failing, so removing this reddens the suite.
             if (showResyncPrompt) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "Recovered — tap Sync to confirm",
                     style = MaterialTheme.typography.caption2,
-                    color = Color(0xFFFFC107),
+                    color = Color(TIER3_TEXT_ARGB),
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .background(Color(TIER3_SCRIM_ARGB), shape = RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
 
@@ -186,17 +195,19 @@ fun TimerScreen(
             // and they cannot collide: this one only appears pre-start, while showResyncPrompt
             // requires a RUNNING engine.
             //
-            // No scrim, matching the existing Tier 3 consumer. The contrast defect noted in
-            // docs/message-surface.md is the amber-on-amber case, and the amber background only
-            // appears inside the final minute of a *running* race — which this line cannot be on
-            // screen for. Against the idle navy it computes 10.4:1. Giving it a scrim here would
-            // pre-empt the fix #12 owns for the tier as a whole.
+            // Deliberately un-scrimmed, and now measured rather than argued (#123). The amber
+            // background only appears inside the final minute of a *running* race, and this line is
+            // set only on the IDLE pre-start screen and cleared by `clearResumeOffer` the moment an
+            // engine holds a race — so navy at 10.46 : 1 is the whole of its exposure. Rule 1 of
+            // docs/message-surface.md permits bare text exactly where every reachable background has
+            // been checked; `MessageContrastTest` is that check, and it derives the reachable set
+            // from `backgroundArgbFor` rather than trusting this comment.
             if (discardWarning != null) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = discardWarning,
                     style = MaterialTheme.typography.caption2,
-                    color = Color(0xFFFFC107),
+                    color = Color(TIER3_TEXT_ARGB),
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                 )
@@ -658,7 +669,7 @@ private fun MessageBanner(message: String, modifier: Modifier = Modifier) {
         Text(
             text = message,
             fontSize = 11.sp,
-            color = Color(0xFFFFB74D),
+            color = Color(TIER1_TEXT_ARGB),
             textAlign = TextAlign.Center,
             modifier = Modifier
                 // A cap ahead of the background, so the scrim stops where the text does and a short
@@ -666,11 +677,13 @@ private fun MessageBanner(message: String, modifier: Modifier = Modifier) {
                 .widthIn(max = configuration.screenWidthDp.dp * BANNER_MAX_WIDTH_FRACTION)
                 // Opaque, where it used to be 80 %. At 80 % the background contributed a fifth of
                 // the composite, which made the amber one-minute state the worst case in
-                // docs/message-surface.md's contrast table at 6.6 : 1 — and that state is not a
+                // docs/message-surface.md's contrast table at 6.55 : 1 — and that state is not a
                 // hypothetical for this banner, since the clock-adjustment notice is the one Tier 1
                 // consumer that fires mid-race. Contributing nothing collapses four cases to one at
-                // 8.6 : 1, on the screen where legibility is the whole product.
-                .background(Color(0xFF3A2A00), shape = RoundedCornerShape(8.dp))
+                // 8.03 : 1, on the screen where legibility is the whole product. (This comment and
+                // the doc both said 8.6 : 1 until #123 — that is this colour's ratio on the *Tier 3*
+                // text, not on #FFB74D. `MessageContrastTest` now computes both.)
+                .background(Color(TIER1_SCRIM_ARGB), shape = RoundedCornerShape(8.dp))
                 .padding(horizontal = 8.dp, vertical = 3.dp),
         )
     }
