@@ -117,7 +117,7 @@ Two things worth knowing because they are not obvious from the screen:
 | Watch reboots mid-race | Race is **reconstructed**, flagged `DEGRADED`, re-sync prompted | **Designed** — and a reversal of what #9 expected; see the reconciliation below |
 | A different sequence is selected and Start is tapped | The saved race is overwritten. A Tier 3 line — *"Start discards saved &lt;name&gt;"* — warns first | **Designed** ([#89](https://github.com/SailorDave17/race-timer/issues/89)) |
 | The saved `sequence_id` no longer resolves | Race is gone. Tier 1: *"Saved race unreadable — starting fresh"* | **Designed** ([#102](https://github.com/SailorDave17/race-timer/issues/102)) — announced, never absorbed |
-| Process killed within the snapshot's write window | Snapshot may be lost; the race comes back as if never started | **Gap, unmeasured.** `persistSnapshot()` uses `apply()`, not `commit()`. #9's notes asked for this to be verified and nothing records an answer |
+| Process killed within the snapshot's write window | Snapshot may be lost; the race comes back as if never started | **Gap, unmeasured.** `persistSnapshot()` uses `apply()`, not `commit()`. #9's notes asked for this to be verified and nothing records an answer — [#151](https://github.com/SailorDave17/race-timer/issues/151) |
 
 ---
 
@@ -223,13 +223,13 @@ The question this table exists to answer: **is this a designed limitation or a g
 | Saved race unreadable | Discarded, sailor told | **Designed limitation** |
 | Start tapped on a different sequence | Saved race overwritten, warned first | **Designed limitation** ([#89](https://github.com/SailorDave17/race-timer/issues/89)) |
 | Sailor loses sequence position | Sync re-anchors to the nearest minute | **Supported** |
-| Sailor is more than 30 s out | Snapped to the wrong minute, silently | **Gap** — no issue filed |
+| Sailor is more than 30 s out | Snapped to the wrong minute, silently | **Gap** — [#150](https://github.com/SailorDave17/race-timer/issues/150) |
 | Cue fires while the CPU is suspended | Fires **late**, not dropped — `tick()` drains every overdue cue in order | **Designed limitation** — `docs/timing-accuracy.md` |
 | Haptic dropped under Do Not Disturb | Nothing plays; nothing warns | **Gap** — [#144](https://github.com/SailorDave17/race-timer/issues/144) |
 | Audio refused under Do Not Disturb | Nothing plays; app records the refusal, does not surface it | **Gap** — [#96](https://github.com/SailorDave17/race-timer/issues/96) |
 | Foreground service blocked / permission denied | Unhandled — `handleStart` assumes it works | **Gap** — [#13](https://github.com/SailorDave17/race-timer/issues/13), Tier 2 unbuilt |
 | Display renders upside down | Countdown unreadable | **Gap** — [#139](https://github.com/SailorDave17/race-timer/issues/139) / [#147](https://github.com/SailorDave17/race-timer/issues/147) |
-| Snapshot lost to an `apply()` race | Unmeasured | **Gap, unquantified** |
+| Snapshot lost to an `apply()` race | Unmeasured | **Gap, unquantified** — [#151](https://github.com/SailorDave17/race-timer/issues/151) |
 
 One line is worth pulling out because it is counter-intuitive: **a cue deferred by doze is late, not
 lost.** `tick()` drains every cue whose time has passed, in order, so a watch that sleeps through two
@@ -256,11 +256,14 @@ from what shipped, not recovered from what was decided.
 | Haptic missed — under DND | **In scope, not done** | Different from the above: the app *causes* it by not declaring attributes. Tracked as #144 |
 | Cues silent — DND | **In scope, not done** | The refusal is already observed; only the warning is missing. Tracked as #96 |
 | Lost sequence position | **Recoverable in-MVP — done** | Sync is the re-anchor gesture #24 hypothesised, and it shipped |
-| Lost position by more than 30 s | **Proposed: out of scope** | Beyond half a minute the sailor should stop and restart the sequence against the committee rather than nudge a wrong anchor. **No issue filed** — file one if this should instead warn |
+| Lost position by more than 30 s | **Proposed: out of scope** | Beyond half a minute the sailor should stop and restart the sequence against the committee rather than nudge a wrong anchor. Now [#150](https://github.com/SailorDave17/race-timer/issues/150), which exists to decide this rather than to implement the proposal |
 | Display unreadable | **In scope, not done** | Not enumerated by #24. Tracked as #139 / #147 |
 
-Two of these have no issue behind them and would need one if accepted as in-scope: the >30 s
-mis-anchor, and the `apply()` write window.
+Two of these had no issue behind them when this document was written. The owner accepted both as
+in-scope on 2026-08-10 and they are now filed: the >30 s mis-anchor is
+[#150](https://github.com/SailorDave17/race-timer/issues/150), and the `apply()` write window is
+[#151](https://github.com/SailorDave17/race-timer/issues/151). Neither prejudges the outcome — #150's
+first criterion is a decision, and #151's is a measurement.
 
 ---
 
@@ -317,10 +320,12 @@ and off the issues that shipped the behaviour — not recovered from the spike.
   reasonably conclude, not what was decided.
 - **The `apply()` write window is unquantified.** It is listed as a gap on the strength of #9 having
   asked the question, not on the strength of anyone having answered it.
+  [#151](https://github.com/SailorDave17/race-timer/issues/151) is where it gets measured.
 
 ---
 
 Source: this repo's code as of the `develop` branch, plus issues #24, #9, #10, #22, #57, #87, #88,
 #89, #96, #102, #126, #144, and `docs/message-surface.md` / `docs/timing-accuracy.md`.
 Owner: SailorDave17.
-Last reviewed: 2026-08-10 (#120 — first capture of the #24 result).
+Last reviewed: 2026-08-10 (#120 — first capture of the #24 result; #150 and #151 filed against the
+two untracked gaps the same day).
