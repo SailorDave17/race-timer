@@ -200,7 +200,9 @@ Those first two are exactly what CI enforces on every pull request — see
 > Wear OS virtual device.
 
 Deploying to a real watch — pairing over adb-over-Wi-Fi, and confirming which APK actually landed —
-is in [`docs/watch-setup.md`](docs/watch-setup.md).
+is in [`docs/watch-setup.md`](docs/watch-setup.md). Proving that a race killed mid-sequence comes back
+— the force-stop procedure, the four scenarios it splits into, and what each run measured — is in
+[`docs/process-kill-test.md`](docs/process-kill-test.md).
 
 ## Tech stack
 
