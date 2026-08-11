@@ -7,8 +7,13 @@ are deliberately absent from this file — fingerprints are public information, 
 
 Play App Signing is mandatory for new apps: Google holds the app signing key, and this repo holds an
 **upload key** used only to sign bundles for upload. Losing the upload key is recoverable through
-Google support; it is still a bad afternoon, so the keystore and its password are backed up off the
-development machine.
+Google support; it is still a bad afternoon, so the keystore **and its passwords** are backed up off
+the development machine — separately. See [Recovering the upload key](#recovering-the-upload-key) for
+where each lives and how to prove the pair still works.
+
+*(This paragraph claimed both were backed up from 2026-08-05. Only the `.jks` was — the passwords
+existed solely in the local `keystore.properties`, which is why #133 exists. Corrected 2026-08-09
+when the backup was made real.)*
 
 ## The upload key
 
@@ -24,6 +29,59 @@ development machine.
   This answers "is this the build I think it is?" later:
   `keytool -printcert -jarfile wear/build/outputs/bundle/release/wear-release.aab` must show this
   fingerprint on any bundle headed for Play.
+
+## Recovering the upload key
+
+The key is two secrets, not one: the `.jks` file and the passwords that open it. **Either alone is
+useless**, so they are stored apart and both are recorded here — locations only, never values.
+
+| Part | Where it lives |
+|---|---|
+| `race-timer-upload.jks` | Google Drive, folder [Mad Cow Race Timer](https://drive.google.com/drive/folders/1HLYtEgicScvnHuLq-wsLOfqVdb5PJYlB) → [`race-timer-upload.jks`](https://drive.google.com/file/d/1R77O8-2tLyVBQNoWt-vXiT9NmIdeD_SO/view). 4,296 bytes. Owner-only; no link sharing. |
+| Store password and key password | **Google Password Manager**, under the entry `race-timer upload keystore`. Reachable from Chrome on any signed-in machine, or passwords.google.com. |
+| Certificate fingerprint | This file, above. Public information — it is the check, not a secret. |
+
+**File SHA-256**, for proving a restored copy is the original:
+
+```
+A581EB6B0D32B967F6E0BFBC56D560FEF30D8DE5FE74DE16A88DC4041876216B
+```
+
+```bash
+sha256sum race-timer-upload.jks                     # Git Bash
+Get-FileHash race-timer-upload.jks -Algorithm SHA256   # PowerShell
+```
+
+### The caveat that keeps this honest
+
+Drive and Google Password Manager are **the same Google account**. That satisfies the requirement
+that the passwords be durable, off this laptop, and stored separately from the `.jks` — but it is
+**one failure domain, not two**. An account lockout or compromise reaches both halves at once.
+
+This is an accepted trade, not an oversight: recovery from a lost upload key is a Google support
+ticket rather than a dead end, and the same account already holds the Play developer identity, so
+losing it is a larger problem than losing the key. If that stops being true — a second developer, or
+a move to a paid publisher account — move the passwords to a provider outside Google.
+
+### Restoring, step by step
+
+1. Download `race-timer-upload.jks` from the Drive folder above to `C:/Users/HSCCo/keys/`.
+2. Confirm the hash matches the SHA-256 above. **Do this before anything else** — a truncated or
+   wrong-file download otherwise surfaces as a confusing password failure.
+3. Retrieve both passwords from Google Password Manager.
+4. Recreate the gitignored `keystore.properties` at the repo root, in the shape shown below.
+5. `./gradlew :wear:bundleRelease :wear:assembleRelease`
+6. Prove the signature two ways: `keytool -printcert -jarfile` must print the fingerprint recorded
+   above, and the APK must be `wear-release.apk` rather than `wear-release-unsigned.apk`.
+
+**Steps 1–2 have been executed; steps 3–6 have not.** On 2026-08-09 the `.jks` was restored from the
+Drive copy into an empty `C:/Users/HSCCo/keys/` and its SHA-256 confirmed against the value above.
+The passwords were **not** retrieved, so the keystore has never been opened and no signed bundle has
+been produced from it — the last signed artefact this repo can point at predates the loss.
+
+**Until steps 3–6 run, this is a written restore path, not a walked one**, and that is exactly the
+state #133 was filed to end. Finish it before the first Play upload (#79), after which a lost key
+costs a Google support ticket instead of an afternoon.
 
 ## Local signing config
 
