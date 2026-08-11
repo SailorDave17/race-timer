@@ -330,6 +330,53 @@ device even without a lock. **That is a battery observation, not a correctness o
 opposite of a reason to hold a lock here: the state is already cheap on timing and already unbounded
 in length, which is exactly why #59 let it sleep.
 
+## Battery saver and the battery-optimisation whitelist (#13)
+
+Everything above is about **doze** — the platform suspending an idle device. This section is about
+the two adjacent things a sailor can turn on deliberately, which #13 asked to have written down
+because they are the ones that could kill the service rather than merely delay a cue.
+
+### What the app does, stated plainly
+
+| | |
+|---|---|
+| Requests exemption from battery optimisation | **No** |
+| Detects battery saver | **Yes** — `PowerManager.isPowerSaveMode`, read on the pre-start screen |
+| Warns about battery saver | **Yes** — Tier 3, "Battery saver — sound may be cut" |
+| Blocks the start under battery saver | **No** — deliberate, see below |
+| Survives a refused foreground service | **Yes** — Tier 2 blocks the start rather than running a race the platform will kill |
+
+### Why no `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`
+
+The app does not ask to be whitelisted, and that is a decision rather than an omission. It is a
+sensitive permission Play scrutinises, the app already holds a `PARTIAL_WAKE_LOCK` for the length of
+a race (#126) which is the mechanism that actually keeps cue dispatch on time, and a foreground
+service is not subject to the standby buckets the whitelist relaxes. Asking for it would trade a
+Play-review conversation for no measured timing benefit.
+
+**If that turns out to be wrong, the symptom to look for is in the tables above**: `sleptMs` climbing
+into the hundreds or thousands *during* a race on an unplugged watch, with the wake lock still held.
+That would be the whitelist mattering, and nothing here has measured it.
+
+### Why battery saver warns rather than blocks
+
+Battery saver is a state the sailor turned on, usually because the watch is low — which is also
+exactly when they are least able to do anything about it. Blocking the start would refuse a race on
+a condition that has **never been measured here to kill a cue**, on the one screen whose purpose is
+starting races. So it is a Tier 3 caveat, and the copy is hedged — "may be cut", not "will be cut" —
+because the honest state of knowledge is that saver mode *can* throttle the audio path and nobody
+has measured whether it does on this watch.
+
+Promoting it to Tier 2 needs a measurement first, not an argument. `docs/message-surface.md` records
+the same decision from the message surface's side.
+
+### What is genuinely not covered
+
+**A low-battery watch has not been tested.** Every measurement in this file was taken on a watch on
+its charger, which is the condition under which a watch dozes least — the bias runs toward a clean
+result. A watch at 10 % on a sailor's wrist is the harsher case and remains unmeasured; #16 is the
+battery baseline that would reach it.
+
 ## Limits of these measurements
 
 - **One device, one OS version.** SM-R925U on Wear OS 6 (SDK 36). Doze aggressiveness is

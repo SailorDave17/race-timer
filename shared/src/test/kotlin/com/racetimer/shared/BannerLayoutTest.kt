@@ -73,4 +73,39 @@ class BannerLayoutTest {
         // three that would foul the Start button below.
         assertTrue(BANNER_MAX_WIDTH_FRACTION > 0.8f)
     }
+
+    // --- Tier 3 status line (#13) ---------------------------------------------------------------
+
+    @Test fun `the status line fits the round screen at the height it actually sits`() {
+        assertTrue(
+            bannerFitsRoundScreen(
+                topFraction = STATUS_LINE_TOP_FRACTION,
+                widthFraction = STATUS_LINE_MAX_WIDTH_FRACTION,
+                heightFraction = STATUS_LINE_HEIGHT_BUDGET_FRACTION,
+            )
+        )
+    }
+
+    @Test fun `the status line width that shipped before the cap did not fit`() {
+        // The negative control, and the measurement that justified the constant. #13's notification
+        // warning drew its scrim across 390 px of a 450 px screen (0.87) starting 40 px down; the
+        // visible chord there is 256 px, so the plate's top corners were outside the circle.
+        // Without this assertion the test above passes just as happily against a cap of 0.9.
+        assertFalse(
+            "an uncapped status line must not fit, or the cap above proves nothing",
+            bannerFitsRoundScreen(
+                topFraction = STATUS_LINE_TOP_FRACTION,
+                widthFraction = 0.87f,
+                heightFraction = STATUS_LINE_HEIGHT_BUDGET_FRACTION,
+            )
+        )
+    }
+
+    @Test fun `the status line is capped harder than the banner because it sits higher`() {
+        // The relationship is the point, not the two numbers. A circle is widest at its equator, so
+        // a surface nearer the top has less room — and anyone widening the status line to match the
+        // banner "for consistency" is undoing a measurement.
+        assertTrue(STATUS_LINE_TOP_FRACTION < BANNER_TOP_FRACTION)
+        assertTrue(STATUS_LINE_MAX_WIDTH_FRACTION < BANNER_MAX_WIDTH_FRACTION)
+    }
 }

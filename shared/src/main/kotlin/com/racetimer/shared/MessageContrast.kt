@@ -78,8 +78,44 @@ const val TIER3_TEXT_ARGB = 0xFFFFC107L
  */
 const val TIER3_SCRIM_ARGB = 0xFF3A2A00L
 
+/**
+ * Tier 2 blocking-notice text (#13). The same amber as Tier 1, and deliberately not red.
+ *
+ * Red is spoken for twice over — it is the final-ten background and it is this panel's own border —
+ * so red text here would be red-on-red at the exact moment it had to be read. The border carries
+ * "this is blocking"; the text only has to be legible.
+ */
+const val TIER2_TEXT_ARGB = 0xFFFFB74DL
+
+/**
+ * Tier 2 scrim: 90 % black, and the only **translucent** scrim left in the app (#13).
+ *
+ * Tiers 1 and 3 went opaque in #102 so their contrast collapsed to a single case. This one keeps
+ * 10 % of the background on purpose: the blocking panel covers the Start button on a screen whose
+ * background is the sailor's only cue to how much time is left, and a fully opaque plate reads as a
+ * separate surface floating over a dead screen. The cost is four contrast cases instead of one,
+ * which is affordable because they span 11.38–11.95 : 1 — the whole range clears the bar with room
+ * that Tier 3 bare-on-amber never had. `compositeOver` is what makes that claim checkable, and
+ * `MessageContrastTest` checks it on every background rather than on the one that looks worst.
+ */
+const val TIER2_SCRIM_ARGB = 0xE6000000L
+
+/**
+ * Tier 2 border, 1 dp. A UI-component boundary rather than text, so its bar is WCAG's non-text
+ * 3 : 1 ([WCAG_NON_TEXT_MIN]) and not the 4.5 : 1 the copy has to clear. It lands at 3.96 : 1 on
+ * the worst background, which passes the bar it is actually held to and fails the other — worth
+ * stating, because reading the wrong bar off this file would look like a defect.
+ */
+const val TIER2_BORDER_ARGB = 0xFFD32F2FL
+
 /** WCAG 2.1 AA minimum for normal-size text. Both tiers are 11 sp / `caption2`, so this is the bar. */
 const val WCAG_NORMAL_TEXT_MIN = 4.5
+
+/**
+ * WCAG 2.1 AA minimum for non-text elements — borders, icons, anything whose job is to be *seen*
+ * rather than read (success criterion 1.4.11). The Tier 2 border is the only thing held to it.
+ */
+const val WCAG_NON_TEXT_MIN = 3.0
 
 // --- The arithmetic ---------------------------------------------------------
 
@@ -108,9 +144,11 @@ fun contrastRatio(a: Long, b: Long): Double {
 /**
  * Composite [fgArgb] over [bgArgb] using the foreground's own alpha, returning an opaque colour.
  *
- * Kept even though both scrims are currently opaque — it is what makes an alpha change *measurable*
- * rather than merely visible, and the one time this repo shipped a translucent scrim it cost the
- * amber state 2 : 1 of contrast without anything reporting it.
+ * Load-bearing since #13. It was kept through #123 on the argument that it makes an alpha change
+ * *measurable* rather than merely visible — the one time this repo shipped a translucent scrim it
+ * cost the amber state 2 : 1 of contrast without anything reporting it. Tier 2's 90 % scrim is now
+ * an actual caller rather than a hypothetical one, so this is the only reason its four backgrounds
+ * can be told apart at all.
  */
 fun compositeOver(fgArgb: Long, bgArgb: Long): Long {
     val alpha = channel(fgArgb, 24) / 255.0

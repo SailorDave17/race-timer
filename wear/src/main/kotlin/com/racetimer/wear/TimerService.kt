@@ -178,6 +178,30 @@ class TimerService : Service() {
         private set
 
     /**
+     * Whether the platform refused to let this service enter the foreground (#13).
+     *
+     * The one readiness condition with no pre-flight check behind it — there is no API answering
+     * "would a foreground service be allowed right now?", so the only honest way to know is to have
+     * been refused. Latched rather than sampled: it describes an attempt that already failed, and
+     * it survives the teardown that failure triggers so the activity can still find it and put the
+     * Tier 2 panel up. Cleared by the next attempt that succeeds.
+     */
+    @Volatile var foregroundStartRefused = false
+        private set
+
+    /**
+     * Whether the cue audio path is unavailable on this watch (#13), or null before it is known.
+     *
+     * Null rather than false while [tone] is still uninitialised. The distinction matters: `false`
+     * is a claim that the audio stack answered and was healthy, and a `lateinit` that has not run
+     * yet cannot support it. The activity treats null as "nothing to say", which keeps a warning
+     * off the screen during the window before [onCreate] has finished rather than asserting a state
+     * nothing measured — the same "observation, never prediction" rule [cueVolumeRefused] follows.
+     */
+    val audioUnavailable: Boolean?
+        get() = if (this::tone.isInitialized) tone.audioUnavailable else null
+
+    /**
      * Runs once the gun cue has finished sounding and "GO!" has had its [GUN_LINGER_MS] on screen.
      *
      * [TimerEngine.reset] is what puts the screen back to the pre-race countdown. The timer face has
@@ -665,10 +689,46 @@ class TimerService : Service() {
             formatCountdown(engine.remainingMs)
         }
 
+    /**
+     * Enter the foreground, or tear the race down rather than run one that cannot survive (#13).
+     *
+     * ### Why this is a failure worth a whole branch
+     *
+     * A race-timer that loses its foreground service loses the race the moment the screen sleeps,
+     * which is the one thing this app exists to prevent. Before #13 the call was bare: a refusal
+     * threw out of `onStartCommand`, and what the sailor saw was a countdown that had *already
+     * started* — [engine.tick] runs several lines above — sitting on a screen with a Stop button,
+     * counting down, that the platform would kill without notice. #13's third criterion is that the
+     * sequence "does not silently start", and the silence was structural rather than a missing
+     * message: the engine was anchored before the thing that could refuse was ever called.
+     *
+     * ### So it aborts rather than annotating
+     *
+     * [engine.reset] and [stopForegroundAndCleanup] put the watch back exactly where Stop would —
+     * wake lock released, borrowed volume repaid, snapshot cleared — so the sailor is returned to a
+     * pre-start screen rather than left holding a race with no service under it. The latched
+     * [foregroundStartRefused] is what puts the Tier 2 panel in the Start button's place, and it is
+     * deliberately *not* cleared here: the condition outlives the attempt, and a flag cleared on
+     * teardown would blink the panel away half a second after it appeared.
+     *
+     * `RuntimeException` covers both refusals the platform actually throws —
+     * `ForegroundServiceStartNotAllowedException` (an `IllegalStateException`, Android 12+) and the
+     * `SecurityException` Android 14+ raises when the declared FGS type is not permitted. Catching
+     * the pair by their shared supertype follows [ToneManager]'s idiom for the same reason: the
+     * exact subclass varies by API level and the response does not.
+     */
     private fun startForegroundWithNotification() {
         val displayText = currentDisplayText()
         postedNotificationText = displayText
-        startForeground(RaceTimerApplication.TIMER_NOTIFICATION_ID, buildNotification(displayText))
+        try {
+            startForeground(RaceTimerApplication.TIMER_NOTIFICATION_ID, buildNotification(displayText))
+            foregroundStartRefused = false
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "Foreground service refused; aborting the race rather than running it blind", e)
+            foregroundStartRefused = true
+            engine.reset()
+            stopForegroundAndCleanup()
+        }
     }
 
     /**

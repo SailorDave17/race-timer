@@ -1,16 +1,25 @@
 package com.racetimer.wear
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
+import android.os.VibratorManager
+import android.provider.Settings
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -19,10 +28,13 @@ import androidx.wear.compose.navigation.composable as wearComposable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
+import com.racetimer.shared.DeviceReadiness
 import com.racetimer.shared.LaunchNotice
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
+import com.racetimer.shared.StartNotice
+import com.racetimer.shared.StartRemedy
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
@@ -36,6 +48,7 @@ import com.racetimer.shared.leadInBaseId
 import com.racetimer.shared.leadInBaseOf
 import com.racetimer.shared.offersLeadIn
 import com.racetimer.shared.resumeOfferRemainingMs
+import com.racetimer.shared.startNotice
 import com.racetimer.shared.withLeadIn
 import com.racetimer.wear.ui.CustomDurationScreen
 import com.racetimer.wear.ui.DEFAULT_CUSTOM_MINUTES
@@ -74,6 +87,11 @@ class MainActivity : ComponentActivity() {
             // has already run in onCreate — it is what puts the launch's sequence in
             // [selectedSequence] — but binding is asynchronous and there was no service to tell.
             lb.service.warmUpCues(selectedSequence)
+            // Unthrottled, and it has to be: binding is the moment the two service-side conditions
+            // become readable at all, and until it happens [readDeviceReadiness] reports them as
+            // "nothing to say". The throttle inside refreshUiState would otherwise hold the first
+            // real answer back by up to a second (#13).
+            refreshStartNotice()
             refreshUiState()
         }
 
@@ -127,6 +145,37 @@ class MainActivity : ComponentActivity() {
      * until the sailor acts, because the thing it warns about is the very next tap.
      */
     private var uiDiscardWarning by mutableStateOf<String?>(null)
+
+    /**
+     * The one thing worth telling the sailor about the state of this watch, or null (#13).
+     *
+     * The *judgement* is [startNotice] in `shared/`; this holds only its answer. Which tier it
+     * lands on decides whether it appears as a Tier 3 line under the sequence name or as a Tier 2
+     * panel standing where the Start button would be — and `TimerScreen` makes that second case
+     * structural rather than conditional by rendering the panel *in place of* the button, inside
+     * the branch that draws it. Blocking therefore cannot reach a running race by construction,
+     * which is rule 3 of `docs/message-surface.md` enforced by geometry rather than by a flag.
+     */
+    private var uiStartNotice by mutableStateOf<StartNotice?>(null)
+
+    /**
+     * Set once the sailor has tapped "Start silent" this session, demoting the audio block (#13).
+     *
+     * Per-process rather than persisted, and that is the conservative direction: a watch whose
+     * audio stack recovers between launches should be offered its cues back rather than silently
+     * inheriting last week's decision to go without them.
+     */
+    private var silentStartAccepted = false
+
+    /**
+     * True once this process has asked for `POST_NOTIFICATIONS`, so it asks at most once (#13 AC1).
+     *
+     * The system stops showing the dialog after a permanent denial and the launcher then returns
+     * "denied" immediately, so re-asking is harmless — but asking once and then *saying something*
+     * is what the criterion requires, and the Tier 3 line with its Settings remedy is the half that
+     * survives a dialog the platform will never show again.
+     */
+    private var notificationPermissionRequested = false
 
     /**
      * True when the selected sequence may be armed with a lead-in, so the pre-start screen offers
@@ -290,6 +339,8 @@ class MainActivity : ComponentActivity() {
                             discardWarning = uiDiscardWarning,
                             leadInOffered = uiLeadInOffered,
                             inLeadIn = uiInLeadIn,
+                            startNotice = uiStartNotice,
+                            onRemedy = { handleRemedy(it) },
                             onStart = { handleStart() },
                             onStartOver = { handleStartOver() },
                             onLeadIn = { navController.navigate(NAV_LEAD_IN) },
@@ -359,6 +410,13 @@ class MainActivity : ComponentActivity() {
         // Bind to the service (start it if already running)
         val serviceIntent = Intent(this, TimerService::class.java)
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+        // Ahead of the refresh below, so a grant arriving here is reflected on the first frame
+        // rather than a second later. Both are here rather than in onCreate because this is the
+        // callback a *return from Settings* comes through — which is exactly the trip the Tier 2
+        // and Tier 3 remedies send the sailor on, and a notice that survived the fix would be worse
+        // than one that never appeared (#13).
+        requestNotificationPermissionOnce()
+        refreshStartNotice()
         uiHandler.post(uiRefreshRunnable)
     }
 
@@ -528,6 +586,152 @@ class MainActivity : ComponentActivity() {
         uiDiscardWarning = null
     }
 
+    // --- Device readiness (#13) -----------------------------------------------
+
+    /**
+     * True once `startForegroundService` itself threw, as opposed to the service being refused
+     * after it started.
+     *
+     * There are two distinct ways this fails and both have to be caught, because they happen on
+     * different sides of a process boundary. The platform can refuse to *deliver* the intent — a
+     * background-start restriction, which throws here in the activity — or it can deliver it and
+     * then refuse the `startForeground` call inside the service, which is
+     * [TimerService.foregroundStartRefused]. Only catching the second would leave the first
+     * throwing out of a tap handler and crashing the app, which is the loudest possible way to fail
+     * silently: a crash tells the sailor nothing about why their race would not start.
+     */
+    private var foregroundStartRefusedHere = false
+
+    /** Monotonic reading of the last [readDeviceReadiness], for [refreshStartNoticeThrottled]. */
+    private var lastReadinessReadMs = Long.MIN_VALUE
+
+    /**
+     * The permission prompt for the ongoing-activity notification (#13 AC1).
+     *
+     * Registered unconditionally at construction because `registerForActivityResult` must be —
+     * doing it inside a `Build.VERSION` branch throws `LifecycleOwners must call register before
+     * they are STARTED`. The *launch* is what is guarded by API level, in
+     * [requestNotificationPermissionOnce].
+     */
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            // Whichever way it was answered, the readiness picture just changed. Recomputing here
+            // rather than trusting the boolean handed back keeps one reader of the real permission
+            // state — the callback's argument and `checkSelfPermission` have disagreed before on
+            // Android when a grant arrives while the activity is stopped.
+            refreshStartNotice()
+        }
+
+    /**
+     * Ask for `POST_NOTIFICATIONS` at most once per process, and only where it exists.
+     *
+     * The permission is Android 13+; this app's minSdk is 30, so on an older watch there is nothing
+     * to request and nothing to warn about — the notification posts regardless.
+     */
+    private fun requestNotificationPermissionOnce() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (notificationPermissionRequested) return
+        if (notificationsGranted()) return
+        notificationPermissionRequested = true
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun notificationsGranted(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Read what this watch will actually do, as five observations for `shared/` to judge (#13).
+     *
+     * Read fresh on every refresh rather than cached, for the reason [TimerService.currentCueStream]
+     * gives about its own inputs: every one of these is something the sailor can change between
+     * opening the app and tapping Start. Putting the watch into battery saver on the walk down to
+     * the boat is the ordinary case, not an edge one.
+     *
+     * The two service-side conditions read null-safely because the activity out-lives the binding on
+     * both ends. An unbound service contributes *nothing* rather than a cheerful `false`: claiming
+     * the audio stack is healthy on the strength of a service that has not started yet is precisely
+     * the "predicting instead of observing" mistake #96 recorded.
+     */
+    private fun readDeviceReadiness(): DeviceReadiness {
+        val service = timerService
+        return DeviceReadiness(
+            foregroundServiceRefused =
+                foregroundStartRefusedHere || service?.foregroundStartRefused == true,
+            audioUnavailable = service?.audioUnavailable == true,
+            notificationsBlocked = !notificationsGranted(),
+            vibratorAbsent = !HapticManager.hasVibrator(this),
+            batterySaverActive =
+                getSystemService(PowerManager::class.java)?.isPowerSaveMode == true,
+        )
+    }
+
+    /** Recompute the notice on screen from the current state of the watch. */
+    private fun refreshStartNotice() {
+        lastReadinessReadMs = SystemMonotonicClock.elapsedMs()
+        uiStartNotice = startNotice(readDeviceReadiness(), silentStartAccepted)
+    }
+
+    /**
+     * Recompute the notice, but no more often than [READINESS_REFRESH_MS].
+     *
+     * [readDeviceReadiness] costs three binder calls — the permission check, the power-save read and
+     * the vibrator lookup — and the pre-start refresh it hangs off runs at [UI_FALLBACK_REFRESH_MS],
+     * ten times a second. Recomputing on every pass would spend 30 binder calls a second forever on
+     * a screen whose answer changes at most when the sailor walks into Settings and back, which is a
+     * cost #16's battery baseline would have to explain later.
+     *
+     * A second is the right granularity for the one case the event hooks miss — battery saver
+     * switching itself on at a low-battery threshold while the sailor is looking at the screen.
+     * Everything else ([onResume], the service binding, a start attempt, the permission result)
+     * recomputes immediately through [refreshStartNotice].
+     */
+    private fun refreshStartNoticeThrottled() {
+        val now = SystemMonotonicClock.elapsedMs()
+        if (now - lastReadinessReadMs < READINESS_REFRESH_MS) return
+        refreshStartNotice()
+    }
+
+    /**
+     * Act on the button a Tier 2 panel or a Tier 3 line is offering.
+     *
+     * Each settings route is wrapped: an OEM watch can ship without the activity these intents name,
+     * and an `ActivityNotFoundException` thrown out of a tap on the one control a blocked screen has
+     * would crash the app at the exact moment the sailor was trying to fix it.
+     */
+    private fun handleRemedy(remedy: StartRemedy) {
+        when (remedy) {
+            StartRemedy.NONE -> Unit
+            StartRemedy.START_SILENT -> {
+                silentStartAccepted = true
+                refreshStartNotice()
+                handleStart()
+            }
+            StartRemedy.APP_SETTINGS -> openSettings(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", packageName, null)
+                },
+            )
+            StartRemedy.NOTIFICATION_SETTINGS -> openSettings(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                },
+            )
+        }
+    }
+
+    private fun openSettings(intent: Intent) {
+        try {
+            startActivity(intent)
+        } catch (e: RuntimeException) {
+            // ActivityNotFoundException, and on a locked-down watch a SecurityException. Neither is
+            // worth crashing over: the notice stays on screen saying what is wrong, which is still
+            // more than the sailor had before #13.
+            Log.w(TAG, "No settings screen for ${intent.action}", e)
+        }
+    }
+
     // --- User actions ---------------------------------------------------------
 
     /**
@@ -542,7 +746,37 @@ class MainActivity : ComponentActivity() {
         // Answered, not discarded: the preview keeps the saved race's clock on screen until the
         // engine has it, so the number never jumps. See [resumeAnswered].
         resumeAnswered = true
-        startForegroundService(TimerService.startIntent(this, selectedSequence.id))
+        armRace(TimerService.startIntent(this, selectedSequence.id))
+    }
+
+    /**
+     * Hand a start intent to the service, or put the Tier 2 panel up instead of crashing (#13).
+     *
+     * Every one of the three start paths goes through here, which is the point: before #13 each
+     * called [startForegroundService] directly, so a background-start refusal threw out of whichever
+     * tap handler happened to be the one the sailor used. Routing them through one method means the
+     * failure is handled once and cannot be half-adopted — a second start path added later inherits
+     * it rather than quietly reintroducing the crash.
+     *
+     * On success the latch is cleared. That matters more than it looks: the refusal condition is
+     * usually something the sailor has just gone and fixed in Settings, and a panel that stayed up
+     * after the remedy worked would be indistinguishable from one that had not.
+     */
+    private fun armRace(intent: Intent) {
+        try {
+            startForegroundService(intent)
+            foregroundStartRefusedHere = false
+        } catch (e: RuntimeException) {
+            // ForegroundServiceStartNotAllowedException (Android 12+) and the SecurityException an
+            // Android 14+ watch raises for a disallowed FGS type. Same response either way, so they
+            // are caught by the supertype they share — the idiom ToneManager already uses.
+            Log.e(TAG, "Foreground service refused at dispatch; blocking the start", e)
+            foregroundStartRefusedHere = true
+            // The tap is spent and no race is coming, so give the pre-start screen its controls
+            // back rather than leaving the resume offer answered and the screen with neither.
+            resumeAnswered = false
+        }
+        refreshStartNotice()
     }
 
     /**
@@ -556,7 +790,7 @@ class MainActivity : ComponentActivity() {
         // Discarded outright, unlike Resume: the sequence's full duration *is* the right preview now,
         // and it is what the fresh race will start from, so there is no jump to avoid.
         clearResumeOffer()
-        startForegroundService(TimerService.startIntent(this, selectedSequence.id, freshStart = true))
+        armRace(TimerService.startIntent(this, selectedSequence.id, freshStart = true))
     }
 
     /**
@@ -579,7 +813,7 @@ class MainActivity : ComponentActivity() {
         clearResumeOffer()
         selectedSequence = armed
         uiRemainingMs = armed.totalMs
-        startForegroundService(TimerService.startIntent(this, armed.id, freshStart = true))
+        armRace(TimerService.startIntent(this, armed.id, freshStart = true))
     }
 
     private fun handleStop() {
@@ -715,11 +949,19 @@ class MainActivity : ComponentActivity() {
             // Suppressed once the sailor has answered: they have committed, the race is already being
             // discarded, and a warning about it is no longer something they can act on.
             uiDiscardWarning = if (resumeAnswered) null else discardWarning()
+            // The pre-start screen is where every one of these five conditions is both true and
+            // actionable, so this is the only branch that reads them (#13).
+            refreshStartNoticeThrottled()
             // Every way a sequence ends — Stop, the post-gun teardown, Done — lands here, so this is
             // also the single point at which the brightness override is handed back (#65 AC 3).
             applyDisplayPolicy(TimerState.IDLE)
             return
         }
+        // A race is under way, so nothing here is actionable and rule 3 of docs/message-surface.md
+        // forbids taking the screen. The panel is already unreachable by construction — it renders
+        // inside the idle button branch — and clearing the state as well keeps a stale Tier 3 line
+        // from riding along under the sequence name for the length of a race (#13).
+        uiStartNotice = null
         // A race the engine is actually running outranks a saved one: it has already been answered.
         clearResumeOffer()
         // And the lead-in that armed it was a per-race choice, spent the moment the engine took the
@@ -754,6 +996,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val TAG = "MainActivity"
         private const val NAV_TIMER = "timer"
         private const val NAV_PICKER = "picker"
         private const val NAV_CUSTOM = "custom"
@@ -768,5 +1011,8 @@ class MainActivity : ComponentActivity() {
          */
         private const val UI_FALLBACK_REFRESH_MS = 100L
         private const val SYNC_LABEL_DURATION_MS = 2_000L
+
+        /** How often the pre-start screen re-reads the watch's readiness. See the throttle. */
+        private const val READINESS_REFRESH_MS = 1_000L
     }
 }
