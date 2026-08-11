@@ -179,6 +179,19 @@ drift, are made assertable.
   `settings.gradle.kts` resolves via the Foojay plugin rather than requiring a local install
 - Android SDK with a Wear OS emulator image (API 30 / Wear OS 3.5+) and Build-tools 34
 
+### After cloning
+
+```bash
+git config core.hooksPath githooks   # then verify:
+git config core.hooksPath            # must print: githooks
+```
+
+`core.hooksPath` lives in `.git/config`, which is **not tracked**, so a fresh clone runs none of the
+push protection in [`githooks/`](githooks/) — the branch gate and the pre-push check list both. An
+unset value produces no error and no output: every push simply succeeds, exactly as it would with the
+hook working and the checks passing. **Verify by printing the config, never by pushing**, because a
+successful push is what both states look like.
+
 ### Commands
 
 ```bash
@@ -188,12 +201,21 @@ drift, are made assertable.
 # Build the Wear OS debug APK
 ./gradlew :wear:assembleDebug
 
+# Build the release bundle — runs R8, so it catches shrinker breakage the debug build cannot
+./gradlew :wear:bundleRelease
+
 # Install on a connected Wear OS device / emulator
 ./gradlew :wear:installDebug
 ```
 
-Those first two are exactly what CI enforces on every pull request — see
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+Those first three are exactly what CI enforces on every pull request — see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml). `bundleRelease` joined the gate in #129 so
+that R8 runs on every push rather than only when somebody remembered.
+
+It behaves differently here than on CI, which matters when you run the gate locally: this machine has
+a `keystore.properties` and therefore signs, while CI has none and builds unsigned — see
+[`docs/release-signing.md`](docs/release-signing.md). A `bundleRelease` failure here is not
+automatically a CI failure.
 
 > **VS Code users**: install the *Gradle for Java* and *Kotlin* extensions and use the checked-in
 > `race-timer.code-workspace`. For the emulator, launch Android Studio's AVD Manager once to create a
