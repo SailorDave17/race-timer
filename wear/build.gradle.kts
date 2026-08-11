@@ -5,14 +5,60 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
-// Release signing reads a gitignored keystore.properties at the repo root. CI has no such
-// file and must still configure, so the release signingConfig only exists when the file does —
-// an unsigned release build there is fine, since CI never builds release (#71).
-val keystorePropsFile = rootProject.file("keystore.properties")
+// Release signing reads a gitignored keystore.properties at the repo root. CI has no such file and
+// must still configure, so the release signingConfig only exists when the file does. CI *does* build
+// release since #129 — it builds it unsigned, which is the point of that gate (R8 runs on every
+// push); producing an uploadable bundle stays local-only by decision (#71).
+//
+// The path is a property only so the guard below can be proven without going near a real credential
+// file. Nothing in normal use passes it, and it defaults to the documented location.
+val keystorePropsFile = rootProject.file(
+    providers.gradleProperty("keystorePropertiesFile").getOrElse("keystore.properties")
+)
 val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) {
         keystorePropsFile.inputStream().use { load(it) }
     }
+}
+
+// Refuse a half-filled keystore.properties instead of signing with it (#156).
+//
+// The state this guards is not hypothetical: the file shipped as a template with REPLACE_ME on both
+// password lines and sat that way for two days. Because the file *exists*, the signingConfig is
+// created and the release path is taken, so the build dies deep inside signReleaseBundle with
+// `keystore password was incorrect` — which reads as a wrong password, i.e. as a broken backup,
+// rather than as a setup step nobody finished. It cost a wrong diagnosis before a grep settled it.
+//
+// Configuration-time, not a doFirst on bundleRelease: signReleaseBundle runs *before* that task's
+// actions, so a doFirst there would fire after the confusing failure it exists to replace.
+val signingKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+val unfilledSigningKeys = if (keystorePropsFile.exists()) {
+    signingKeys.filter { key ->
+        val value = keystoreProps.getProperty(key)
+        value.isNullOrBlank() || value.contains("REPLACE_ME")
+    }
+} else {
+    emptyList()
+}
+
+// Scoped to release builds so an unfilled file never blocks :shared:test or a debug build — the
+// machine is only misconfigured for the thing it cannot do. CI has no file at all, so the list is
+// empty there and this can never fire.
+if (unfilledSigningKeys.isNotEmpty() &&
+    gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }
+) {
+    throw GradleException(
+        buildString {
+            appendLine("${keystorePropsFile.name} exists but is not filled in.")
+            appendLine("Unset or still REPLACE_ME: ${unfilledSigningKeys.joinToString(", ")}")
+            appendLine()
+            appendLine("This is a setup step, not a bad keystore. Both passwords take the same value,")
+            appendLine("from Google Password Manager entry race-timer-upload-keystore.com (its username")
+            appendLine("field carries the key alias). See docs/release-signing.md.")
+            appendLine()
+            append("Refusing rather than signing, because the failure it replaces reads as a wrong password.")
+        }
+    )
 }
 
 android {
