@@ -93,33 +93,46 @@ Racing timer — keeps the start-sequence running while the screen is off
 
 ## Maintainer notes — not for Play Console
 
-Every claim above was checked against the tree on 2026-08-01 and **re-checked on 2026-08-09**, after
-PRs #113, #116 and #132 had merged:
+Every claim above was checked against the tree on 2026-08-01, **re-checked on 2026-08-09** after PRs
+#113, #116 and #132 had merged, and **re-checked again on 2026-08-11** after #126, #13 and #72 moved
+`TimerService.kt`:
 
 - `wear/src/main/AndroidManifest.xml` declares exactly `FOREGROUND_SERVICE`,
   `FOREGROUND_SERVICE_SPECIAL_USE`, `WAKE_LOCK`, `POST_NOTIFICATIONS`, `VIBRATE`. No `INTERNET`, no
   location, no body sensors, no boot-completed receiver. The only manifest addition since the first
   check is `uses-feature android.hardware.audio.output required="false"` (from #95/#132) — a feature,
   not a permission, so no claim above is affected.
-- `TimerService.kt` returns `START_NOT_STICKY` (`:555`; see the comment there and the *Foreground
+- `TimerService.kt` returns `START_NOT_STICKY` (`:620`; see the comment there and the *Foreground
   service* section of `CLAUDE.md` for why — a sticky restart arrives with a null intent, matches no
   branch, and `startForeground()` would never run).
-- The wake lock is `PARTIAL_WAKE_LOCK` (`:712`), acquired with `remainingMs + WAKE_LOCK_MARGIN_MS`
-  (`:710`, margin `30_000L` at `:922`) and released in `releaseWakeLock()` (`:717`) on teardown.
-- `OngoingActivity` is built and posted for the life of the service (`:668`).
+- The wake lock is `PARTIAL_WAKE_LOCK` (`:814`), acquired with `remainingMs + WAKE_LOCK_MARGIN_MS`
+  (`:812`, margin `30_000L` at `:1079`) and released in `releaseWakeLock()` (`:819`) on teardown.
+  Since #126 it is re-acquired on `ACTION_SYNC` as well as `ACTION_START` (`:583`, `:554`): a snap
+  re-anchors the gun, and a lock sized at Start protects the race the sailor started rather than the
+  one they now have. Neither claim in the declaration moves — the lock is still sized to the race
+  actually left to run, and still released at teardown.
+- `OngoingActivity` is built and posted for the life of the service (`:769`).
 - The timing claim is deliberately phrased as "a few tens of milliseconds" rather than a hard number.
   The measured figure is **±13 ms** for cue dispatch (hardware-measured, recorded in the cairn repo at
   `memory/projects/race-timer-cue-audio-timing-2026-08-01.md`, down from ±200 ms when cues were polled
-  for every 50 ms), and mid-race cues measure 3–58 ms against their own deadlines. But the **first cue
-  of every race** still misses by **138–297 ms**: the track is paused and flushed after each cue, so
-  that `play()` re-pays `startOutput`. That is **#114**, open — and **#98** stays open until it lands.
-  Quoting ±13 ms to Play would be stating as shipped behaviour something an open bug contradicts.
-  Understate it; the argument does not need the precision, only the fact that sub-second accuracy is
-  the point of the app.
+  for every 50 ms), and mid-race cues measure 3–58 ms against their own deadlines. The **first cue of
+  every race** used to miss by **138–297 ms**, because the track was paused and flushed after each cue
+  and `play()` then re-paid `startOutput`. That was **#114**, and it **closed 2026-08-11**: the first
+  cue now measures **0–2 ms** across four full races, with **#98** closing behind it the same day.
 
-  *Tightening this claim is **#82**'s job, not this document's.* #82 is worded "once #61 and #62
-  close" and both did close — but the hedge outlived them, because #114 replaced their reason rather
-  than removing it. #82 therefore waits on #114, not on its own stated trigger.
+  **The hedge stays anyway, and the reason has changed.** It is no longer that an open bug contradicts
+  the number — it is that ±13 ms is a *median-shaped* figure and a Play declaration is a **bound**.
+  The same #114 run recorded one cue at `lateMs=66` and documented a `queuedMs=10` ceiling for a cue
+  written while a heartbeat chunk is draining. A worst case in the tens of milliseconds is exactly
+  what "a few tens of milliseconds" already says, so the current wording is accurate as written;
+  replacing it with ±13 ms would make it false.
+
+  *Tightening this claim is still **#82**'s job, not this document's* — and #82 is now **startable**,
+  which it was not on 2026-08-09. It is worded "once #61 and #62 close"; both closed long ago, but the
+  hedge outlived them because #114 replaced their reason rather than removing it. #114 has now closed
+  too, so nothing blocks #82 but its own measurement. Note its ACs demand the **worst case** measured
+  on hardware from the **audible cue** — the 66 ms figure above is the candidate bound, not the 0–2 ms
+  headline.
 
 Two notes on strategy:
 
