@@ -192,6 +192,14 @@ Tracked as [#115](https://github.com/SailorDave17/race-timer/issues/115). What w
 is still unknown after five sightings, so the remedy above is a repair and not a prevention — expect
 it to recur.
 
+> **The cause is under investigation, and this section may be developer-only guidance.** Every sighting
+> of this fault was recorded on the development watch, which carries wireless ADB debugging as its
+> normal state, so **it has never been observed on a device with no computer attached**. The owner's
+> assessment (2026-08-10) is that wireless debugging control is the likely cause.
+> [#147](https://github.com/SailorDave17/race-timer/issues/147) runs the missing control arm. If it
+> confirms that, this section becomes a note for people developing against a watch rather than advice
+> for anyone taking one to a regatta — and it will be rewritten as such.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -200,6 +208,6 @@ it to recur.
 | Watch not in `adb devices` after a reboot | Connect address changed | `adb mdns services` to rediscover; pairing itself persists |
 | `ping` fails | Different network, or AP client isolation | Fix the network before touching adb |
 | *No matching toolchains found* | JVM 8 toolchain absent and resolver not applied | Confirm the Foojay plugin block in `settings.gradle.kts` is intact |
-| Watch display is upside down and stays that way off the charger | Device-level rotation stuck; `user_rotation = 2` | Write the setting, then reboot — see [Display stuck upside down](#display-stuck-upside-down). A bare reboot does not clear it |
+| Watch display is upside down and stays that way off the charger | Device-level rotation stuck; `user_rotation = 2`. **Cause under investigation — see [#147](https://github.com/SailorDave17/race-timer/issues/147); it may be wireless-debugging-only** | Write the setting, then reboot — see [Display stuck upside down](#display-stuck-upside-down). A bare reboot does not clear it |
 | Change seems to have no effect on the watch | Stale APK on device | Compare hashes as above |
 | Service dies shortly after start with `ForegroundServiceDidNotStartInTimeException` | A sticky restart delivering a null intent | `TimerService` returns `START_NOT_STICKY` on purpose — see CLAUDE.md before changing it |
