@@ -754,7 +754,7 @@ class TimerService : Service() {
         val pendingIntent = contentIntent
 
         val builder = NotificationCompat.Builder(this, RaceTimerApplication.TIMER_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_stat_race_timer)
             .setContentTitle(getString(R.string.notification_content_title))
             .setContentText(displayText)
             .setContentIntent(pendingIntent)
@@ -771,7 +771,7 @@ class TimerService : Service() {
             RaceTimerApplication.TIMER_NOTIFICATION_ID,
             builder
         )
-            .setStaticIcon(R.drawable.ic_launcher)
+            .setStaticIcon(R.drawable.ic_stat_race_timer)
             .setTouchIntent(pendingIntent)
             .setStatus(ongoingActivityStatus)
             .build()
