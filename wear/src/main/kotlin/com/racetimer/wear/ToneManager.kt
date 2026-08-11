@@ -16,6 +16,7 @@ import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
 import com.racetimer.shared.CueStream
 import com.racetimer.shared.CueTiming
+import com.racetimer.shared.CueTrackPacing
 import com.racetimer.shared.CueVoice
 import com.racetimer.shared.CueWaveform
 import com.racetimer.shared.SignalPattern
@@ -75,8 +76,42 @@ internal fun legacyStreamFor(route: CueStream): Int = when (route) {
  * fifth of a second — inaudible as a *timing* error, but plainly audible as the tone answering the
  * buzz rather than arriving with it, which is the thing [LEAD_IN_MS] exists to prevent.
  *
- * So the expensive parts happen off the deadline. The track is created before the race, the buffer
- * is written during [LEAD_IN_MS], and the only thing waiting on a clock is [AudioTrack.play].
+ * So the expensive parts happen off the deadline. The track is created before the race, the cue is
+ * rendered during [LEAD_IN_MS], and the only thing waiting on a clock is the buffer write.
+ *
+ * ### One `play()` for the race, not one per cue (#114)
+ *
+ * That last sentence read "the only thing waiting on a clock is [AudioTrack.play]" until #114, and the
+ * measurement that changed it is worth keeping. Pausing and flushing the track after each cue — which
+ * this class did, deliberately, to keep that IPC off the next cue's load — meant every cue's `play()`
+ * re-paid `startOutput`. On an SM-R925U that is **3-45 ms mid-race and 138-297 ms on the first cue of
+ * every race**, because the first cue is the one that lands while the service is calling
+ * `startForeground` and the audio server is contended by its binder traffic.
+ *
+ * There is nowhere on the cue's own path to put that. [LEAD_IN_MS] is 40 ms and cannot grow — past
+ * roughly 50 ms the tone stops arriving with the buzz and starts answering it. So the cost has to be
+ * paid *before the race*, which means the track has to still be playing when the cue arrives:
+ *
+ * - [startIdling] runs from [prepare], well ahead of Start, and leaves the track in
+ *   `PLAYSTATE_PLAYING` with nothing queued.
+ * - A cue is then only [writeCue] — a memcpy into a track that is already running. Nothing on the
+ *   deadline talks to the audio server.
+ * - [keepMixedRunnable] writes a little silence between cues, because a track that is playing with
+ *   nothing to play is dropped from AudioFlinger's active list after about a second, which calls
+ *   `stopOutput` and hands the whole cost back. See there for the sizing.
+ *
+ * **The failure mode moved, and it moved the right way.** The old path's way of going wrong was
+ * [armStartThreshold] — a track that never reaches its start threshold plays *nothing* while every
+ * call reports success, which is the #61 class and the worst thing this file can do. The new path's
+ * way of going wrong is queued silence a cue has to drain before it sounds, which is a few
+ * milliseconds late and audible as nothing at all. Where the fast path cannot be used the code falls
+ * back to the old one — see [writeCue].
+ *
+ * **API 31+ only.** [AudioTrack.setStartThresholdInFrames] arrived in S, and without it a track's
+ * start threshold is its whole buffer — so idling one means queueing [MAX_PREFILL_MS] of silence for
+ * a cue to drain through. `minSdk` is 30, so below S this class keeps exactly the behaviour it had
+ * before #114: [startIdling] returns without doing anything and every cue takes the flush-and-play
+ * path.
  *
  * `MODE_STREAM` rather than `MODE_STATIC`, given the track has to be reused: a static track is
  * written once and replayed, which cannot express a different cue each time. The underrun risk that
@@ -202,11 +237,45 @@ class ToneManager(context: Context) {
     /** Uptime the current cue's audio finishes, so [release] can wait out its real tail. */
     @Volatile private var soundingUntilMs = 0L
 
-    /** True while the track holds no queued audio, so a load can skip the pause-and-flush IPC. */
-    private var trackIsEmpty = false
+    /**
+     * True once [AudioTrack.play] has been called on [track] and nothing has paused it since.
+     *
+     * The whole of #114 in one boolean: while this holds, a cue costs a buffer write and no round trip
+     * to the audio server. False means the next cue pays `startOutput` itself, which is correct and
+     * merely slow — it is the state below API 31, after a flush, and before [startIdling] has run.
+     */
+    private var trackStarted = false
 
-    /** Playback head when the current cue started, so its delivered frames can be counted. */
-    private var headAtCueStart = 0
+    /**
+     * Frames handed to [track] since it was built or last flushed, cue audio and keep-alive silence
+     * alike.
+     *
+     * Counted here because [AudioTrack] will not say: `getPlaybackHeadPosition` reports what the
+     * hardware has *consumed*, and the gap between the two is exactly what a cue written now has to
+     * wait through. An [Int] rather than a [Long] on purpose, so it wraps in step with the playback
+     * head — see [CueTrackPacing.framesBetween].
+     */
+    private var framesWritten = 0
+
+    /**
+     * Value of [framesWritten] immediately before the current cue was written — which is the playback
+     * head position at which that cue's first frame sounds.
+     *
+     * Not a reading of the playback head, which is where the audio is *now* and would count the
+     * keep-alive silence still ahead of the cue as part of it.
+     */
+    private var cueStartFrame = 0
+
+    /**
+     * The cue about to be written, resolved during the lead-in so the deadline carries no rendering.
+     *
+     * [submit] posts the resolve and the write as separate messages precisely so a cache miss — which
+     * renders, and took 477-2237 ms when the thread was contended (#98) — cannot land on the deadline.
+     */
+    private var stagedCue: ShortArray? = null
+
+    /** Reused silence for the heartbeat, so it allocates once rather than every 300 ms. */
+    private var keepMixedSilence: ShortArray? = null
 
     private val releaseRunnable = Runnable { releaseAudioAndQuit() }
 
@@ -221,7 +290,27 @@ class ToneManager(context: Context) {
     private val housekeepingRunnable = Runnable {
         logDelivered()
         armKeepAlive()
-        resetTrack()
+        scheduleKeepMixed()
+    }
+
+    /**
+     * Writes a little silence so AudioFlinger keeps the track in its active list, then re-posts itself.
+     *
+     * The tax on never pausing (#114). A track that is playing with nothing to play is underrunning,
+     * and AudioFlinger gives an underrunning track a bounded number of mixer periods before it drops it
+     * out of the active list and calls `stopOutput` — at which point the next write has to restart it
+     * and the cue pays exactly the cost this change removed, only now on the deadline instead of a few
+     * lines earlier. Mixing anything at all resets that count, so this is a heartbeat and not a stream:
+     * see [KEEP_MIXED_CHUNK_MS] for why it is as small as it is.
+     *
+     * Deliberately **not** running while a cue is in flight. [submit] cancels it and the cue's
+     * housekeeping starts it again, so silence can never be appended to a cue that is still sounding —
+     * which would leave [logDelivered] counting that silence as part of the cue and reporting a cue
+     * longer than the one [CueTiming] describes.
+     */
+    private val keepMixedRunnable = Runnable {
+        writeKeepMixedSilence()
+        scheduleKeepMixed()
     }
 
     /** Marks the messages belonging to a cue, so cancelling one cannot cancel [warmUp]. */
@@ -303,9 +392,13 @@ class ToneManager(context: Context) {
                     initFailed = false
                 }
             }
-            synchronized(audioLock) { obtainTrackLocked() }
+            synchronized(audioLock) {
+                obtainTrackLocked()
+                startIdling()
+            }
             armKeepAlive()
             beepBuffer()
+            scheduleKeepMixed()
         }
     }
 
@@ -365,6 +458,7 @@ class ToneManager(context: Context) {
      */
     fun release() {
         val handler = toneHandler ?: return
+        handler.removeCallbacks(keepMixedRunnable)
         handler.post {
             val live = synchronized(audioLock) {
                 initFailed = false
@@ -437,46 +531,53 @@ class ToneManager(context: Context) {
     }
 
     /**
-     * Render [pcm], load it into the track, and start it [LEAD_IN_MS] after [baseMs].
+     * Render [pcm], then write it to the track [LEAD_IN_MS] after [baseMs].
      *
-     * Three posts, and the ordering is the whole point. The render and the buffer write go out
-     * immediately so they run *during* the lead-in. [AudioTrack.play] is queued on the deadline as
-     * its own message rather than nested inside the preparation, so that preparation running long
-     * delays the cue by its overrun rather than by its whole duration. Re-arming the keep-alive goes
-     * *after* the cue, where its cost cannot reach the cue it protects.
+     * Three posts, and the ordering is the whole point. The render goes out immediately so it runs
+     * *during* the lead-in — a cache miss costs hundreds of milliseconds on a contended thread (#98)
+     * and must never land on a deadline. The buffer write is queued on the deadline as its own message
+     * rather than nested inside the render, so that a render running long delays the cue by its
+     * overrun rather than by its whole duration. Re-arming the keep-alive goes *after* the cue, where
+     * its cost cannot reach the cue it protects.
      *
-     * A [Handler] runs its queue in time order, so the deadline message cannot overtake the
-     * preparation message that is already due.
+     * The write is what waits on the clock, rather than [AudioTrack.play], because the track is already
+     * playing by the time a race starts — that is #114, and the reasoning is on the class.
+     *
+     * A [Handler] runs its queue in time order, so the deadline message cannot overtake the render
+     * message that is already due.
      */
     private fun submit(baseMs: Long, durationMs: Long, pcm: () -> ShortArray) {
         val handler = obtainHandler()
-        // Drops the previous cue's pending play in one call, from whichever thread got here;
+        // Drops the previous cue's pending write in one call, from whichever thread got here;
         // Handler's queue is synchronized where this class is not.
         //
         // Scoped to [cueToken] rather than clearing the queue outright, because [warmUp]'s rendering
         // sits on the same queue and a blanket clear would cancel it — leaving every cue of the race
         // to synthesise itself on its own deadline, which is the exact cost warmUp exists to avoid.
         handler.removeCallbacksAndMessages(cueToken)
+        // The keep-alive heartbeat stops for the duration of the cue and is started again by the cue's
+        // own housekeeping. See [keepMixedRunnable] for why silence must not land inside a cue.
+        handler.removeCallbacks(keepMixedRunnable)
 
         val startAtMs = baseMs + LEAD_IN_MS
         soundingUntilMs = startAtMs + durationMs
 
-        handler.postAtTime({ loadTrack(pcm) }, cueToken, SystemClock.uptimeMillis())
-        handler.postAtTime({ startTrack(startAtMs, durationMs) }, cueToken, startAtMs)
+        handler.postAtTime({ stageCue(pcm) }, cueToken, SystemClock.uptimeMillis())
+        handler.postAtTime({ writeCue(startAtMs, durationMs) }, cueToken, startAtMs)
         // Housekeeping for the *next* cue, deliberately done once this one has finished sounding.
         // The keep-alive is re-armed here so it cannot lapse mid-race between two widely spaced cues,
-        // and the track is reset here because `pause` and `flush` are round trips to the audio server
-        // — 50-130 ms of them, measured — which is more than the whole of [LEAD_IN_MS] and would
-        // otherwise land between a cue firing and its sound starting.
+        // the cue's delivered frames are read here because the reading has to happen after the sound,
+        // and the silence heartbeat is started again here for the same reason.
         //
         // [CUE_TAIL_MARGIN_MS] past the cue's nominal end, not on it: the hardware is still draining
-        // buffered audio at that point, and flushing into the tail would clip the end off a cue —
-        // which for the gun would be the worst possible thing to shorten.
+        // buffered audio at that point, so a delivered-frame count taken on the nominal end would
+        // under-report the cue — and before #114 this was also where the track was flushed, which
+        // would have clipped the tail outright.
         //
         // Posted here against the *nominal* end so it is scheduled unconditionally — including on the
         // paths where the cue never starts at all, which still need the keep-alive re-armed and the
-        // track emptied. [startTrack] moves it when the start actually slipped; see there for why a
-        // margin measured from a time the cue did not start at is not a margin.
+        // heartbeat restarted. [writeCue] moves it when the start actually slipped; see there for why
+        // a margin measured from a time the cue did not start at is not a margin.
         handler.postAtTime(
             housekeepingRunnable,
             cueToken,
@@ -485,30 +586,78 @@ class ToneManager(context: Context) {
     }
 
     /**
-     * Render the cue and hand it to the track, ready for [AudioTrack.play] on the deadline.
+     * Render the cue during the lead-in and hold it, so the deadline carries only the buffer write.
      *
-     * `pause` then `flush` rather than `stop`: it discards whatever the previous cue left without
-     * tearing the output port down, which is the expensive part and the reason this class keeps one
-     * track for the whole race.
+     * The one thing on the cue path that can take hundreds of milliseconds is a render — 477-2237 ms
+     * on a contended thread, measured under #98 — and [cueFor] still renders inline when [warmUp] has
+     * not reached that shape yet. Resolving it here means the miss costs the *lead-in*, which it may
+     * well overrun, rather than the cue.
      */
-    private fun loadTrack(pcm: () -> ShortArray): Unit = synchronized(audioLock) {
-        val startedAtMs = SystemClock.uptimeMillis()
-        val audioTrack = obtainTrackLocked() ?: return
+    private fun stageCue(pcm: () -> ShortArray) {
         val samples = pcm()
-        if (samples.isEmpty()) return
+        stagedCue = if (samples.isEmpty()) null else samples
+    }
+
+    /**
+     * Write the staged cue to the track on its deadline, starting playback if the track is not already
+     * running.
+     *
+     * ### The fast path, which is the point of #114
+     *
+     * [startIdling] left the track playing before the race, so in the ordinary case this is a memcpy
+     * into a running track and nothing here talks to the audio server. The cue sounds once whatever is
+     * already queued ahead of it drains — at most one [KEEP_MIXED_CHUNK_MS] of keep-alive silence, and
+     * usually none, since the heartbeat is stopped the moment a cue is submitted.
+     *
+     * ### The slow path, which is the old behaviour applied where it is needed
+     *
+     * Two states cannot append: a track that is not playing (below API 31, or after a route change),
+     * and a track still holding a previous cue that the next one cancelled mid-flight. Appending in the
+     * second case would play the two cues back to back — the sailor would hear a signal nobody gave.
+     * Both fall back to flush, write, [armStartThreshold], play: the pre-#114 path, paying
+     * `startOutput` on the deadline. That is a late cue rather than a wrong one, and
+     * [CueTrackPacing.needsFlushBeforeCue] is what keeps the keep-alive silence from tripping it.
+     *
+     * Also carries the cue's housekeeping forward when the start slipped. [submit] posts that against
+     * the cue's *nominal* end, which is the only time it knows — but a cue that starts late still
+     * sounds for its full [durationMs], so the delivered-frame reading would be taken while the cue was
+     * still playing and would under-report it. Before #114 the same message flushed the track, and the
+     * consequence was worse than a bad reading: measured on an SM-R925U, a first cue starting 645 ms
+     * late delivered **92160 of 108000 frames — 1920 ms of a 2250 ms cue** — cut off silently, with
+     * every call reporting success (#98).
+     */
+    private fun writeCue(startAtMs: Long, durationMs: Long): Unit = synchronized(audioLock) {
+        val enteredMs = SystemClock.uptimeMillis()
+        val samples = stagedCue ?: return
+        stagedCue = null
+        val audioTrack = obtainTrackLocked() ?: return
 
         pendingSamples = null
         pendingFrom = 0
+        val queuedMs: Long
+        val foundMs: Long
+        val flushed: Boolean
+        val writtenAtMs: Long
         try {
-            // Skipped whenever [resetTrack] already emptied the track when the previous cue ended,
-            // which is the normal case and the whole reason it is done there. Still needed when a cue
-            // is cancelled mid-flight by the next one, because that skips the housekeeping — and
-            // writing onto an unflushed track would append this cue to the tail of the last one.
-            if (!trackIsEmpty) {
-                if (audioTrack.playState != AudioTrack.PLAYSTATE_STOPPED) audioTrack.pause()
-                audioTrack.flush()
+            var queuedFrames =
+                CueTrackPacing.framesBetween(audioTrack.playbackHeadPosition, framesWritten)
+            // Kept separately from [queuedMs] so the log can tell the two states apart. Reporting
+            // only the post-flush value makes "nothing was queued" and "a whole cue was queued and
+            // this took the slow path" print identically — and they are the two explanations for a
+            // slow write, wanting opposite responses. Measured 2026-08-11: one cue at writeMs=43
+            // that this logging could not attribute, which is the defect the split fixes.
+            foundMs = CueTrackPacing.framesToMs(queuedFrames, sampleRateHz)
+            flushed = CueTrackPacing.needsFlushBeforeCue(foundMs, MAX_QUEUED_MS)
+            if (flushed) {
+                flushTrackLocked(audioTrack)
+                queuedFrames = 0
             }
-            trackIsEmpty = false
+            queuedMs = CueTrackPacing.framesToMs(queuedFrames, sampleRateHz)
+
+            // Where the cue's first frame lands on the playback head. Taken from what has been
+            // *written* rather than from the head itself, so keep-alive silence still ahead of the cue
+            // is not counted as part of it by [logDelivered].
+            cueStartFrame = framesWritten
 
             // A cue longer than the buffer is written in two halves, the second once playback has
             // made room. No built-in cue reaches this - the three-second gun is the longest and the
@@ -520,19 +669,127 @@ class ToneManager(context: Context) {
                 Log.w(TAG, "AudioTrack write returned $written; cue dropped")
                 return
             }
+            framesWritten += written
             if (written < samples.size) {
                 pendingSamples = samples
                 pendingFrom = written
             }
-            armStartThreshold(audioTrack, written)
+            if (!trackStarted) {
+                armStartThreshold(audioTrack, written)
+                audioTrack.play()
+                trackStarted = true
+            }
+            writtenAtMs = SystemClock.uptimeMillis()
         } catch (e: IllegalStateException) {
-            Log.e(TAG, "AudioTrack load failed, discarding track", e)
+            Log.e(TAG, "AudioTrack write failed, discarding track", e)
             releaseTrackLocked()
             return
         }
-        if (Log.isLoggable(TAG, Log.DEBUG)) {
-            Log.d(TAG, "loaded ${samples.size} samples in ${SystemClock.uptimeMillis() - startedAtMs}ms")
+
+        val audibleAtMs = CueTrackPacing.audibleAtMs(writtenAtMs, queuedMs)
+        logDispatch(startAtMs, enteredMs, writtenAtMs, queuedMs, foundMs, flushed, samples.size)
+        rescheduleHousekeeping(startAtMs, audibleAtMs, durationMs)
+
+        val remainder = pendingSamples ?: return
+        pendingSamples = null
+        // Blocking, on the tone thread, and only for a cue longer than the buffer. Playback is
+        // already under way by here, so the write drains as it goes.
+        try {
+            framesWritten += audioTrack.write(remainder, pendingFrom, remainder.size - pendingFrom)
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "Tail write failed; cue truncated", e)
         }
+        return
+    }
+
+    /**
+     * Put the track back in a state where the next write starts a cue cleanly.
+     *
+     * `pause` then `flush` rather than `stop`: it discards what is queued without tearing the output
+     * port down, which is the expensive part and the reason this class keeps one track for the whole
+     * race. Both counters go with it — [AudioTrack.flush] returns the playback head to zero, so a
+     * [framesWritten] that survived would make every subsequent queue-depth reading wrong by a cue.
+     *
+     * Leaves [trackStarted] false: a flushed track has to be played again, and on API 30 it has to
+     * reach its start threshold first. Call with [audioLock] held.
+     */
+    private fun flushTrackLocked(audioTrack: AudioTrack) {
+        if (audioTrack.playState != AudioTrack.PLAYSTATE_STOPPED) audioTrack.pause()
+        audioTrack.flush()
+        framesWritten = 0
+        cueStartFrame = 0
+        trackStarted = false
+    }
+
+    /**
+     * Start the track playing with nothing queued, so a cue costs a buffer write and no more (#114).
+     *
+     * Called from [prepare], which runs at service creation and again when a race is armed — both of
+     * them seconds or minutes ahead of the first cue, which is the whole point: `startOutput` is a
+     * round trip into the audio server and it is not affordable anywhere near a deadline.
+     *
+     * **Returns without doing anything below API 31.** [AudioTrack.setStartThresholdInFrames] is the
+     * only way to say "start on the first frame written"; without it a `MODE_STREAM` track waits for
+     * its whole buffer, so idling one would mean queueing [MAX_PREFILL_MS] of silence and making every
+     * cue drain through it. `minSdk` is 30, so this is a live path and not a formality — below S every
+     * cue takes [writeCue]'s flush-and-play branch, which is exactly what this class did before #114.
+     *
+     * Call with [audioLock] held.
+     */
+    private fun startIdling() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val audioTrack = track ?: return
+        if (trackStarted) return
+        try {
+            audioTrack.startThresholdInFrames = 1
+            audioTrack.play()
+            trackStarted = true
+        } catch (e: RuntimeException) {
+            // IllegalArgumentException from the threshold, IllegalStateException from play(). Neither
+            // is fatal: the track simply stays unstarted and cues take the slow path.
+            Log.w(TAG, "Could not idle the cue track; cues will pay startOutput each time", e)
+            return
+        }
+        // Something has to be mixed for AudioFlinger to treat the track as active at all — a track that
+        // is playing and has never had a frame is indistinguishable to it from one that has underrun.
+        writeKeepMixedSilence()
+    }
+
+    /**
+     * Post the next silence heartbeat, replacing any already queued.
+     *
+     * Idempotent on purpose: it is called from [prepare], from a cue's housekeeping, and from the
+     * heartbeat itself, and two heartbeats running would double the silence a cue has to drain.
+     */
+    private fun scheduleKeepMixed() {
+        val handler = toneHandler ?: return
+        handler.removeCallbacks(keepMixedRunnable)
+        handler.postDelayed(keepMixedRunnable, KEEP_MIXED_INTERVAL_MS)
+    }
+
+    /** One heartbeat's worth of silence. See [keepMixedRunnable]. */
+    private fun writeKeepMixedSilence(): Unit = synchronized(audioLock) {
+        val audioTrack = track ?: return
+        if (!trackStarted) return
+        val frames = CueTrackPacing.msToFrames(KEEP_MIXED_CHUNK_MS, sampleRateHz)
+        val silence = keepMixedChunk(frames)
+        try {
+            // Non-blocking: this runs on the thread the cues are dispatched from, and a heartbeat is
+            // never worth making a cue wait. A short write is fine — the track only has to be mixed,
+            // not fed a particular amount.
+            val written = audioTrack.write(silence, 0, frames, AudioTrack.WRITE_NON_BLOCKING)
+            if (written > 0) framesWritten += written
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "Keep-mixed write failed; cues may pay startOutput", e)
+        }
+        return
+    }
+
+    /** The reusable silence buffer, grown if the sample rate ever asks for more. */
+    private fun keepMixedChunk(frames: Int): ShortArray {
+        val existing = keepMixedSilence
+        if (existing != null && existing.size >= frames) return existing
+        return ShortArray(frames).also { keepMixedSilence = it }
     }
 
     /**
@@ -554,6 +811,11 @@ class ToneManager(context: Context) {
      * exist, so the buffer is topped up with silence instead until it reaches the default threshold —
      * the same effect, at the cost of a larger write. `minSdk` is 30, so that path is real and not
      * theoretical, even though the watch this was developed on is API 36.
+     *
+     * Only reached from [writeCue]'s slow path since #114; an idling track has already started and its
+     * threshold no longer gates anything. The padding is counted into [framesWritten] because it is
+     * queued audio like any other — a cue's own trailing silence, in effect — and a queue depth that
+     * did not know about it would read low by most of a buffer.
      */
     private fun armStartThreshold(audioTrack: AudioTrack, writtenSamples: Int) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -571,81 +833,26 @@ class ToneManager(context: Context) {
             val chunk = minOf(remaining, silence.size)
             val written = audioTrack.write(silence, 0, chunk)
             if (written <= 0) return
+            framesWritten += written
             remaining -= written
         }
-    }
-
-    /**
-     * Stop the track and empty it, once a cue has finished sounding.
-     *
-     * Purely so the next cue's load does not have to. See the posting in [submit] for why that
-     * matters — this is IPC, and it costs more than the lead-in it would otherwise eat.
-     */
-    private fun resetTrack(): Unit = synchronized(audioLock) {
-        val audioTrack = track ?: return
-        try {
-            if (audioTrack.playState != AudioTrack.PLAYSTATE_STOPPED) audioTrack.pause()
-            audioTrack.flush()
-            trackIsEmpty = true
-        } catch (e: IllegalStateException) {
-            Log.w(TAG, "AudioTrack reset failed", e)
-        }
-        return
-    }
-
-    /**
-     * Start the loaded cue, and log how far its start missed [startAtMs].
-     *
-     * Also carries the cue's housekeeping forward when the start slipped. [submit] posts that against
-     * the cue's *nominal* end, which is the only time it knows — but a cue that starts late still
-     * sounds for its full [durationMs], so the reset would land [CUE_TAIL_MARGIN_MS] minus the
-     * overrun into a cue that is still playing, and `flush` cuts it off there. Measured on an
-     * SM-R925U before the warm-up moved (#98): a first cue starting 645 ms late delivered **92160 of
-     * 108000 frames — 1920 ms of a 2250 ms cue** — so the defect was not only that the cue was late
-     * but that it was then cut short, silently, with every call still reporting success.
-     *
-     * Re-posted rather than posted only here so the guarantee in [submit] is kept: a cue that never
-     * starts still has to re-arm the keep-alive and empty the track.
-     */
-    private fun startTrack(startAtMs: Long, durationMs: Long): Unit = synchronized(audioLock) {
-        val audioTrack = track ?: return
-        val enteredMs = SystemClock.uptimeMillis()
-        try {
-            audioTrack.play()
-        } catch (e: IllegalStateException) {
-            Log.e(TAG, "AudioTrack play failed, discarding track", e)
-            releaseTrackLocked()
-            return
-        }
-        // Taken after `play()` returns, not before it: the call itself blocks for as much as a few
-        // hundred milliseconds when it collides with service startup (#98), and the sound cannot have
-        // begun before it came back. Both the log and the housekeeping want the later of the two.
-        val startedMs = SystemClock.uptimeMillis()
-        logDispatch(startAtMs, enteredMs, startedMs, audioTrack)
-        rescheduleHousekeeping(startAtMs, startedMs, durationMs)
-
-        val remainder = pendingSamples ?: return
-        pendingSamples = null
-        // Blocking, on the tone thread, and only for a cue longer than the buffer. Playback is
-        // already under way by here, so the write drains as it goes.
-        try {
-            audioTrack.write(remainder, pendingFrom, remainder.size - pendingFrom)
-        } catch (e: IllegalStateException) {
-            Log.w(TAG, "Tail write failed; cue truncated", e)
-        }
-        return
     }
 
     /**
      * Move this cue's housekeeping to sit after the sound it is actually going to make.
      *
      * In practice this reposts on **every** cue that sounds, and the early return is close to
-     * unreachable: [submit] posts `startTrack` with `postAtTime`, which cannot dispatch before
+     * unreachable: [submit] posts [writeCue] with `postAtTime`, which cannot dispatch before
      * [startAtMs], so `startedMs >= startAtMs` always and the guard is exact equality rather than a
-     * tolerance — it would need the thread wake *and* the `play()` binder round trip to land inside
-     * one millisecond. The smallest slip measured across #98's runs was 4 ms. The genuinely
-     * exceptional path is the opposite one: this is skipped only when [startTrack] returns before
-     * reaching it, which is the "cue never starts at all" case [submit]'s own posting covers.
+     * tolerance — it would need the thread wake *and* the buffer write to land inside one millisecond.
+     * The smallest slip measured across #98's runs was 4 ms. The genuinely exceptional path is the
+     * opposite one: this is skipped only when [writeCue] returns before reaching it, which is the
+     * "cue never starts at all" case [submit]'s own posting covers.
+     *
+     * Since #114 [startedMs] is the moment the cue becomes *audible* rather than the moment
+     * [AudioTrack.play] returned — the write plus whatever keep-alive silence was queued ahead of it.
+     * That is the time the sound actually occupies, so it is the one the delivered-frame reading has to
+     * be placed after.
      *
      * The `<=` and [CueTiming.resetAtMs]'s `maxOf` are still deliberate — they keep a cue that somehow
      * ran early from pulling its own reset forward into itself — but that is future-proofing, not the
@@ -678,24 +885,44 @@ class ToneManager(context: Context) {
      * late cue from a late *race*, and because it is what caught the per-cue track build.
      *
      * `lateMs` alone was not enough to close #98. It reports the miss and says nothing about where the
-     * miss came from, and the two candidates want opposite fixes: `wakeMs` is the tone thread failing
-     * to run this message at [startAtMs] — a scheduling or contention problem, fixed by taking work
-     * off the queue ahead of it — while `playMs` is [AudioTrack.play] itself blocking, which no
-     * amount of queue discipline can touch because it is a round trip into the audio server.
+     * miss came from, and the candidates want different fixes. Three components since #114, and each
+     * one names a different suspect:
+     *
+     * - `wakeMs` — the tone thread failed to run this message at [startAtMs]. Scheduling or
+     *   contention; fixed by taking work off the queue ahead of it.
+     * - `writeMs` — the buffer write itself blocked. On the fast path this is a memcpy and reads 0-1
+     *   ms; anything larger means the track was not idling and the write paid `startOutput` to restart
+     *   it, which is the regression #114 was about and the number to watch.
+     * - `queuedMs` — keep-alive silence the cue has to drain before it sounds. Bounded by
+     *   [KEEP_MIXED_CHUNK_MS].
+     * - `foundMs` / `flushed` — what was queued *before* the flush valve was consulted, and whether
+     *   it fired. These exist because `queuedMs` alone cannot explain a slow `writeMs`: a flush
+     *   zeroes the queue, so a cue that took the slow path and a cue with nothing queued print the
+     *   same. `flushed=1` attributes the cost to the valve; `flushed=0 writeMs` high is contention
+     *   or a lapsed track, which want opposite fixes.
+     *
+     * `playMs` was the third of these before #114 and is gone with the per-cue `play()`. Do not compare
+     * a `lateMs` from before that change against one from after it without reading both definitions:
+     * the old one timed when `play()` returned, this one estimates when the sound *starts*. Neither
+     * times when it emerged from the speaker, which only an ear settles.
      */
     private fun logDispatch(
         startAtMs: Long,
         enteredMs: Long,
-        startedMs: Long,
-        audioTrack: AudioTrack,
+        writtenAtMs: Long,
+        queuedMs: Long,
+        foundMs: Long,
+        flushed: Boolean,
+        cueSamples: Int,
     ) {
         if (!Log.isLoggable(TAG, Log.DEBUG)) return
         Log.d(
             TAG,
-            "cue lateMs=${startedMs - startAtMs} wakeMs=${enteredMs - startAtMs} " +
-                "playMs=${startedMs - enteredMs} rateHz=$sampleRateHz",
+            "cue lateMs=${writtenAtMs + queuedMs - startAtMs} wakeMs=${enteredMs - startAtMs} " +
+                "writeMs=${writtenAtMs - enteredMs} queuedMs=$queuedMs " +
+                "foundMs=$foundMs flushed=${if (flushed) 1 else 0} " +
+                "samples=$cueSamples rateHz=$sampleRateHz",
         )
-        headAtCueStart = audioTrack.playbackHeadPosition
     }
 
     /**
@@ -705,13 +932,22 @@ class ToneManager(context: Context) {
      * one here that can tell a cue that *sounded* from a cue that was merely submitted. Everything
      * else in this class reports on calls that returned cleanly, which a stalled track also does.
      *
-     * Must be read before [resetTrack], because `flush` returns the playback head to zero.
+     * Counted from [cueStartFrame], which is where the cue's first frame sits on the playback head,
+     * rather than from a reading of the head taken when the cue was written — those differ by exactly
+     * the keep-alive silence that was still queued, and using the reading would report a cue longer
+     * than [CueTiming] describes and hide a real truncation behind it.
+     *
+     * Runs before the heartbeat is started again, deliberately: silence written after the cue would be
+     * counted into it just the same.
      */
     private fun logDelivered() {
         if (!Log.isLoggable(TAG, Log.DEBUG)) return
         val head = synchronized(audioLock) { track?.playbackHeadPosition } ?: return
-        val delivered = head - headAtCueStart
-        Log.d(TAG, "delivered $delivered frames = ${delivered * 1000L / sampleRateHz}ms")
+        val delivered = CueTrackPacing.framesBetween(cueStartFrame, head)
+        Log.d(
+            TAG,
+            "delivered $delivered frames = ${CueTrackPacing.framesToMs(delivered, sampleRateHz)}ms",
+        )
     }
 
     /**
@@ -837,7 +1073,12 @@ class ToneManager(context: Context) {
         trackCapacitySamples = 0
         pendingSamples = null
         pendingFrom = 0
-        trackIsEmpty = false
+        stagedCue = null
+        // Both counters belong to the track that has just gone. Carrying them onto the next one would
+        // make its first queue-depth reading wrong by however much the old track had played.
+        trackStarted = false
+        framesWritten = 0
+        cueStartFrame = 0
     }
 
     /** Call with [audioLock] held. */
@@ -940,6 +1181,22 @@ class ToneManager(context: Context) {
 
         /** Long enough to register outdoors, short enough to stay clear of the next cue. */
         const val BEEP_MS = 400L
+
+        /**
+         * The three numbers that pace the shared track live in [CueTrackPacing], not here.
+         *
+         * They are only meaningful against each other and against [CueTiming] — the heartbeat must
+         * stay under the flush budget and the budget must stay under the shortest cue — and `wear/`
+         * has no test source set to say so. Deliberately re-exported as aliases rather than inlined at
+         * the call sites, so that a reader of this class can still see what the cue path depends on.
+         */
+        const val KEEP_MIXED_INTERVAL_MS = CueTrackPacing.KEEP_MIXED_INTERVAL_MS
+
+        /** See [CueTrackPacing.KEEP_MIXED_CHUNK_MS]. Bounds how late queued silence can make a cue. */
+        const val KEEP_MIXED_CHUNK_MS = CueTrackPacing.KEEP_MIXED_CHUNK_MS
+
+        /** See [CueTrackPacing.MAX_QUEUED_MS]. Above this a cue flushes instead of appending. */
+        const val MAX_QUEUED_MS = CueTrackPacing.MAX_QUEUED_MS
 
         /**
          * Tone used for the silent keep-alive. DTMF because it must hold for an arbitrary requested
