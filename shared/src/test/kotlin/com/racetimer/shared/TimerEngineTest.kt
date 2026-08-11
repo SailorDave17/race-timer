@@ -1177,4 +1177,180 @@ class TimerEngineTest {
             Math.abs(actual - expected) <= tolerance
         )
     }
+
+    // --- Wall-clock adjustment, and listener removal ---------------------------
+    //
+    // Both were found untested on 2026-08-11 by mutating them and watching the whole 321-test suite
+    // stay green: `pollClockAdjustment` forced to return false reddened **nothing**, and
+    // `removeListener` reduced to a no-op reddened **nothing**. Neither is reached by any other
+    // case, so these are holes rather than naming artefacts — the distinction a name-grep cannot
+    // make and a mutation can.
+    //
+    // What makes the clock path worth guarding: it is the one place the engine reads a clock it does
+    // not trust. Everything else here is monotonic and cannot jump, which is exactly why a
+    // wall-clock jump has no other symptom — the countdown stays correct throughout, so a broken
+    // detector is invisible to every other assertion in this file.
+
+    private val clockAdjustments = mutableListOf<Long>()
+
+    /** Records the callback the shared fixture's listener does not override. */
+    private val adjustmentListener = object : TimerListener {
+        override fun onCue(cue: SequenceCue) {}
+        override fun onGun() {}
+        override fun onTick(remainingMs: Long) {}
+        override fun onSync(snappedToMs: Long) {}
+        override fun onClockAdjusted(remainingMs: Long) { clockAdjustments += remainingMs }
+    }
+
+    private fun runningRaceWithAdjustmentListener() {
+        clockAdjustments.clear()
+        engine.addListener(adjustmentListener)
+        engine.load(BuiltInSequences.club)
+        engine.start()
+    }
+
+    @Test fun `two clocks moving together is not an adjustment`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 5_000L
+        fakeWall += 5_000L
+        assertFalse(engine.pollClockAdjustment())
+        assertTrue(clockAdjustments.isEmpty())
+    }
+
+    @Test fun `a wall-clock jump forward past the threshold is reported`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L + 10_000L // an NTP correction pushing the wall clock 10 s ahead
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+    }
+
+    @Test fun `a wall-clock jump backward past the threshold is reported`() {
+        // The `drift <= -thresholdMs` branch. A manual time change goes either way, and a detector
+        // that only looked forward would be silently half a detector.
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L - 10_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+    }
+
+    @Test fun `drift just under the threshold is not an adjustment`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L + 1_999L
+        assertFalse(engine.pollClockAdjustment())
+        assertTrue(clockAdjustments.isEmpty())
+    }
+
+    @Test fun `drift exactly at the threshold is an adjustment`() {
+        // The comparison is `>=`; written the other way it would drop the case its own default names.
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L + 2_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+    }
+
+    @Test fun `the threshold is a parameter, not only its default`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L + 3_000L
+        assertFalse("3s of drift is under a 5s threshold", engine.pollClockAdjustment(5_000L))
+        assertTrue(clockAdjustments.isEmpty())
+        assertTrue("...and over a 1s one", engine.pollClockAdjustment(1_000L))
+        assertEquals(1, clockAdjustments.size)
+    }
+
+    @Test fun `each jump is reported once, because detection re-baselines`() {
+        // The doc says "re-baselines on detection so each jump is reported once". Without that, a
+        // tick loop polling every 50 ms fires a notice on every tick for the rest of the race.
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L + 10_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+
+        fakeNow += 1_000L
+        fakeWall += 1_000L // both clocks moving together again, at the new offset
+        assertFalse("the same jump must not be reported twice", engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+    }
+
+    @Test fun `a second, separate jump is reported again`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L; fakeWall += 1_000L + 10_000L
+        assertTrue(engine.pollClockAdjustment())
+        fakeNow += 1_000L; fakeWall += 1_000L + 10_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(2, clockAdjustments.size)
+    }
+
+    @Test fun `the remaining time reported is the monotonic one, untouched by the jump`() {
+        // The whole point of the design: the countdown is anchored to the monotonic clock, so a wall
+        // clock jumping a minute must not move the gun. If this ever reported wall-derived time a
+        // sailor would see the race jump, and nothing else in this file would notice.
+        runningRaceWithAdjustmentListener()
+        fakeNow += 30_000L
+        fakeWall += 30_000L + 60_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(BuiltInSequences.club.totalMs - 30_000L, clockAdjustments.single())
+    }
+
+    @Test fun `an idle countdown reports no clock adjustment`() {
+        clockAdjustments.clear()
+        engine.addListener(adjustmentListener)
+        engine.load(BuiltInSequences.club)
+        fakeWall += 60_000L
+        assertFalse(engine.pollClockAdjustment())
+        assertTrue(clockAdjustments.isEmpty())
+    }
+
+    @Test fun `a paused countdown reports no clock adjustment`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 5_000L
+        engine.pause()
+        fakeWall += 60_000L
+        assertFalse(engine.pollClockAdjustment())
+        assertTrue(clockAdjustments.isEmpty())
+    }
+
+    @Test fun `a removed listener stops hearing cues`() {
+        val heard = mutableListOf<SequenceCue>()
+        val temporary = object : TimerListener {
+            override fun onCue(cue: SequenceCue) { heard += cue }
+            override fun onGun() {}
+            override fun onTick(remainingMs: Long) {}
+            override fun onSync(snappedToMs: Long) {}
+        }
+        engine.addListener(temporary)
+        engine.load(BuiltInSequences.club)
+        engine.start()
+
+        // Run to the first cue so the listener demonstrably works *before* it is removed. Otherwise
+        // "heard nothing afterwards" is satisfied by a listener that never heard anything at all —
+        // the positive control that makes the removal assertion mean something.
+        val seq = BuiltInSequences.club
+        fakeNow = seq.totalMs - seq.cues.first().offsetMs
+        engine.tick()
+        val heardWhileAttached = heard.size
+        assertTrue("the listener must work before removal can prove anything", heardWhileAttached > 0)
+
+        engine.removeListener(temporary)
+        fakeNow = seq.totalMs
+        engine.tick()
+        assertEquals("a removed listener kept receiving cues", heardWhileAttached, heard.size)
+    }
+
+    @Test fun `a removed listener stops hearing clock adjustments`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L; fakeWall += 1_000L + 10_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+
+        engine.removeListener(adjustmentListener)
+        fakeNow += 1_000L; fakeWall += 1_000L + 10_000L
+        assertTrue("the engine still detects the jump", engine.pollClockAdjustment())
+        assertEquals("but the removed listener must not hear it", 1, clockAdjustments.size)
+    }
 }

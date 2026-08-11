@@ -226,4 +226,215 @@ class CueWaveformTest {
         assertEquals(CueWaveform.samplesAt(400L, rate48k), pcm.size)
         assertMs("beep", 400L, soundedMs(pcm, rate48k).single())
     }
+
+    // --- Timbre, which is a separate contract from length ----------------------
+    //
+    // Everything above measures *how long* a cue sounds. Nothing measured *what it sounds like*, and
+    // the warble is a deliberate, load-bearing property: #61 reproduced `TONE_CDMA_HIGH_L`'s own
+    // alternation on purpose, so that a fix about length did not also change the sound and put two
+    // variables into one on-water judgement. Found 2026-08-11 by mutating
+    // `CueWaveform.BLAST_WARBLE_SEGMENT_MS` from 25 to 50 and watching **nothing** go red.
+    //
+    // The expected values here are deliberately literals rather than reads of `CueWaveform`'s own
+    // constants. They come from the AOSP CDMA tone descriptor table, which is an external source —
+    // and a test taking its expectation from the constant under test passes whatever that constant
+    // says, which is exactly how this property went unguarded in the first place.
+
+    /**
+     * Sample indices where [pcm] crosses zero, over the half-open window `[from, to)`.
+     *
+     * Frequency is measured from crossing spacing rather than by transform, because the quantity
+     * under test is *when the frequency changes* and a windowed transform smears precisely that.
+     */
+    private fun zeroCrossings(pcm: ShortArray, from: Int, to: Int): List<Int> {
+        val crossings = mutableListOf<Int>()
+        for (i in (from + 1) until minOf(to, pcm.size)) {
+            val a = pcm[i - 1].toInt()
+            val b = pcm[i].toInt()
+            if ((a <= 0 && b > 0) || (a >= 0 && b < 0)) crossings += i
+        }
+        return crossings
+    }
+
+    /**
+     * The tone's frequency in Hz at each crossing, taken from the spacing to a later one.
+     *
+     * A half-cycle per crossing, so `f = rate * window / (2 * span)`. Smoothed over four gaps
+     * because a single gap is a whole number of samples and quantises to roughly 8% at these
+     * pitches — the same size as the difference being detected.
+     */
+    private fun frequencyTrace(
+        pcm: ShortArray,
+        from: Int,
+        to: Int,
+        sampleRateHz: Int,
+    ): List<Pair<Int, Double>> {
+        val crossings = zeroCrossings(pcm, from, to)
+        val window = 4
+        if (crossings.size <= window) return emptyList()
+        return (0..(crossings.size - window - 1)).map { i ->
+            val span = crossings[i + window] - crossings[i]
+            crossings[i] to (sampleRateHz.toDouble() * window / (2.0 * span))
+        }
+    }
+
+    @Test fun `a long blast warbles between two partials rather than holding one`() {
+        val pcm = CueWaveform.render(blast(long = 1), rate48k)
+        // Interior only: the ramps at each end are amplitude changes, not pitch ones, and a
+        // crossing-spacing measure says nothing useful while the signal is still climbing.
+        val trace = frequencyTrace(pcm, rate48k * 20 / 1000, rate48k * 480 / 1000, rate48k)
+        assertTrue("expected a usable frequency trace, got ${trace.size} points", trace.size > 200)
+
+        val low = trace.minOf { it.second }
+        val high = trace.maxOf { it.second }
+        assertTrue(
+            "a single-partial blast would have no spread; measured ${low.toInt()}..${high.toInt()} Hz",
+            high - low > 150.0,
+        )
+        // AOSP TONE_CDMA_HIGH_L: 3700 Hz and 4000 Hz. Generous bands, because the claim is which two
+        // partials are present, not the resolution of the estimator.
+        assertTrue("lower partial should be near 3700 Hz, was ${low.toInt()}", low in 3400.0..3850.0)
+        assertTrue("upper partial should be near 4000 Hz, was ${high.toInt()}", high in 3850.0..4300.0)
+    }
+
+    @Test fun `the blast warble alternates every 25ms, the CDMA segment length`() {
+        val pcm = CueWaveform.render(blast(long = 1), rate48k)
+        val fromMs = 20L
+        val toMs = 480L
+        val trace = frequencyTrace(
+            pcm,
+            (rate48k * fromMs / 1000).toInt(),
+            (rate48k * toMs / 1000).toInt(),
+            rate48k,
+        )
+        assertTrue("expected a usable frequency trace, got ${trace.size} points", trace.size > 200)
+
+        // Each segment boundary is one crossing of the midpoint between the two partials, so the
+        // count of crossings over a known span gives the segment length without reading it off the
+        // constant under test.
+        val midpoint = 3850.0
+        var transitions = 0
+        var above = trace.first().second > midpoint
+        for ((_, hz) in trace) {
+            val nowAbove = hz > midpoint
+            if (nowAbove != above) {
+                transitions++
+                above = nowAbove
+            }
+        }
+        assertTrue("expected the blast to alternate at all; counted $transitions", transitions > 0)
+
+        val segmentMs = (toMs - fromMs).toDouble() / transitions
+        // 25 ms is the AOSP descriptor value. The band is wide enough for the smoothing lag and for
+        // where the window happens to start, and far too narrow to admit the neighbours a mistake
+        // would land on: doubling the constant gives 50 ms and halving it 12.5 ms.
+        assertTrue(
+            "measured warble segment ${"%.1f".format(segmentMs)}ms over $transitions boundaries, expected 25ms",
+            segmentMs in 20.0..31.0,
+        )
+    }
+
+    /**
+     * Zero-crossing count per [windowMs] window across `[from, to)`, as a rate in crossings/second.
+     *
+     * The stationarity instrument for a **dual-tone**. [frequencyTrace]'s gap-spacing estimate beats
+     * between the two partials of a DTMF pair and reads as spread on a perfectly stationary tone —
+     * measured here first: the tick and the gun both failed a spread assertion built on it. Counting
+     * crossings over a whole window averages the beat out, so a stationary tone gives near-constant
+     * windows while the blast's warble still shows, because its windows alternate between the two
+     * partials' rates.
+     */
+    private fun windowedCrossingRates(
+        pcm: ShortArray,
+        from: Int,
+        to: Int,
+        sampleRateHz: Int,
+        windowMs: Int,
+    ): List<Double> {
+        val windowSamples = sampleRateHz * windowMs / 1000
+        val rates = mutableListOf<Double>()
+        var start = from
+        while (start + windowSamples <= minOf(to, pcm.size)) {
+            val count = zeroCrossings(pcm, start, start + windowSamples).size
+            rates += count * 1000.0 / windowMs
+            start += windowSamples
+        }
+        return rates
+    }
+
+    /**
+     * Expected mean zero-crossing rate of an equal-amplitude two-tone sum: twice the *higher*
+     * partial, slightly under.
+     *
+     * Empirical, and the instrument's own calibration history is the argument for it. A
+     * stationarity assertion failed on correct audio first (a dual-tone's beat envelope swings
+     * individual windows by 240-300 crossings/s), then Rice's formula — 2× the RMS frequency —
+     * under-predicted by ~20%, because it assumes noise and this is a deterministic pair whose
+     * higher partial dominates the crossings. *Measured*: the tick reads 2375/s against 2×1209 =
+     * 2418 (98%), the gun 3173/s against 2×1633 = 3266 (97%). The band is ±10% around 2×f_high;
+     * every wrong answer is far outside it — a warble leak reads ~7700/s, and a swapped pair moves
+     * f_high itself.
+     */
+    private fun dualToneCrossingRate(fHigh: Double): Double = 2.0 * fHigh
+
+    @Test fun `a sync tick keeps its DTMF pair, not the blast's warble`() {
+        // The tick is TONE_DTMF_1 — 697 + 1209 Hz, a fixed pair. If the blast's warble leaked into
+        // it a sailor would lose one of the two things separating a tick from a signal, and every
+        // length assertion in this file would still pass. The expectation is computed from the
+        // published DTMF frequencies, an external source, never from CueWaveform's own constants.
+        val pcm = CueWaveform.render(sync(short = 1), rate48k)
+        val onSamples = (rate48k * CueTiming.SYNC_ON / 1000).toInt()
+        val rates = windowedCrossingRates(pcm, onSamples / 6, onSamples * 5 / 6, rate48k, windowMs = 10)
+        assertTrue("expected usable windows, got ${rates.size}", rates.size >= 3)
+
+        val mean = rates.sum() / rates.size
+        val expected = dualToneCrossingRate(1209.0) // 2418/s; measured 2375
+        assertTrue(
+            "tick crossing rate ${mean.toInt()}/s, expected ~${expected.toInt()}/s +/-10%",
+            mean in (expected * 0.90)..(expected * 1.10),
+        )
+    }
+
+    @Test fun `the gun keeps its DTMF pair, not the blast's warble`() {
+        // The one cue a sailor starts on, and the more expensive to get wrong: three seconds of
+        // unintended warble is the gun sounding like a signal repeated. TONE_DTMF_D: 941 + 1633 Hz.
+        val pcm = CueWaveform.render(blast(sustained = 3_000L), rate48k)
+        val rates = windowedCrossingRates(
+            pcm,
+            rate48k * 100 / 1000,
+            rate48k * 2_900 / 1000,
+            rate48k,
+            windowMs = 25,
+        )
+        assertTrue("expected usable windows, got ${rates.size}", rates.size > 50)
+
+        val mean = rates.sum() / rates.size
+        val expected = dualToneCrossingRate(1633.0) // 3266/s; measured 3173
+        assertTrue(
+            "gun crossing rate ${mean.toInt()}/s, expected ~${expected.toInt()}/s +/-10%",
+            mean in (expected * 0.90)..(expected * 1.10),
+        )
+    }
+
+    @Test fun `the same instrument does see the blast warble, so a quiet tick means something`() {
+        // Positive control for the two stationarity cases above: an instrument that reported *no*
+        // swing on the warbling blast would also report no swing on a broken tick, and both would
+        // pass. The blast's windows alternate between the partials' rates, so its swing must be
+        // large where the tick's and gun's are small — same window size as the tick's case.
+        val pcm = CueWaveform.render(blast(long = 1), rate48k)
+        val rates = windowedCrossingRates(
+            pcm,
+            rate48k * 25 / 1000,
+            rate48k * 475 / 1000,
+            rate48k,
+            windowMs = 10,
+        )
+        assertTrue("expected usable windows, got ${rates.size}", rates.size > 20)
+
+        val swing = rates.max() - rates.min()
+        assertTrue(
+            "the blast should swing between ~7400 and ~8000 crossings/s; measured ${swing.toInt()}/s",
+            swing > 300.0,
+        )
+    }
 }
