@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive-icon foreground layer: the stopwatch mark, kept inside the 66dp safe zone
+     (max extent from center is 32dp — crown top at y=22 — against a 33dp safe radius).
+     Strokes are heavier than the old single-file icon so the hands survive watch launcher size.
+     store/render_store_icon.py mirrors this geometry for the 512x512 Play listing icon —
+     change either file and the other must follow. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Watch face: white ring -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,54m-27,0a27,27 0,1 1,54 0a27,27 0,1 1,-54 0" />
+    <!-- Watch face: navy dial -->
+    <path
+        android:fillColor="#1A1A2E"
+        android:pathData="M54,54m-22,0a22,22 0,1 1,44 0a22,22 0,1 1,-44 0" />
+    <!-- Crown / button at top -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M49,22L59,22L59,28L49,28Z" />
+    <!-- Minute hand pointing to 12 -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M54,54L54,35" />
+    <!-- Hour hand pointing to 10 -->
+    <path
+        android:strokeColor="#FFD700"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M54,54L43,46" />
+    <!-- Center pivot -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M54,54m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" />
+</vector>
