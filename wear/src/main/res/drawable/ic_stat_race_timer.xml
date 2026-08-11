@@ -1,37 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Notification / ongoing-activity icon.
+<!-- Notification / ongoing-activity icon: the same sail-plan-in-a-bezel mark at 24dp.
 
-     Deliberately NOT the launcher foreground layer. Android renders a small icon from its
-     alpha channel only and tints the result, so an opaque drawable arrives as its own
-     silhouette — ic_launcher_foreground is opaque throughout and would show as a plain disc.
-     Everything here is therefore drawn as strokes on transparent, and colour is irrelevant:
-     only the shape survives. 24dp canvas, the standard notification size. -->
+     Deliberately NOT the launcher foreground layer. Android renders a small icon from its alpha
+     channel alone and tints the result, so only the silhouette survives — the launcher layer's
+     gold/white distinction would vanish and its waterline would read as a stray bar.
+
+     So this drops the crown and the waterline and keeps the two shapes that still say "sailing
+     countdown" as a flat silhouette: the bezel as an open stroke, and the sails filled. The gap
+     between jib and mainsail is widened relative to the launcher mark, because at 24dp a 4dp gap
+     closes up. Verify by rendering the alpha channel, never in a preview that composites for you. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24"
     android:tint="#FFFFFF">
-    <!-- Watch case, open so the tint reads as a ring rather than a disc -->
+
+    <!-- Bezel -->
     <path
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="2"
-        android:pathData="M12,13.5m-7.5,0a7.5,7.5 0,1 1,15 0a7.5,7.5 0,1 1,-15 0" />
-    <!-- Crown -->
+        android:strokeWidth="1.6"
+        android:pathData="M12,12m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0" />
+
+    <!-- Mainsail -->
     <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="2.5"
-        android:strokeLineCap="round"
-        android:pathData="M12,3.5L12,5.5" />
-    <!-- Hands: up to 12, and out to 10 -->
+        android:fillColor="#FFFFFF"
+        android:pathData="M12.9,4.6L12.4,17.4L18,17.4Q17.6,9.4 12.9,4.6Z" />
+
+    <!-- Jib -->
     <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="2"
-        android:strokeLineCap="round"
-        android:pathData="M12,13.5L12,8.5" />
-    <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="2"
-        android:strokeLineCap="round"
-        android:pathData="M12,13.5L8.5,11.5" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M10.4,8.4L10.9,17.4L6,17.4Q7.6,12.4 10.4,8.4Z" />
 </vector>
