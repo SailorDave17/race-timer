@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification / ongoing-activity icon.
+
+     Deliberately NOT the launcher foreground layer. Android renders a small icon from its
+     alpha channel only and tints the result, so an opaque drawable arrives as its own
+     silhouette — ic_launcher_foreground is opaque throughout and would show as a plain disc.
+     Everything here is therefore drawn as strokes on transparent, and colour is irrelevant:
+     only the shape survives. 24dp canvas, the standard notification size. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <!-- Watch case, open so the tint reads as a ring rather than a disc -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:pathData="M12,13.5m-7.5,0a7.5,7.5 0,1 1,15 0a7.5,7.5 0,1 1,-15 0" />
+    <!-- Crown -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M12,3.5L12,5.5" />
+    <!-- Hands: up to 12, and out to 10 -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M12,13.5L12,8.5" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M12,13.5L8.5,11.5" />
+</vector>
