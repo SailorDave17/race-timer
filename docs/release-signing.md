@@ -36,9 +36,25 @@ keyAlias=upload
 keyPassword=…
 ```
 
+**`storeFile` is an absolute path, so this file is machine-specific and must never be copied
+between machines.** On a second development machine the keystore lands wherever that machine puts
+it, and the line above has to name *that* path. Copying the file verbatim points `storeFile` at a
+directory that does not exist — and because the whole `signingConfig` is conditional on the file,
+the failure is an **unsigned bundle and a green build**, not an error. This is the same trap as
+having no `keystore.properties` at all, arrived at from the opposite direction.
+
 The release `signingConfig` is only created when that file exists, so CI — which has no
 `keystore.properties` — still configures and builds. Signing is local-only by decision (#71): the
 move to CI signing is deferred as #81 until the release process is boring.
+
+One consequence worth stating, because it makes a local run of the CI gate misleading: **CI and this
+machine execute different task graphs for `:wear:bundleRelease`.** CI has no `keystore.properties`,
+so no release `signingConfig` exists and the bundle builds unsigned; locally the file exists and the
+build takes a signing path CI never runs. A `bundleRelease` failure here therefore does not imply a
+CI failure, and a pass here does not prove CI's path works. To reproduce CI's, move
+`keystore.properties` **outside the repo** — never rename it in place, since a `.bak` beside it would
+hold both passwords in the repo root (the exact defect the #133 rehearsal found; `.gitignore` now
+globs `keystore.properties*`).
 
 Build a signed bundle with `./gradlew :wear:bundleRelease`; the output is
 `wear/build/outputs/bundle/release/wear-release.aab`.
@@ -154,8 +170,22 @@ owner performs steps 1 and 2; an agent can verify from step 3 down, by metadata 
    Anything else — including `Not a signed jar file` — means the restore did not work. Do not upload
    the bundle.
 
-**A procedure that has never been run is a claim, not a recovery path** — so this one gets
-rehearsed, not merely written. #133 tracks the rehearsal and its result.
+**A procedure that has never been run is a claim, not a recovery path** — so this one was rehearsed
+rather than merely written. #133, closed 2026-08-10, is the record.
+
+The rehearsal found three things the written-and-reviewed procedure had not, which is the argument
+for running it rather than a footnote to it:
+
+- **`.gitignore` was exact-name.** `keystore.properties.PRE-REHEARSAL` — the obvious name for a
+  working backup — was untracked and *not ignored*, holding both passwords in the repo root for
+  about twenty minutes. The rule is now globbed (`keystore.properties*`), so name any working copy
+  with that prefix and never a suffix-free variant.
+- **Both passwords hold the same value**, so the manager stores one secret rather than the two the
+  prose implied.
+- **"It's in Google Password Manager" is a category, not a location.** The entry name is what a
+  restore actually needs, which is why it is written out above.
+
+Generalised into cairn as `running-a-procedure-finds-what-writing-it-cannot-2026-08-10`.
 
 ## Losing the upload key: which side of the line this project is on
 
