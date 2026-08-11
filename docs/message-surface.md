@@ -6,9 +6,14 @@ target to build against instead of inventing a surface per error.
 
 Closes the design half of [#22](https://github.com/SailorDave17/race-timer/issues/22).
 
-**Status:** Tier 1 is shipped and running on hardware. Tier 2 is a design only — nothing in `wear/`
-implements it yet. Contrast figures below are computed from the source colour constants, not measured
-on the watch under sun; the sun audit is [#12](https://github.com/SailorDave17/race-timer/issues/12).
+**Status:** Tiers 1 and 3 are shipped and running on hardware. Tier 2 is a design only — nothing in
+`wear/` implements it yet.
+
+Contrast figures below are **computed by `shared/MessageContrast.kt` and asserted by
+`MessageContrastTest`**, not typed in here — every one of them was hand-calculated until
+[#123](https://github.com/SailorDave17/race-timer/issues/123), and two were wrong (see the Tier 1
+table). They are still *computed*, not measured on the watch under sun; the sun audit is
+[#12](https://github.com/SailorDave17/race-timer/issues/12) / [#121](https://github.com/SailorDave17/race-timer/issues/121).
 
 ## The constraint
 
@@ -27,7 +32,9 @@ follows from two facts:
    | Final ten | `#7B0000` dark red | running, ≤ 10 s |
    | Finished | `#005000` dark green | gun fired |
 
-   Source: `backgroundColorFor` in `wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt`.
+   Source: `backgroundArgbFor` in `shared/src/main/kotlin/com/racetimer/shared/MessageContrast.kt`,
+   which `TimerScreen` renders through. It moved out of `wear/` in #123 so the contrast guard could
+   derive each surface's reachable background set by driving it instead of restating its branches.
 
    Amber-on-amber is the case that bites. Any message that relies on the background being navy will
    disappear at exactly the moment the race gets tense.
@@ -40,7 +47,7 @@ Two of these already exist. Naming them keeps #13 from adding a fourth.
 |---|---|---|---|---|
 | 1 | Transient banner, top-centre | No | Auto-clears after 3 s | **Shipped** (`d85684d`) |
 | 2 | Blocking notice, in place of Start | **Yes** | Until the condition is resolved | **Design only — #13 builds it** |
-| 3 | Persistent status line under the sequence name | No | Until the user acts | **Shipped**, one consumer |
+| 3 | Persistent status line under the sequence name | No | Until the user acts | **Shipped**, two consumers |
 
 The split is the answer to #22's "blocking vs. transient vs. persistent": it is not one of the three,
 it is all three, chosen by *when* the problem occurs and *whether the sailor can do anything about it*.
@@ -54,7 +61,7 @@ action (Tier 3).
 
 ## Tier 1 — Transient banner (shipped)
 
-`MessageBanner` in [TimerScreen.kt:532](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L532),
+`MessageBanner` in [TimerScreen.kt:661](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L661),
 driven by the `message: String?` parameter and cleared through `onMessageExpired`.
 
 | | |
@@ -92,12 +99,17 @@ banner background:
 
 | Background state | Contrast | |
 |---|---|---|
-| All four | 8.6 : 1 | pass |
+| All four | 8.03 : 1 | pass |
 
 11 sp is normal-size text, so the bar is 4.5 : 1. The four rows collapsed to one when #102 made the
 scrim opaque: at 80 % the background still contributed a fifth of the composite, and the amber
-one-minute state was the worst case at 6.6 : 1. It now contributes nothing, so the worst case is the
+one-minute state was the worst case at 6.55 : 1. It now contributes nothing, so the worst case is the
 only case.
+
+*This figure read **8.6 : 1** from #102 until #123 recomputed it. 8.53 is `#FFC107` — Tier 3's text
+colour — on this scrim; the published number for Tier 1 had been worked out with the wrong
+foreground. Nothing was broken by it (both clear the bar), and nothing could have caught it: a wrong
+ratio in prose reads exactly like a right one. That is why the numbers moved into a test.*
 
 **Copy rules:** one line at 11 sp inside the width cap is roughly 34 characters, and two lines is all
 the gap above the Start button holds — so keep a notice under about 60. State what happened and
@@ -111,7 +123,7 @@ before they can follow; that is Tier 3.
 
 **Nothing implements this yet.** There is no permission check, no `POST_NOTIFICATIONS` handling, and no
 foreground-service failure path anywhere in `wear/`; `handleStart` calls `startForegroundService` and
-assumes it works ([MainActivity.kt:179](../wear/src/main/kotlin/com/racetimer/wear/MainActivity.kt#L179)).
+assumes it works ([MainActivity.kt:545](../wear/src/main/kotlin/com/racetimer/wear/MainActivity.kt#L545)).
 The three `catch (e: RuntimeException)` blocks in `ToneManager.kt` swallow tone failures silently. This
 section defines what #13 builds.
 
@@ -166,36 +178,52 @@ screen turning off) has no usable degraded mode and stays hard-blocked.
 
 ## Tier 3 — Persistent status line (shipped)
 
-The `showResyncPrompt` line at
-[TimerScreen.kt:120-129](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L120-L129) —
-"Recovered — tap Sync to confirm", `caption2` bold, `#FFC107`, directly under the sequence name. It
-persists until the sailor taps Sync, because it asks for an action a 3 s banner could not.
+Two consumers, both `caption2` bold in `#FFC107` directly under the sequence name, and both
+persisting until the sailor acts because each asks for something a 3 s banner could not:
+
+| Consumer | Line | On screen when | Scrim |
+|---|---|---|---|
+| Degraded-recovery prompt | "Recovered — tap Sync to confirm" | `RUNNING`, after a `DEGRADED` restore, until Sync is tapped | **Yes** — `#FF3A2A00`, added by #123 |
+| Discard warning (#89) | "Start discards saved *name*" | `IDLE` pre-start only, cleared by `clearResumeOffer` | No — navy is its whole exposure |
+
+Both live in [TimerScreen.kt:174-214](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L174-L214).
 
 Use this tier for anything mid-sequence that needs a *sustained* action or a standing caveat, and Tier 1
 for anything that is merely news.
 
-### Known defect — this line has no scrim
+### The amber-on-amber defect — fixed in #123
 
-`#FFC107` is drawn straight onto the background. Computed contrast:
+Bare `#FFC107` on the four backgrounds, which is what the re-sync prompt drew until #123:
 
-| Background state | Contrast | |
-|---|---|---|
-| Normal navy | 10.4 : 1 | pass |
-| Final ten | 7.0 : 1 | pass |
-| Finished | 6.0 : 1 | pass |
-| One minute | **2.9 : 1** | **fails 4.5 : 1** |
+| Background state | Contrast | | Prompt reachable there? |
+|---|---|---|---|
+| Normal navy | 10.46 : 1 | pass | yes |
+| Final ten | 6.99 : 1 | pass | yes |
+| One minute | **2.93 : 1** | **fails 4.5 : 1** | **yes — this was the defect** |
+| Finished | 6.00 : 1 | pass | **no** — the prompt needs `RUNNING`, green needs `FINISHED` |
 
-Amber text on the amber background. The prompt can be on screen while the timer runs inside 1:00 —
-`showResyncPrompt` is not cleared by starting, only by tapping Sync — so this is reachable, not
-theoretical. **Fix: give it the same `#CC3A2A00` scrim as the Tier 1 banner.** Belongs to #12; noted
-here so the doc is not describing a surface that is quietly broken.
+Reachable, not theoretical: `showResyncPrompt` is not cleared by starting, only by tapping Sync, so a
+sailor who reboots mid-race and never syncs carries it into the final minute — the moment the race
+gets tense.
+
+**Fixed** by giving the prompt Tier 1's scrim, which takes it to **8.53 : 1** on every background.
+The remedy this section used to name was `#CC3A2A00`, the *80 %* scrim — written before #102 replaced
+it with an opaque one, so following it literally would have reinstated exactly the alpha #102 removed.
+It would have passed (6.95 : 1 on amber) and given back 1.5 : 1 for nothing.
+
+The discard warning stays deliberately bare: it is confined to the `IDLE` pre-start screen, so navy at
+10.46 : 1 is its whole exposure. That is rule 1's "checked against all four states" branch rather than
+an exception to it, and `MessageContrastTest` derives the confinement from `backgroundArgbFor` rather
+than trusting this paragraph.
 
 ---
 
 ## Rules any new message must follow
 
 1. **Scrim or nothing.** Text drawn directly on the background is only safe if it has been checked
-   against all four states. In practice: use the scrim.
+   against all four states. In practice: use the scrim. Since #123 "checked" means *asserted* — add
+   the surface to `MessageContrastTest` and let it derive the backgrounds the surface can reach; a
+   ratio argued in prose here is how the 8.6 : 1 above stayed wrong.
 2. **Never over the readout.** Above it (Tier 1), or below it in the button/label zone (Tiers 2-3).
 3. **Blocking is pre-start only.** Once the sequence is running, nothing takes the screen.
 4. **Amber is the message colour.** Red is reserved for the final-ten background and for the Tier 2
@@ -218,7 +246,7 @@ Tier assignments so #13 does not have to re-litigate each one:
 | Wall-clock jump | 1 | "Clock changed — countdown held steady" | none — **shipped** |
 | Exact recovery (race resumed) | 1 | "Resumed race in progress" | none — **shipped** |
 | Spent snapshot discarded | 1 | "Old race ended — starting fresh" | none — **shipped** |
-| Degraded recovery | 3 | "Recovered — tap Sync to confirm" | Sync — **shipped** |
+| Degraded recovery | 3 | "Recovered — tap Sync to confirm" | Sync — **shipped**, scrimmed #123 |
 
 Copy is a starting point, not fixed — all of it is untested on a wrist in sun.
 
@@ -232,6 +260,7 @@ Copy is a starting point, not fixed — all of it is untested on a wrist in sun.
 
 ---
 
-Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12.
+Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123.
 Owner: SailorDave17.
-Last reviewed: 2026-07-30.
+Last reviewed: 2026-08-10 (#123 — Tier 3 contrast fixed, every figure now computed by
+`shared/MessageContrast.kt` and asserted by `MessageContrastTest`).
