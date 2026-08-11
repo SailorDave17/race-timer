@@ -43,6 +43,13 @@ directory that does not exist — and because the whole `signingConfig` is condi
 the failure is an **unsigned bundle and a green build**, not an error. This is the same trap as
 having no `keystore.properties` at all, arrived at from the opposite direction.
 
+**A half-filled file is refused, not signed with** (#156). If this file exists with any of the four
+keys blank or still reading `REPLACE_ME`, a release build fails at configuration time naming the
+offending keys, rather than dying inside `signReleaseBundle` with `keystore password was incorrect` —
+a message that reads as a bad backup and cost a wrong diagnosis before a `grep` settled it. The guard
+is scoped to release tasks, so an unfilled file never blocks `:shared:test` or a debug build, and CI
+has no such file at all so it can never fire there.
+
 The release `signingConfig` is only created when that file exists, so CI — which has no
 `keystore.properties` — still configures and builds. Signing is local-only by decision (#71): the
 move to CI signing is deferred as #81 until the release process is boring.
@@ -169,6 +176,32 @@ owner performs steps 1 and 2; an agent can verify from step 3 down, by metadata 
 
    Anything else — including `Not a signed jar file` — means the restore did not work. Do not upload
    the bundle.
+5. **If this was a rehearsal, run step 4 again against the live config after cleaning up.** A
+   rehearsal that restores its own backups is not finished when the verification passes — it is
+   finished when the machine it ran on can still sign. This step is the whole of #156 and it is not
+   optional; see below.
+
+### A rehearsal is not allowed to leave the machine worse than it found it
+
+Owner decision, 2026-08-11 (#156). The steps above verify a **restore**; run as a *rehearsal* they
+verify a temporary state and then undo it, and undoing it is exactly where the machine can be broken
+without anything saying so.
+
+*Measured*: #133 rehearsed this procedure, recorded three real findings, and closed 2026-08-10 stating
+the recovery path was proven — while the live `keystore.properties` was left holding `REPLACE_ME` on
+both password lines, where it stayed for two days. The claim was true and the machine could not sign.
+
+**Nothing routinely catches that**, which is why it needs a step rather than more care.
+`:wear:bundleRelease` runs on every push since #129 — but CI has no `keystore.properties`, takes the
+unsigned branch, and passes. The gate that appears to cover release signing is structurally incapable
+of exercising it, so the *only* instrument is a signed local build, and nothing does one unless a
+person asks for it.
+
+A guard now refuses the confusing half of it: `wear/build.gradle.kts` fails a release build at
+configuration time when `keystore.properties` exists with any key unset or still `REPLACE_ME`, naming
+the keys and where the password lives. It cannot replace step 5 — it catches the placeholder state,
+not a file restored with a *stale but well-formed* password — and it is scoped to release tasks, so
+an unfilled file never blocks `:shared:test` or a debug build.
 
 **A procedure that has never been run is a claim, not a recovery path** — so this one was rehearsed
 rather than merely written. #133, closed 2026-08-10, is the record.
