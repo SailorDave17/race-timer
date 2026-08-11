@@ -302,35 +302,53 @@ object BuiltInSequences {
 
     // --- US Sailing 5-4-1-go (RRS 26) ---
     //
-    // Voiced for the wrist rather than for the horn: RRS 26 signals are long horn blasts, but a
-    // sailor cannot count a 500 ms buzz against another 500 ms buzz without looking. Every cue here
-    // is short blasts, and the two that matter procedurally — prep up at 4:00, prep down at 1:00 —
-    // are doubled so they stand out from the plain minute ticks around them.
+    // **Long above the minute, short below it.** That line is the sequence's grammar: a long blast is
+    // a signal the committee is sounding, a short one is the wrist counting, and [CueVoice.SYNC] is a
+    // tick running into a signal. A sailor never has to work out which of the three they just felt,
+    // because the three never share a shape. The shared [finalMinuteTail] is the short half of that
+    // rule and is unchanged — the last minute is counting, not signalling.
+    //
+    // Above the minute the *count* separates two kinds of mark. The three that move a flag — warning
+    // at 5:00, prep up at 4:00, prep down at 1:00 — are **doubled**; the two that only report the
+    // time, 3:00 and 2:00, are **single**. RRS 26 sounds one signal at each mark, so the doubling is a
+    // wrist re-voicing rather than a transcription, and always has been: 4:00 and 1:00 were doubled
+    // long before 5:00 joined them.
+    //
+    // This **overturns #45**, which voiced every cue short on the reasoning that a sailor cannot count
+    // one 500 ms buzz against another without looking. #117 is the owner's report from the water: the
+    // minute signals sounded too short, and what they expected was long blasts. Direct evidence from
+    // the person wearing it outranks the argument as written — and that argument was asserted, never
+    // measured, against the only case that matters here, one long against two.
+    //
+    // Still not [usSailingRaceManager], which sounds **1 long** at its three signals and is silent at
+    // 3:00 and 2:00. The two sequences share their offsets and nothing else — asserted by a test — and
+    // that stayed true through this change rather than by luck: the doubling is what keeps a sailor's
+    // 5:00 distinct from a committee's.
     val usSailing: RaceSequence = RaceSequence(
         id = "us_sailing_5_4_1",
         name = "US Sailing 5-4-1-Go",
         cues = listOf(
             SequenceCue(
                 offsetMs = 5 * 60_000L,
-                signal = SignalPattern(shortBlasts = 1, label = "Warning — class flag up"),
+                signal = SignalPattern(longBlasts = 2, label = "Warning — class flag up"),
             ),
         ) + syncRunInto(4 * 60_000L, "prep") + listOf(
             SequenceCue(
                 offsetMs = 4 * 60_000L,
-                signal = SignalPattern(shortBlasts = 2, label = "Preparatory — P/I/Z/U flag up"),
+                signal = SignalPattern(longBlasts = 2, label = "Preparatory — P/I/Z/U flag up"),
             ),
             SequenceCue(
                 offsetMs = 3 * 60_000L,
-                signal = SignalPattern(shortBlasts = 1, label = "3 minutes"),
+                signal = SignalPattern(longBlasts = 1, label = "3 minutes"),
             ),
             SequenceCue(
                 offsetMs = 2 * 60_000L,
-                signal = SignalPattern(shortBlasts = 1, label = "2 minutes"),
+                signal = SignalPattern(longBlasts = 1, label = "2 minutes"),
             ),
         ) + syncRunInto(1 * 60_000L, "one-minute") + listOf(
             SequenceCue(
                 offsetMs = 1 * 60_000L,
-                signal = SignalPattern(shortBlasts = 2, label = "One-minute — prep flag down"),
+                signal = SignalPattern(longBlasts = 2, label = "One-minute — prep flag down"),
             ),
         ) + finalMinuteTail + sustainedGun,
     )
@@ -345,11 +363,11 @@ object BuiltInSequences {
     //
     // Three departures from the sailor sequence, each with a reason:
     //
-    //  - **1 long at 5:00, 4:00 and 1:00**, where a sailor gets 1 short / 2 short / 2 short. A sailor
-    //    counts blasts on the wrist under load and cannot tell one 500 ms buzz from another; a race
-    //    manager is *sounding* the signals rather than counting them, so the long matches what their
-    //    own horn is doing. Confirmed by the iStart Owner's Manual v2.0, whose Rule 26 loud-horn
-    //    schedule is 1 long at each of those three marks.
+    //  - **1 long at 5:00, 4:00 and 1:00**, where a sailor gets 2 long at each. Confirmed by the
+    //    iStart Owner's Manual v2.0, whose Rule 26 loud-horn schedule is 1 long at each of those three
+    //    marks: a race manager is *sounding* the signals, so the count matches what their own horn is
+    //    doing rather than being re-voiced for legibility. (The sailor sequence doubles them for the
+    //    wrist; until #117 it also sounded them short, and this bullet said so.)
     //  - **Silent at 3:00 and 2:00.** Same reasoning that keeps 0:50 and 0:40 out of
     //    [raceManagerTail]: those are cross-check marks for a sailor, and the committee is the thing
     //    being cross-checked against. The manual's table has no entries there either.

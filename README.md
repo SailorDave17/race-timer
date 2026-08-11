@@ -28,10 +28,12 @@ Full cue-by-cue tables are on the wiki: **[Race Sequences](https://github.com/Sa
 `shared/src/main/kotlin/com/racetimer/shared/RaceSequence.kt` is the authoritative source if anything
 disagrees with the app.
 
-- **Sailor sequences** are voiced for the wrist rather than for the horn. US Sailing uses short
-  blasts throughout, because a sailor cannot count one 500 ms buzz against another without looking;
-  the two cues that matter procedurally (prep up at 4:00, prep down at 1:00) are doubled so they
-  stand out from the plain minute ticks.
+- **US Sailing sounds long above the minute and short below it.** A long blast is a signal the
+  committee is sounding; a short one is the wrist counting. The three marks that move a flag —
+  warning at 5:00, prep up at 4:00, prep down at 1:00 — are doubled, so they stand apart from the
+  plain minute reminders at 3:00 and 2:00. (It was short blasts throughout until #117, on the
+  reasoning that long blasts are hard to count on the wrist; sailing the sequence on the water
+  settled that the other way.)
 - **Every sequence shares the last five seconds** — 0:05 to 0:01 doubled — so a sailor never has to
   remember which sequence is loaded to know what the final five mean.
 - **Custom** encodes its duration in the sequence id (`custom_8m`), which is what lets a killed

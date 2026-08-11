@@ -22,24 +22,67 @@ class RaceSequenceTest {
         assertTrue(gun.isGun)
     }
 
-    @Test fun `usSailing is voiced for the wrist, not the horn`() {
-        // Every cue is short blasts: a sailor cannot count one 500 ms buzz against another without
-        // looking at the watch, which is the whole thing this sequence is trying to avoid.
-        val long = BuiltInSequences.usSailing.cues.filter { it.signal.longBlasts > 0 }
-        assertEquals("no usSailing cue may use a long blast", emptyList<SequenceCue>(), long)
+    @Test fun `usSailing sounds long above the minute and short below it`() {
+        // REPLACES `usSailing is voiced for the wrist, not the horn` (#45), which asserted that no cue
+        // here may carry a long blast at all. #117 overturned that on the owner's on-water report, so
+        // this test is *moved to the new rule* rather than deleted: the sequence still has a voicing
+        // property worth pinning, and it is now a boundary rather than a ban.
+        //
+        // Long = a signal the committee is sounding. Short = the wrist counting. The line is 1:00.
+        // Sync ticks and the sustained gun are neither and are excluded by kind, not by offset.
+        var signals = 0
+        var ticks = 0
+        for (cue in BuiltInSequences.usSailing.cues) {
+            if (cue.signal.voice != CueVoice.BLAST || cue.isGun) continue
+            if (cue.offsetMs >= 60_000L) {
+                signals++
+                assertTrue(
+                    "signal at ${cue.offsetMs} ms must be long blasts only",
+                    cue.signal.longBlasts > 0 && cue.signal.shortBlasts == 0,
+                )
+            } else {
+                ticks++
+                assertTrue(
+                    "wrist tick at ${cue.offsetMs} ms must be short blasts only",
+                    cue.signal.shortBlasts > 0 && cue.signal.longBlasts == 0,
+                )
+            }
+        }
+        // Positive control. Every assertion above sits behind a `continue`, so a change to
+        // SignalPattern's default voice — or anything else that stopped these cues counting as
+        // blasts — would empty the loop and leave this test green having checked nothing. The counts
+        // are what make "it passed" mean "it looked".
+        assertEquals("blast signals above the minute", 5, signals)
+        assertEquals("wrist ticks below the minute", 14, ticks)
     }
 
-    @Test fun `usSailing ticks once at each plain minute`() {
-        assertPattern(BuiltInSequences.usSailing, 5 * 60_000L, longBlasts = 0, shortBlasts = 1)
-        assertPattern(BuiltInSequences.usSailing, 3 * 60_000L, longBlasts = 0, shortBlasts = 1)
-        assertPattern(BuiltInSequences.usSailing, 2 * 60_000L, longBlasts = 0, shortBlasts = 1)
+    @Test fun `usSailing sounds one long at the plain minute reminders`() {
+        // 3:00 and 2:00 move no flag — they report the time, so they stay single where the three
+        // procedural marks are doubled. 5:00 left this group in #117: it is the warning signal, and
+        // grouping it with the plain reminders is what made it sound wrong on the water.
+        assertPattern(BuiltInSequences.usSailing, 3 * 60_000L, longBlasts = 1, shortBlasts = 0)
+        assertPattern(BuiltInSequences.usSailing, 2 * 60_000L, longBlasts = 1, shortBlasts = 0)
     }
 
-    @Test fun `usSailing doubles the two procedural signals`() {
-        // Prep up and prep down are the marks that matter; they must stand out from the plain
-        // minute ticks either side of them.
-        assertPattern(BuiltInSequences.usSailing, 4 * 60_000L, longBlasts = 0, shortBlasts = 2)
-        assertPattern(BuiltInSequences.usSailing, 1 * 60_000L, longBlasts = 0, shortBlasts = 2)
+    @Test fun `usSailing doubles the three procedural signals`() {
+        // Warning, prep up, prep down — every mark that puts a flag up or takes one down, and no
+        // others. Doubled so they stand apart from the plain minute reminders either side of them.
+        // Was two marks until #117 added 5:00; the count is the assertion, so a fourth doubled mark
+        // or a demoted one fails here.
+        // The expected marks are named outright rather than filtered out of the sequence: deriving
+        // them from `longBlasts == 2` and then asserting `longBlasts == 2` would pass whatever the
+        // code said. Having to edit this list when a mark changes is the assertion working.
+        val procedural = listOf(5 * 60_000L, 4 * 60_000L, 1 * 60_000L)
+        for (offset in procedural) {
+            assertPattern(BuiltInSequences.usSailing, offset, longBlasts = 2, shortBlasts = 0)
+        }
+        // And no others — a fourth doubled mark is as wrong as a demoted one.
+        assertEquals(
+            procedural,
+            BuiltInSequences.usSailing.cues
+                .filter { it.signal.voice == CueVoice.BLAST && it.signal.longBlasts >= 2 }
+                .map { it.offsetMs },
+        )
     }
 
     @Test fun `usSailing runs five sync ticks into the 4 and 1 minute signals`() {
@@ -211,15 +254,15 @@ class RaceSequenceTest {
         assertEquals(30, sailor.cues.size)
         assertEquals(5 * 60_000L, sailor.totalMs)
         assertFalse("usSailing is a sailor's race", sailor.countUpAfterFinish)
-        assertEquals("no usSailing cue may use a long blast", emptyList<SequenceCue>(),
-            sailor.cues.filter { it.signal.longBlasts > 0 })
-        // Its own voicing at the three marks the race-manager variant re-voices to 1 long.
-        assertPattern(sailor, 5 * 60_000L, longBlasts = 0, shortBlasts = 1)
-        assertPattern(sailor, 4 * 60_000L, longBlasts = 0, shortBlasts = 2)
-        assertPattern(sailor, 1 * 60_000L, longBlasts = 0, shortBlasts = 2)
-        // And the parts the race manager drops entirely: the plain minute ticks and the sailor tail.
-        assertPattern(sailor, 3 * 60_000L, longBlasts = 0, shortBlasts = 1)
-        assertPattern(sailor, 2 * 60_000L, longBlasts = 0, shortBlasts = 1)
+        // Its own voicing at the three marks the race-manager variant sounds as 1 long. #117 changed
+        // what these values are and not what the test is for: the guard is that the two sequences
+        // cannot be merged behind a shared head, and doubling is now what holds them apart at 5:00.
+        assertPattern(sailor, 5 * 60_000L, longBlasts = 2, shortBlasts = 0)
+        assertPattern(sailor, 4 * 60_000L, longBlasts = 2, shortBlasts = 0)
+        assertPattern(sailor, 1 * 60_000L, longBlasts = 2, shortBlasts = 0)
+        // And the parts the race manager drops entirely: the plain minute reminders and the sailor tail.
+        assertPattern(sailor, 3 * 60_000L, longBlasts = 1, shortBlasts = 0)
+        assertPattern(sailor, 2 * 60_000L, longBlasts = 1, shortBlasts = 0)
         assertEquals(
             BuiltInSequences.scholastic.cues.filter { it.offsetMs < 60_000L },
             sailor.cues.filter { it.offsetMs < 60_000L },
