@@ -142,4 +142,70 @@ class MessageContrastTest {
         assertEquals(8.53, effectiveContrast(TIER3_TEXT_ARGB, TIER3_SCRIM_ARGB, BG_NORMAL_ARGB), 0.01)
         assertEquals(10.46, effectiveContrast(TIER3_TEXT_ARGB, null, BG_NORMAL_ARGB), 0.01)
     }
+
+    // --- Tier 2, the blocking notice (#13) ------------------------------------------------------
+
+    @Test fun `the Tier 2 panel is legible on every background it can appear on`() {
+        // Blocking is pre-start only (rule 3), so IDLE is the state that matters — but the panel is
+        // also reachable from FINISHED and PAUSED, which share the idle button layout. Derived from
+        // backgroundArgbFor rather than asserted as "navy", so a state gaining a colour is caught.
+        assertLegible(
+            "Tier 2 panel", TIER2_TEXT_ARGB, TIER2_SCRIM_ARGB,
+            backgroundsWhen {
+                it == TimerState.IDLE || it == TimerState.FINISHED || it == TimerState.PAUSED
+            },
+        )
+    }
+
+    @Test fun `the Tier 2 panel would still be legible if it ever reached a running background`() {
+        // Deliberately wider than the rule allows. Rule 3 keeps blocking off a running screen, but
+        // that rule lives in MainActivity's gating rather than in a colour, and this file cannot see
+        // it — so the panel is held to all four backgrounds instead of trusting a constraint that is
+        // enforced somewhere this test has no view of.
+        assertLegible("Tier 2 panel, unconstrained", TIER2_TEXT_ARGB, TIER2_SCRIM_ARGB, backgroundsWhen { true })
+    }
+
+    @Test fun `the Tier 2 border clears the non-text bar on every background`() {
+        // The border is a component boundary, not copy: WCAG 1.4.11's 3 : 1, not 4.5 : 1.
+        for (bg in backgroundsWhen { true }) {
+            val ratio = effectiveContrast(TIER2_BORDER_ARGB, TIER2_SCRIM_ARGB, bg)
+            assertTrue(
+                "Tier 2 border on ${bg.toString(16)} is %.2f : 1, below the %.1f : 1 non-text bar"
+                    .format(ratio, WCAG_NON_TEXT_MIN),
+                ratio >= WCAG_NON_TEXT_MIN,
+            )
+        }
+    }
+
+    @Test fun `the Tier 2 scrim is translucent and its background still shows through`() {
+        // The property the tier is buying, asserted rather than described. If someone "simplifies"
+        // the scrim to opaque black to match Tiers 1 and 3, all four composites collapse to one
+        // value and this goes red — which is the conversation worth having, not a silent change.
+        val composites = listOf(BG_NORMAL_ARGB, BG_ONE_MINUTE_ARGB, BG_FINAL_TEN_ARGB, BG_FINISHED_ARGB)
+            .map { compositeOver(TIER2_SCRIM_ARGB, it) }
+        assertEquals("a translucent scrim must not erase its background", 4, composites.toSet().size)
+        for (c in composites) {
+            assertFalse("the composite must not be pure black", c == 0xFF000000L)
+        }
+    }
+
+    @Test fun `the Tier 2 figures quoted in the message-surface doc are the computed ones`() {
+        // The doc claims ">= 11 : 1 on every background state". Asserting the worst case is what
+        // makes that sentence checkable — it was the strongest claim in the Tier 2 section and the
+        // only one nothing could have caught, which is exactly how the 8.6 : 1 error survived.
+        assertEquals(11.38, effectiveContrast(TIER2_TEXT_ARGB, TIER2_SCRIM_ARGB, BG_ONE_MINUTE_ARGB), 0.01)
+        assertEquals(11.95, effectiveContrast(TIER2_TEXT_ARGB, TIER2_SCRIM_ARGB, BG_FINAL_TEN_ARGB), 0.01)
+        val worst = listOf(BG_NORMAL_ARGB, BG_ONE_MINUTE_ARGB, BG_FINAL_TEN_ARGB, BG_FINISHED_ARGB)
+            .minOf { effectiveContrast(TIER2_TEXT_ARGB, TIER2_SCRIM_ARGB, it) }
+        assertTrue("the doc's >= 11 : 1 claim, measured: %.2f".format(worst), worst >= 11.0)
+    }
+
+    @Test fun `the Tier 2 panel beats bare amber on the background that would have caught it`() {
+        // Negative control, same shape as Tier 3's above: without the scrim this text lands at
+        // 2.76 : 1 on amber and fails. The panel exists to make that impossible, so the failing
+        // case is asserted to fail.
+        val bare = effectiveContrast(TIER2_TEXT_ARGB, null, BG_ONE_MINUTE_ARGB)
+        assertEquals(2.76, bare, 0.01)
+        assertFalse("un-scrimmed Tier 2 must not pass, or the scrim proves nothing", bare >= WCAG_NORMAL_TEXT_MIN)
+    }
 }

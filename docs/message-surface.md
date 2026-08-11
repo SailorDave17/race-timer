@@ -6,8 +6,8 @@ target to build against instead of inventing a surface per error.
 
 Closes the design half of [#22](https://github.com/SailorDave17/race-timer/issues/22).
 
-**Status:** Tiers 1 and 3 are shipped and running on hardware. Tier 2 is a design only — nothing in
-`wear/` implements it yet.
+**Status:** all three tiers are shipped and running on hardware. Tier 2 was a design only until
+[#13](https://github.com/SailorDave17/race-timer/issues/13) built it.
 
 Contrast figures below are **computed by `shared/MessageContrast.kt` and asserted by
 `MessageContrastTest`**, not typed in here — every one of them was hand-calculated until
@@ -41,12 +41,13 @@ follows from two facts:
 
 ## Three tiers
 
-Two of these already exist. Naming them keeps #13 from adding a fourth.
+All three exist. Naming them before #13 was built is what kept it from adding a fourth — the
+five conditions it wired up all landed on tiers defined here rather than inventing a surface each.
 
 | Tier | Surface | Blocks Start? | Lifetime | Status |
 |---|---|---|---|---|
 | 1 | Transient banner, top-centre | No | Auto-clears after 3 s | **Shipped** (`d85684d`) |
-| 2 | Blocking notice, in place of Start | **Yes** | Until the condition is resolved | **Design only — #13 builds it** |
+| 2 | Blocking notice, in place of Start | **Yes** | Until the condition is resolved | **Shipped** (#13) |
 | 3 | Persistent status line under the sequence name | No | Until the user acts | **Shipped**, two consumers |
 
 The split is the answer to #22's "blocking vs. transient vs. persistent": it is not one of the three,
@@ -119,13 +120,18 @@ before they can follow; that is Tier 3.
 
 ---
 
-## Tier 2 — Blocking notice (design only, for #13)
+## Tier 2 — Blocking notice (shipped, #13)
 
-**Nothing implements this yet.** There is no permission check, no `POST_NOTIFICATIONS` handling, and no
-foreground-service failure path anywhere in `wear/`; `handleStart` calls `startForegroundService` and
-assumes it works ([MainActivity.kt:545](../wear/src/main/kotlin/com/racetimer/wear/MainActivity.kt#L545)).
-The three `catch (e: RuntimeException)` blocks in `ToneManager.kt` swallow tone failures silently. This
-section defines what #13 builds.
+`BlockingNotice` in `wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt`, driven by the
+`startNotice: StartNotice?` parameter and rendered **inside the branch that draws the Start button**.
+That placement is the enforcement of rule 3 below: blocking cannot reach a running race because the
+only branch it lives in is the pre-start one, so it is geometry rather than a condition that could be
+got wrong.
+
+*The decision of what to show is not here.* `shared/StartPreconditions.kt` holds it —
+`DeviceReadiness` is five observations gathered in `wear/`, and `startNotice()` picks the single
+notice worth showing. Same split as the colours: a rule inside a Compose screen can only be checked
+by holding a watch, and `StartPreconditionsTest` checks this one on every combination of the five.
 
 ### It is not a dialog
 
@@ -159,7 +165,7 @@ occupies, and Start is not on screen to be tapped.
 | Readout | Stays visible at `alpha = 0.4f` — communicates "not armed" without removing context |
 | Panel | Scrim `#E6000000` (90 % black), 8 dp rounded, 1 dp `#D32F2F` border. The border carries "this is blocking"; the text stays amber so it never becomes red-on-red |
 | Type | `caption1`, amber `#FFB74D`, centre-aligned, **max 3 lines** |
-| Contrast | ≥ 11 : 1 on every background state (computed) — the 90 % scrim makes the background nearly irrelevant |
+| Contrast | 11.38 : 1 worst case, 11.95 : 1 best — computed by `MessageContrast.kt`, asserted by `MessageContrastTest`. The 90 % scrim makes the background nearly irrelevant, and the border is held to WCAG's **non-text** 3 : 1 (it lands at 3.96 : 1) rather than the 4.5 : 1 the copy clears |
 | Primary button | Labelled by the **remedy**, not the problem: "Settings", "Grant", "Retry". Never "OK" |
 | Secondary button | None. The pre-start screen has exactly one control ([#55](https://github.com/SailorDave17/race-timer/issues/55) removed Reset), and the remedy takes its place |
 | Start | **Absent**, not disabled. A greyed Start on a watch invites repeated taps |
@@ -232,14 +238,16 @@ than trusting this paragraph.
 6. **One message at a time.** `uiMessage` is a single nullable — a second message replaces the first.
    That is correct; two stacked banners on a 45 mm screen is worse than losing one.
 
-## Message catalogue for #13
+## Message catalogue
 
-Tier assignments so #13 does not have to re-litigate each one:
+Every row below is **shipped**. The copy is held as constants in `shared/StartPreconditions.kt` and
+`StartPreconditionsTest` asserts each one fits the panel, so a copy edit that outgrows the screen
+fails rather than wraps.
 
 | Condition | Tier | Copy | Action |
 |---|---|---|---|
 | Foreground service blocked | 2 | "Can't run in background — open Settings" | Settings → app info |
-| Notification permission denied | 2 | "Notifications off — the timer may be killed" | Grant |
+| Notification permission denied | **3** | "Notifications off — timer may be killed" | Settings (tap the line) |
 | Audio unavailable / tone init failed | 2 (soft) | "Sound is off — the gun will be silent" | Start silent |
 | Vibration unavailable | 3 | "No haptics — watch the screen" | none |
 | Battery saver active | 3 | "Battery saver — sound may be cut" | none |
@@ -248,19 +256,91 @@ Tier assignments so #13 does not have to re-litigate each one:
 | Spent snapshot discarded | 1 | "Old race ended — starting fresh" | none — **shipped** |
 | Degraded recovery | 3 | "Recovered — tap Sync to confirm" | Sync — **shipped**, scrimmed #123 |
 
+### The notification row moved from Tier 2 to Tier 3, and that was a decision
+
+This table put a denied notification permission at Tier 2 — Start removed, a "Grant" button in its
+place — from #22 until #13 built it. **#13's own first acceptance criterion says the opposite**: the
+sequence still starts and runs, and the sailor is informed once with a route to Settings.
+
+The criterion is right and the table was wrong. On Android 13+ a foreground service **still starts**
+with `POST_NOTIFICATIONS` denied; only the notification is suppressed. Blocking would therefore have
+refused a race that would have run correctly, on a screen whose whole purpose is starting races. So
+the row changed rather than the criterion (owner decision, 2026-08-11), and
+`StartPreconditionsTest` carries an assertion named for it — a denied notification permission must
+never remove Start — so restoring the old row from this table alone turns the suite red.
+
+The remedy survives the demotion: the Tier 3 line is **tappable** and opens the app's notification
+settings. That is the "clear next step" half of the criterion, and it is why this is the one Tier 3
+consumer with an interaction. A second button was rejected — the pre-start screen has exactly one
+control by design (#55), and a remedy button would have displaced Start to warn about something that
+does not stop it.
+
 Copy is a starting point, not fixed — all of it is untested on a wrist in sun.
+
+## Error-surface audit (#13 AC5)
+
+*"Every error surface has a visible message, not just a log line."* That is a claim about the whole
+app rather than about a feature, so it is discharged as an audit: every `Log.w`/`Log.e` in `wear/`
+classified, with the ones that stay silent saying why. Re-run it with
+`grep -rn "Log\.\(w\|e\)(" wear/src/main/kotlin/` — 20 sites as of 2026-08-11.
+
+### Visible to the sailor
+
+| Failure | What is seen |
+|---|---|
+| Foreground service refused at dispatch (`MainActivity.armRace`) | Tier 2, Start removed |
+| Foreground service refused inside the service (`startForegroundWithNotification`) | Tier 2, and the race is torn down rather than left running without a service |
+| No audio output on the device (`obtainTrackLocked`) | Tier 2 soft, "Start silent" |
+| `AudioTrack` build failed (`obtainTrackLocked`) | Tier 2 soft, "Start silent" |
+| No vibrator | Tier 3, "No haptics — watch the screen" |
+| Notification permission denied | Tier 3, tappable to Settings |
+| Battery saver on | Tier 3, "Battery saver — sound may be cut" |
+| No settings activity for a remedy | The notice it was offered from stays on screen |
+
+### Silent by decision, with the reason
+
+| Failure | Why no message |
+|---|---|
+| Keep-alive generator or `startTone` unavailable; start threshold rejected; keep-mixed write failed; could not idle the cue track | **Not failures.** Every one of these costs the cue latency — tens of milliseconds — and the cue still sounds. A banner saying a cue may be slightly late is worse than the lateness. |
+| `AudioTrack` stop / release / keep-alive release failed | Teardown, after the race. Nothing left to affect. |
+| Native output rate unavailable | Falls back to a working rate; the cue is unchanged. |
+| Output rate changed with the stream | Handled by re-rendering. Not an error. |
+| `setStreamVolume` refused (Do Not Disturb) | Recorded in `TimerService.cueVolumeRefused`. Deliberately **not** #13's to surface — [#96](https://github.com/SailorDave17/race-timer/issues/96) owns that warning and its design rests on the measured refusal rather than a prediction. Two warnings for one condition would be a second copy of the rule. |
+| Haptic dropped under Do Not Disturb | The app cannot see it — the platform drops the effect and reports nothing. [#144](https://github.com/SailorDave17/race-timer/issues/144). |
+
+### The one genuine gap, stated rather than closed
+
+**A cue lost or truncated mid-race is silent.** Three paths in `ToneManager.writeCue` — a write
+returning `<= 0` ("cue dropped"), an `IllegalStateException` discarding the track, and a failed tail
+write ("cue truncated") — produce a log line and nothing else. None of them sets `initFailed`, so
+the condition does not resurface as a Tier 2 block before the next race either.
+
+It is left open rather than closed, for a reason worth stating: the fix is a Tier 1 banner on the
+*running-race* screen, which is the most sensitive surface in the app and the one #102 already had
+to move once. It also needs a route from the tone thread to the UI that does not exist yet. That is
+a piece of work with its own risk, not a line to add to this story.
+
+## Resolved questions
+
+- **Where does the pre-start check run?** *(#13)* Three of the five conditions are readable ahead of
+  a tap — the permission, the vibrator, battery saver — and are read on `onStart` (which is the
+  callback a return from Settings arrives through), on service binding, and on a 1 s throttle while
+  the pre-start screen is up. The other two **cannot** be: there is no API that answers "would a
+  foreground service be allowed right now?", and the audio stack only answers once something has
+  tried. Those two are latched from an attempt that already failed. So the answer is *both*, split
+  by what the platform will actually tell you in advance rather than by preference.
+- **Does battery saver deserve Tier 2?** *(#13)* No — left at Tier 3. Promoting it would block a
+  race on a condition that has never been measured to kill a cue here, and the copy is hedged
+  ("may be cut") for the same reason. Worth revisiting only with a measurement behind it.
 
 ## Open questions
 
-- **Where does the pre-start check run?** Tier 2 needs the preconditions evaluated *before*
-  `handleStart` fires the service intent, which means a check on `onResume` as well, so the blocked
-  state is visible rather than appearing only after a failed tap. #13's call.
-- **Does battery saver deserve Tier 2?** Listed as Tier 3 above. If testing shows saver mode reliably
-  kills the tone, promote it.
+- **Is the copy right on a wrist, in sun?** None of the five notices has been read by anyone outside
+  a development session. #121's sun audit is the instrument, and #12 the parent.
 
 ---
 
 Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123.
 Owner: SailorDave17.
-Last reviewed: 2026-08-10 (#123 — Tier 3 contrast fixed, every figure now computed by
-`shared/MessageContrast.kt` and asserted by `MessageContrastTest`).
+Last reviewed: 2026-08-11 (#13 — Tier 2 built, the notification row demoted to Tier 3 with its
+reasoning recorded, both open questions answered).

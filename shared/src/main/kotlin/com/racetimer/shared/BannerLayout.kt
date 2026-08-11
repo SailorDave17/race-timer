@@ -57,6 +57,45 @@ const val BANNER_MAX_WIDTH_FRACTION = 0.85f
  */
 const val BANNER_HEIGHT_BUDGET_FRACTION = 0.19f
 
+// --- Tier 3 status line (#13) -----------------------------------------------
+// The same arithmetic, applied to the other scrimmed surface. It sits directly under the sequence
+// name — much closer to the top of the circle than the Tier 1 banner, and therefore on a much
+// narrower chord — so a notice wide enough to look fine in a square preview has its scrim corners
+// cut by the bezel. *Measured on an SM-R925U*: the #13 notification warning drew a scrim from
+// x=30 to x=420 at y=40, where the visible chord runs only x=97 to x=353.
+//
+// This is #102's defect one tier over, and milder: what was clipped is the *plate*, not a line of
+// text, because the copy is centred and shorter than its box. Worth fixing anyway — a scrim that
+// runs off the edge reads as a rendering fault — and worth fixing here, where the constant can be
+// asserted, rather than as a number typed into a modifier.
+
+/**
+ * How far down the screen the Tier 3 status line starts, as a fraction of screen height.
+ *
+ * Directly beneath the sequence-name label. Measured rather than chosen: the label's box ends at
+ * 40 px of a 450 px screen.
+ */
+const val STATUS_LINE_TOP_FRACTION = 0.09f
+
+/**
+ * The widest a Tier 3 status line may be, as a fraction of screen width.
+ *
+ * A cap like [BANNER_MAX_WIDTH_FRACTION], and a much tighter one, because the chord this high up
+ * the circle is far shorter than the chord at the banner's height. The geometry permits about
+ * `0.57`; this leaves a margin rather than sitting on the boundary, and it still holds the longest
+ * shipped notice in two lines.
+ */
+const val STATUS_LINE_MAX_WIDTH_FRACTION = 0.55f
+
+/**
+ * The tallest a Tier 3 status line may grow, as a fraction of screen height.
+ *
+ * Two lines of `caption2` plus its scrim padding came to `0.227` when measured, so this is that
+ * with a little grace. As with the banner, it is the height the geometry is *proved* against rather
+ * than a clamp on the text: clipping a warning is worse than crowding the readout.
+ */
+const val STATUS_LINE_HEIGHT_BUDGET_FRACTION = 0.23f
+
 /**
  * True when a banner of [widthFraction] × [heightFraction], starting [topFraction] down, fits
  * inside a round screen.

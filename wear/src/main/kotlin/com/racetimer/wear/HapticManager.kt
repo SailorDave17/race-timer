@@ -26,13 +26,7 @@ import com.racetimer.shared.SignalPattern
  */
 class HapticManager(context: Context) {
 
-    private val vibrator: Vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-        vm.defaultVibrator
-    } else {
-        @Suppress("DEPRECATION")
-        context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-    }
+    private val vibrator: Vibrator = systemVibrator(context)
 
     /**
      * Play the haptic pattern for [pattern].
@@ -104,8 +98,35 @@ class HapticManager(context: Context) {
         vibrator.cancel()
     }
 
-    private companion object {
+    companion object {
         /** Confirmation buzz for a sync tap. Not a cue, so it has no [CueTiming] shape to follow. */
-        const val SYNC_FEEDBACK_MS = 80L
+        private const val SYNC_FEEDBACK_MS = 80L
+
+        /**
+         * The system vibrator, resolved the one way that covers this app's whole minSdk range.
+         *
+         * Public and here rather than inline in the constructor since #13, which needs the same
+         * lookup from `MainActivity` to warn a sailor that a cue will never reach their wrist. Two
+         * copies of an API-level branch is how one of them silently stops matching the other — the
+         * same argument that moved the message colours into `shared/MessageContrast.kt`.
+         */
+        fun systemVibrator(context: Context): Vibrator =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vm.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+
+        /**
+         * Whether this watch can vibrate at all (#13).
+         *
+         * Answers a *hardware* question, and only that one. It says nothing about whether a cue will
+         * actually be felt — Do Not Disturb drops multi-pulse effects on a watch whose vibrator is
+         * present and working, which is #144 and a different warning entirely. Conflating the two
+         * would put "No haptics — watch the screen" on screen for a condition this cannot see.
+         */
+        fun hasVibrator(context: Context): Boolean = systemVibrator(context).hasVibrator()
     }
 }

@@ -226,8 +226,30 @@ class ToneManager(context: Context) {
      */
     private var keepAliveGenerator: ToneGenerator? = null
 
-    /** Set once the audio stack has refused, so a dead one isn't retried on every cue. */
-    private var initFailed = false
+    /**
+     * Set once the audio stack has refused, so a dead one isn't retried on every cue.
+     *
+     * `@Volatile` since #13, which is the first thing to read it from another thread. Every write is
+     * still made under [audioLock] on the tone or render thread; the activity reads it through
+     * [audioUnavailable] on the main thread to decide whether to warn the sailor, and a stale read
+     * there would show a "the gun will be silent" panel one refresh late — or, worse, not at all.
+     */
+    @Volatile private var initFailed = false
+
+    /**
+     * Whether this watch's audio stack has refused to give the app a track (#13).
+     *
+     * An **observation**, in the sense #96 established: it is only ever true because an
+     * `AudioTrack` build already failed or because the device reported no audio output at all. This
+     * deliberately does not attempt to predict audibility — that is a separate question, it belongs
+     * to [ToneManager.route] and #95, and the two must not grow a second copy of one rule.
+     *
+     * False before anything has tried, which is the right way to be wrong: `TimerService.onCreate`
+     * warms a cue up, so by the time a sailor can reach the Start button the audio path has been
+     * exercised and this answers for real. A watch that somehow reaches Start first is warned at the
+     * first cue instead of ahead of it, which is the pre-#13 behaviour rather than a regression.
+     */
+    val audioUnavailable: Boolean get() = initFailed
 
     /** The cue-audio thread and its handler, or null before first use and after [release] runs. */
     @Volatile private var toneThread: HandlerThread? = null

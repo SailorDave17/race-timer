@@ -8,6 +8,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,9 +42,16 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.racetimer.shared.BANNER_MAX_WIDTH_FRACTION
 import com.racetimer.shared.BANNER_TOP_FRACTION
+import com.racetimer.shared.STATUS_LINE_MAX_WIDTH_FRACTION
 import com.racetimer.shared.BG_FINAL_TEN_ARGB
+import com.racetimer.shared.NoticeTier
+import com.racetimer.shared.StartNotice
+import com.racetimer.shared.StartRemedy
 import com.racetimer.shared.TIER1_SCRIM_ARGB
 import com.racetimer.shared.TIER1_TEXT_ARGB
+import com.racetimer.shared.TIER2_BORDER_ARGB
+import com.racetimer.shared.TIER2_SCRIM_ARGB
+import com.racetimer.shared.TIER2_TEXT_ARGB
 import com.racetimer.shared.TIER3_SCRIM_ARGB
 import com.racetimer.shared.TIER3_TEXT_ARGB
 import com.racetimer.shared.TimerState
@@ -54,6 +63,26 @@ import kotlinx.coroutines.delay
 
 /** How long a Tier 1 banner stays up, counted from the composition that puts it on screen (#102). */
 private const val MESSAGE_DURATION_MS = 3_000L
+
+/**
+ * What the readout fades to while a Tier 2 notice is blocking the start (#13).
+ *
+ * `docs/message-surface.md`'s figure. Dimmed rather than hidden: the countdown is the identity of
+ * this screen, and a sailor who cannot see it is looking at an error page instead of a race timer
+ * that is not armed. Not a contrast-guarded surface — it is deliberately *below* legible, which is
+ * the signal, so it is a constant here rather than in `shared/MessageContrast.kt` with the colours
+ * that have a bar to clear.
+ */
+private const val BLOCKED_READOUT_ALPHA = 0.4f
+
+/**
+ * How much of the screen's width the Tier 2 panel and its remedy button take.
+ *
+ * Wider than [StartButton]'s 0.68 because this surface carries up to three lines of copy rather
+ * than one word, and narrower than full width so the round bezel never clips a corner of the
+ * scrim — the mistake #102 made with the Tier 1 banner and had to move the whole surface to fix.
+ */
+private const val BLOCKING_PANEL_WIDTH_FRACTION = 0.86f
 
 // ---------------------------------------------------------------------------
 // Background colour states
@@ -105,6 +134,12 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
  * @param inLeadIn       True while a running race is still in its lead-in. Drops the Sync button for
  *                       the duration: there is nothing to snap to before the signal box has been
  *                       started, and snapping would delete part of the lead (`isInLeadIn`).
+ * @param startNotice    Non-null when something about the watch is worth telling the sailor (#13).
+ *                       A [NoticeTier.WARNING] renders as a Tier 3 line under the sequence name and
+ *                       changes nothing else; a [NoticeTier.BLOCKING] renders as the Tier 2 panel
+ *                       *in place of* the Start button. The rule producing it is `startNotice` in
+ *                       `shared/` — this screen decides where it goes, never whether it applies.
+ * @param onRemedy       Called with [StartNotice.remedy] when the sailor taps a notice's action.
  * @param onStart        Called when the user taps Start, or Resume when [resumeOffered].
  * @param onStartOver    Called when the user taps Start over. Only reachable when [resumeOffered].
  * @param onLeadIn       Called when the user taps the lead-in control. Only reachable when
@@ -129,6 +164,8 @@ fun TimerScreen(
     discardWarning: String? = null,
     leadInOffered: Boolean = false,
     inLeadIn: Boolean = false,
+    startNotice: StartNotice? = null,
+    onRemedy: (StartRemedy) -> Unit = {},
     onStart: () -> Unit,
     onStartOver: () -> Unit = {},
     onLeadIn: () -> Unit = {},
@@ -137,6 +174,10 @@ fun TimerScreen(
     onEndRace: () -> Unit = {},
     onPickSequence: () -> Unit = {},
 ) {
+    // Read once for the whole screen. Both scrimmed surfaces size themselves off it — the Tier 1
+    // banner's offset and the Tier 3 line's width cap — and both caps are fractions rather than dp
+    // so they hold on a watch this was not measured on.
+    val configuration = LocalConfiguration.current
     val targetBg = backgroundColorFor(remainingMs, state)
     val animatedBg by animateColorAsState(
         targetValue = targetBg,
@@ -213,14 +254,60 @@ fun TimerScreen(
                 )
             }
 
+            // A standing fact about the watch rather than about the race (#13). Tier 3, the same
+            // surface and colours as the two lines above, and it yields to both: the discard warning
+            // is about the very next tap and the re-sync prompt is about the clock being wrong, which
+            // outrank a caveat the sailor has already been shown once. That is rule 6 — one message
+            // at a time — resolved here because this is the only place that knows all three are up.
+            //
+            // A blocking notice deliberately does *not* render here. It goes in the button zone
+            // below, so that it takes Start's place rather than sitting above a Start that still
+            // works.
+            val warningNotice = startNotice
+                ?.takeIf { it.tier == NoticeTier.WARNING }
+                ?.takeIf { !showResyncPrompt && discardWarning == null }
+            if (warningNotice != null) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = warningNotice.text,
+                    style = MaterialTheme.typography.caption2,
+                    color = Color(TIER3_TEXT_ARGB),
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        // Capped so the scrim stays inside the bezel. Measured on an SM-R925U: left
+                        // uncapped this drew from x=30 to x=420 at y=40, where the round display's
+                        // visible chord is only x=97 to x=353 — the plate's top corners were cut.
+                        // The arithmetic and the negative control are in `shared/BannerLayout.kt`.
+                        .widthIn(max = configuration.screenWidthDp.dp * STATUS_LINE_MAX_WIDTH_FRACTION)
+                        .background(Color(TIER3_SCRIM_ARGB), shape = RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        // The "clear next step" half of #13's first acceptance criterion. A warning
+                        // that names a remedy has to offer a route to it, and the pre-start screen
+                        // has exactly one control by design (#55) — so the line itself is the route
+                        // rather than a second button that would displace Start.
+                        .let { base ->
+                            if (warningNotice.remedy == StartRemedy.NONE) base
+                            else base.clickable { onRemedy(warningNotice.remedy) }
+                        },
+                )
+            }
+
             Spacer(modifier = Modifier.height(4.dp))
 
-            // The big countdown / elapsed-time display
+            // The big countdown / elapsed-time display.
+            //
+            // Dimmed under a blocking notice, and this is the whole of what "not armed" looks like:
+            // the readout is the identity of the screen, so removing it would leave the sailor
+            // looking at an unrecognisable error page. 40 % keeps the sequence's duration legible as
+            // context while making it plain that nothing is counting (docs/message-surface.md).
+            val blocked = startNotice?.blocksStart == true
             CountdownText(
                 remainingMs = remainingMs,
                 elapsedMs = elapsedMs,
                 state = state,
                 previewElapsed = previewElapsed,
+                dimAlpha = if (blocked) BLOCKED_READOUT_ALPHA else 1f,
             )
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -247,19 +334,32 @@ fun TimerScreen(
                 // returns the engine to IDLE once the gun cue and its "GO!" linger are done, so the
                 // sailor is never left on a finished screen with no way back.
                 TimerState.IDLE, TimerState.FINISHED, TimerState.PAUSED -> {
-                    // A race that outlived the process turns the one control into a question. The
-                    // readout above is already showing that race's own clock, so both answers are
-                    // legible before the tap: Resume continues the number on screen, Start over
-                    // replaces it with the sequence's full duration.
-                    //
-                    // The lead-in control is deliberately absent from that state and only that one.
-                    // Three controls do not fit this column: the row above already runs to roughly
-                    // 160 dp of a 192 dp screen, so a third button in the Resume row leaves each
-                    // about 53 dp and "Start over" no longer fits on its one line. The question the
-                    // resume screen asks is *this race or a fresh one*, and Start over already
-                    // re-runs whatever lead the saved race carried — a race manager wanting a
-                    // different lead reaches it after Stop, which is a rare path inside a rare one.
-                    if (resumeOffered) {
+                    // Tier 2 (#13). Placed here rather than gated on a state test, so that "blocking
+                    // is pre-start only" (rule 3) holds by construction: this is the one branch that
+                    // draws a Start button, so the panel that replaces it cannot reach a running
+                    // race however the flag above is computed. Start is *absent*, not disabled — a
+                    // greyed control on a watch invites repeated taps at the worst moment.
+                    val blockingNotice = startNotice?.takeIf { it.blocksStart }
+                    if (blockingNotice != null) {
+                        BlockingNotice(
+                            text = blockingNotice.text,
+                            remedyLabel = blockingNotice.remedy.label,
+                            onRemedy = { onRemedy(blockingNotice.remedy) },
+                        )
+                    } else if (resumeOffered) {
+                        // A race that outlived the process turns the one control into a question. The
+                        // readout above is already showing that race's own clock, so both answers are
+                        // legible before the tap: Resume continues the number on screen, Start over
+                        // replaces it with the sequence's full duration.
+                        //
+                        // The lead-in control is deliberately absent from that state and only that
+                        // one. Three controls do not fit this column: the row above already runs to
+                        // roughly 160 dp of a 192 dp screen, so a third button in the Resume row
+                        // leaves each about 53 dp and "Start over" no longer fits on its one line.
+                        // The question the resume screen asks is *this race or a fresh one*, and
+                        // Start over already re-runs whatever lead the saved race carried — a race
+                        // manager wanting a different lead reaches it after Stop, which is a rare
+                        // path inside a rare one.
                         ResumeChoice(onResume = onStart, onStartOver = onStartOver)
                     } else if (leadInOffered) {
                         StartWithLeadIn(onStart = onStart, onLeadIn = onLeadIn)
@@ -329,6 +429,7 @@ private fun CountdownText(
     elapsedMs: Long,
     state: TimerState,
     previewElapsed: Boolean = false,
+    dimAlpha: Float = 1f,
 ) {
     val isFinalTen = state == TimerState.RUNNING && remainingMs in 1..10_000L
     val isFinished = state == TimerState.FINISHED
@@ -348,7 +449,7 @@ private fun CountdownText(
 
     // Only the alpha differs between flashing and steady, so the branch decides that one value and
     // the countdown itself is written once.
-    val alpha = if (isFinalTen) {
+    val flashAlpha = if (isFinalTen) {
         val infiniteTransition = rememberInfiniteTransition(label = "flash")
         val flashAlpha by infiniteTransition.animateFloat(
             initialValue = 1f,
@@ -363,6 +464,12 @@ private fun CountdownText(
     } else {
         1f
     }
+
+    // Multiplied rather than replaced, so the two reasons to dim compose instead of one silently
+    // winning. They cannot currently co-occur — [dimAlpha] is only below 1 under a blocking notice,
+    // which is pre-start, and the flash needs RUNNING — but a branch that picks one of the two would
+    // be wrong the first time that stops being true, and nothing would report it (#13).
+    val alpha = flashAlpha * dimAlpha
 
     // Smaller than the countdown's 52 sp: formatElapsed grows an extra "H:" group past an hour,
     // and sizing for that up front keeps the readout a constant size rather than shrinking the
@@ -389,6 +496,81 @@ private fun CountdownText(
  * at a non-square size renders as a stadium; the rounded ends also tuck inside the display's curve
  * better than square corners would at this width.
  */
+/**
+ * Tier 2 — the blocking notice that stands where the Start button would be (#13).
+ *
+ * ### Not a dialog, and the reason is not aesthetic
+ *
+ * A Wear `Dialog` or `Alert` is swipe-dismissable, and a blocking condition that can be swiped away
+ * is not blocking: the sailor dismisses it, taps Start, and gets a race the platform will kill.
+ * Making the timer face itself enter a blocked state is what removes that path — there is no Start
+ * button on screen to reach.
+ *
+ * ### The border, not the text, is what says "blocking"
+ *
+ * The copy stays amber like every other message in the app. Red text would sit on `BG_FINAL_TEN`'s
+ * dark red in the one state where it had to be read, so red is spent on the 1 dp border instead,
+ * where it is a component boundary held to WCAG's 3 : 1 rather than 4.5 : 1. Both figures are
+ * asserted by `MessageContrastTest`, against the same constants this function draws with.
+ *
+ * @param remedyLabel The button's label, or null for a notice with no action. Named by the remedy —
+ *   "Settings", "Start silent" — never "OK", so the control says what it will do rather than
+ *   acknowledging the problem. Null is unreachable today (`startNotice` gives every blocking notice
+ *   a remedy, and `StartPreconditionsTest` asserts it) and is handled anyway rather than asserted,
+ *   because the failure it would otherwise produce is a screen with no controls at all.
+ */
+@Composable
+private fun BlockingNotice(
+    text: String,
+    remedyLabel: String?,
+    onRemedy: () -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.caption1,
+            color = Color(TIER2_TEXT_ARGB),
+            textAlign = TextAlign.Center,
+            maxLines = 3,
+            modifier = Modifier
+                .fillMaxWidth(BLOCKING_PANEL_WIDTH_FRACTION)
+                .background(Color(TIER2_SCRIM_ARGB), shape = RoundedCornerShape(8.dp))
+                .border(1.dp, Color(TIER2_BORDER_ARGB), shape = RoundedCornerShape(8.dp))
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+        )
+        if (remedyLabel != null) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Button(
+                onClick = onRemedy,
+                modifier = Modifier
+                    .fillMaxWidth(BLOCKING_PANEL_WIDTH_FRACTION)
+                    .height(40.dp)
+                    // Drawn as a modifier rather than through the Button's own border slot, which
+                    // differs across Wear Compose versions. CircleShape is this Button's default
+                    // shape, so the stroke follows the control it is outlining rather than boxing it.
+                    .border(1.dp, Color(TIER2_BORDER_ARGB), CircleShape),
+                colors = ButtonDefaults.buttonColors(
+                    // Deliberately not Start's gold. The remedy leaves the app or arms a degraded
+                    // race, and a control that looks exactly like the one it replaced would be
+                    // tapped by muscle memory at the moment the sailor most needs to read it.
+                    backgroundColor = Color(TIER2_SCRIM_ARGB),
+                    contentColor = Color(TIER2_TEXT_ARGB),
+                ),
+            ) {
+                Text(
+                    text = remedyLabel,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun StartButton(onClick: () -> Unit) {
     Button(
