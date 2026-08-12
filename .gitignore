@@ -34,3 +34,7 @@ release-archive/
 
 # Windows
 Thumbs.db
+
+# Python bytecode from the store/ render scripts.
+__pycache__/
+*.pyc
