@@ -1,6 +1,6 @@
 # Privacy Policy — Race Timer
 
-**Effective date:** [DATE OF PUBLICATION]
+**Effective date:** 12 August 2026
 **Applies to:** Race Timer for Wear OS (`io.github.sailordave17.racetimer`)
 
 ## Summary
@@ -22,7 +22,8 @@ information anywhere.
 ## Information stored on your device
 
 Race Timer saves a small amount of data locally so that a race in progress survives the app being
-closed, or the watch restarting mid-sequence. This data never leaves the watch.
+closed or the watch restarting mid-sequence, and so that your choices are still there next time you
+open it. This data never leaves the watch.
 
 Stored in the app's private storage (`race_timer_state`):
 
@@ -32,9 +33,14 @@ Stored in the app's private storage (`race_timer_state`):
 | The scheduled gun time, as a monotonic clock reading | So the countdown resumes at the correct remaining time |
 | The scheduled gun time, as a wall-clock reading | Best-effort recovery after a device restart, when the monotonic reading is no longer valid |
 | The monotonic clock reading at the moment the race was saved | To detect a restart and fall back to the wall-clock value |
+| The start sequence you last chose | So the app opens on the sequence you actually use, instead of resetting each time |
+| The lead-in time a race was last armed with | So the same lead-in is offered next time, rather than being re-entered every race |
+| Which audio stream a running race raised the volume on | So the app knows which stream to put back when the race ends |
+| That stream's volume before the race raised it | So your original volume is restored rather than left turned up |
 
-This is timing state only. It contains nothing about you, and nothing that identifies you or your
-watch.
+This is timing state and your own settings. It contains nothing about you, and nothing that
+identifies you or your watch — the values above are clock readings, a sequence identifier, a number
+of seconds, an audio stream index and a volume level.
 
 This data is removed when you uninstall the app, or when you clear the app's storage through the
 watch's system settings.
@@ -75,24 +81,38 @@ published, and the effective date above will change.
 
 ## Contact
 
-Questions about this policy can be sent to **[CONTACT EMAIL]**.
+Questions about this policy can be sent to **hsc.coach@gmail.com**.
 
 ---
 
 <!--
 MAINTAINER NOTES — remove this block before publishing.
 
-1. Fill in [DATE OF PUBLICATION] and [CONTACT EMAIL] before publishing. Consider a dedicated address
-   rather than a personal one; this URL is public and gets scraped.
+1. PUBLISHED 2026-08-12. Effective date and contact address are filled in: hsc.coach@gmail.com, an
+   owner decision taken with the scraping risk stated. The same address was given to IARC on the
+   content-rating questionnaire the same day.
 
 2. Every factual claim here was checked against the tree on 2026-08-01 and RE-CHECKED on 2026-08-09,
    after PRs #113, #116 and #132 had merged. All still true:
    - No INTERNET permission in wear/src/main/AndroidManifest.xml.
    - A grep across wear/src, shared/src, both build files and the version catalog for
      http/okhttp/retrofit/firebase/analytics/crashlytics/URL(/Socket returned nothing.
-   - The four persisted keys are PREF_SEQUENCE_ID, PREF_GUN_ELAPSED, PREF_GUN_WALL_CLOCK and
-     PREF_CAPTURED_ELAPSED, written to the "race_timer_state" prefs file
-     (TimerService.kt:804-807, constants at :857-861).
+   - CORRECTED 2026-08-12: there are EIGHT persisted keys, not four. This note said four from
+     2026-08-01, and the 2026-08-09 re-check restated "the four persisted keys" unchanged while
+     four more had landed between 2026-08-02 and 2026-08-05. The table above now lists all eight.
+     Re-counted directly against the tree today rather than inherited: eight "const val PREF_"
+     declarations in TimerService.kt, written to the "race_timer_state" prefs file (PREFS_NAME at
+     :1014) --
+       PREF_SEQUENCE_ID :1015, PREF_GUN_ELAPSED :1016, PREF_GUN_WALL_CLOCK :1017,
+       PREF_CAPTURED_ELAPSED :1018, PREF_PICKED_SEQUENCE_ID :1034 (#88),
+       PREF_LAST_BOX_ALERT :1048 (#104), PREF_RAISED_STREAM :1069 and
+       PREF_RAISED_PREVIOUS_VOLUME :1070 (both #95).
+     None of the four that were missing changes a claim this policy makes -- two preferences and a
+     two-key receipt for restoring a device volume, none personal, identifying or transmitted. The
+     ENUMERATION was incomplete; the conclusion was not. That is exactly why an enumeration in a
+     published document is worth more than a summary sentence: only the list can be found wrong.
+   - NOT re-verified today, inherited from the 2026-08-09 check: the no-INTERNET claim, the
+     dependency grep, the wake-lock behaviour and the permission table.
    - The wake lock is PARTIAL and acquired with a timeout of remaining race + margin
      (TimerService.kt:710-712, released at :717).
    - The five declared permissions are exactly the four rows in the table plus
@@ -108,7 +128,12 @@ MAINTAINER NOTES — remove this block before publishing.
    third-party SDK is introduced, this file is wrong the moment that change merges. Treat a manifest
    change as requiring a matching edit here.
 
-4. Publishing: enable GitHub Pages for this repo and serve docs/, or paste the rendered text into a
-   Pages site. The URL must be publicly reachable with no login -- Play does fetch it, and a dead
-   privacy policy URL is grounds for removal.
+4. Publishing: GitHub Pages, serving docs/ from the default branch (develop). The URL must be
+   publicly reachable with no login -- Play does fetch it, and a dead privacy policy URL is grounds
+   for removal. Two consequences of that choice, recorded because neither is obvious:
+   - Pages serves the WHOLE docs/ folder, not just this file. That was checked before enabling and
+     adds no new exposure, because this repository is already public -- but it does mean anything
+     dropped into docs/ later is published by default. docs/release-signing.md in particular names
+     the keystore path, the key alias, and which password-manager entry holds the credentials.
+   - A branch rename would break the URL. If develop is ever renamed, re-point Pages first.
 -->
