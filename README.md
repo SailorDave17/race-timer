@@ -266,6 +266,15 @@ internal testing.
 The Google Play account the app publishes under — and why publishing from a different one would create
 a separate app — is in [`docs/play-store-account.md`](docs/play-store-account.md).
 
+**Privacy policy:** <https://sailordave17.github.io/race-timer/privacy-policy> — this is the URL Play
+Console is given, and Play fetches it, so it must stay reachable. The source is
+[`docs/privacy-policy.md`](docs/privacy-policy.md); the published page is built from it by
+[`.github/workflows/publish-privacy-policy.yml`](.github/workflows/publish-privacy-policy.yml) onto the
+**`gh-pages`** branch, which holds the rendered policy and nothing else. Do not hand-edit that branch,
+and do not point Pages at a folder — publishing a folder means anything later dropped into it is
+published too, which is how `docs/watch-setup` and the watch's pairing address were being served from
+a stale branch until 2026-08-12.
+
 ---
 
 > **On-water disclaimer.** Race Timer is a training and convenience aid. Under the Racing Rules of

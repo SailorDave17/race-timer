@@ -1,7 +1,8 @@
-# Privacy Policy — Race Timer
+# Privacy Policy — Mad Cow Race Timer
 
 **Effective date:** 12 August 2026
-**Applies to:** Race Timer for Wear OS (`io.github.sailordave17.racetimer`)
+**Applies to:** Mad Cow Race Timer for Wear OS (`io.github.sailordave17.racetimer`), referred to
+below as *Race Timer*
 
 ## Summary
 
@@ -128,12 +129,37 @@ MAINTAINER NOTES — remove this block before publishing.
    third-party SDK is introduced, this file is wrong the moment that change merges. Treat a manifest
    change as requiring a matching edit here.
 
-4. Publishing: GitHub Pages, serving docs/ from the default branch (develop). The URL must be
-   publicly reachable with no login -- Play does fetch it, and a dead privacy policy URL is grounds
-   for removal. Two consequences of that choice, recorded because neither is obvious:
-   - Pages serves the WHOLE docs/ folder, not just this file. That was checked before enabling and
-     adds no new exposure, because this repository is already public -- but it does mean anything
-     dropped into docs/ later is published by default. docs/release-signing.md in particular names
-     the keystore path, the key alias, and which password-manager entry holds the credentials.
-   - A branch rename would break the URL. If develop is ever renamed, re-point Pages first.
+4. Publishing: the canonical URL is
+
+       https://sailordave17.github.io/race-timer/privacy-policy
+
+   served from the `gh-pages` branch, which holds the rendered policy AND NOTHING ELSE.
+   `.github/scripts/build-privacy-page.py` builds it and `.github/workflows/publish-privacy-policy.yml`
+   republishes on every change to this file. Do not hand-edit `gh-pages`; the next publish
+   overwrites it. The URL must stay publicly reachable with no login -- Play does fetch it, and a
+   dead privacy policy URL is grounds for removal.
+
+   CORRECTED 2026-08-12. This note previously said "GitHub Pages, serving docs/ from the default
+   branch (develop)", and reasoned that publishing the whole docs/ folder "adds no new exposure,
+   because this repository is already public". Two things were wrong with that:
+   - It described a configuration that was never applied. Pages was in fact serving branch
+     `release` at path `/` -- a branch 112 commits and eleven days stale -- so the reasoning was
+     applied to a hypothetical while something else was live. Found 2026-08-12 by reading the
+     Pages API rather than this note.
+   - "Already public, so no new exposure" understates it. A Jekyll-rendered page carries SEO tags
+     and is indexed; a file in a git tree is not. Measured: the stale site was serving
+     `/docs/watch-setup` with the watch's pairing address `192.168.1.73:41017` on it. A private
+     RFC1918 address, so not remotely reachable and not an emergency -- but nobody knew the page
+     existed, which is the actual finding.
+   The publish-only branch replaces that blacklist with a whitelist: nothing can reach the site by
+   being dropped into a folder, because only the build script writes the branch.
+
+5. The maintainer block you are reading is stripped at publish time and never reaches the web. The
+   build script asserts the strip happened and refuses to publish otherwise -- an HTML comment
+   renders as nothing, so a failed strip would look exactly like a successful one.
+
+   Note 2 above said docs/release-signing.md "names the keystore path, the key alias, and which
+   password-manager entry holds the credentials". CORRECTED 2026-08-12: #172 redacted all three,
+   and that file now states plainly that locators are deliberately not written there. The sentence
+   had become a pointer to a file as though it still held them.
 -->
