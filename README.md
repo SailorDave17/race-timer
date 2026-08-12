@@ -1,4 +1,4 @@
-# Race Timer — Sailing Start-Sequence Timer
+# Mad Cow Race Timer — Sailing Start-Sequence Timer
 
 A precise, glanceable start-sequence timer for sailboat racing that runs **standalone on a Wear OS
 watch** (no phone required on the water).
