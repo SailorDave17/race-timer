@@ -2,9 +2,14 @@
 <!-- Adaptive-icon foreground layer: a sloop's sail plan inside a stopwatch bezel.
 
      The mark is the sails, not the dial — a countdown that exists for sailing should read as
-     sailing first. The gold bezel and the crown carry the timer half; they sit at the rim where
-     they frame rather than compete, so at launcher size the eye gets white sails on navy and
+     sailing first. The scarlet bezel and the crown carry the timer half; they sit at the rim where
+     they frame rather than compete, so at launcher size the eye gets white sails on charcoal and
      nothing else has to survive.
+
+     Scarlet and grey, owner decision 2026-08-12, replacing gold on navy. The scarlet is a near
+     neighbour of colors.xml bg_final_ten, the final-ten-seconds alarm. Harmless for an icon, which
+     is never on screen during a race — but it constrains any future theme change, because a
+     countdown UI in this palette would cost that alarm its punch.
 
      Everything stays inside the 66dp safe zone of the 108dp canvas: the bezel is r=30 with a
      4.5 stroke (32.25 at its outer edge) and the crown reaches y=22, which is 32 from centre.
@@ -20,7 +25,7 @@
 
     <!-- Stopwatch bezel -->
     <path
-        android:strokeColor="#FFD700"
+        android:strokeColor="#BB0000"
         android:strokeWidth="4.5"
         android:pathData="M54,54m-30,0a30,30 0,1 1,60 0a30,30 0,1 1,-60 0" />
 
@@ -41,7 +46,7 @@
 
     <!-- Waterline -->
     <path
-        android:strokeColor="#FFD700"
+        android:strokeColor="#BB0000"
         android:strokeWidth="3.5"
         android:strokeLineCap="round"
         android:pathData="M39,74.5L69,74.5" />
