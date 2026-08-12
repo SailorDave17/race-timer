@@ -12,8 +12,10 @@ Two boundaries worth stating up front:
 - **Console's own list is authoritative at fill-in time.** Play adds sections. A row here that
   Console no longer asks for is harmless; a section Console asks for that is *missing* here is the
   signal to come back and check the build rather than improvise at the upload screen.
-- **This document records answers; it does not enter them.** Entering them requires the app to exist
-  in Console, which is #79.
+- **This document records answers; entering them is a separate act.** *(Until 2026-08-12 this read
+  "entering them requires the app to exist in Console, which is #79" — the app has existed since
+  2026-08-03, and seven declarations were filed on 2026-08-12. See* What Console actually asked *below
+  for what is filed and what remains gated.)*
 
 ## The build these answers describe
 
@@ -33,8 +35,9 @@ An answer below is true of *that* build. A later `versionCode` inherits nothing 
 | **Privacy policy URL** | The published URL of `docs/privacy-policy.md`. **Not yet live** — publication is #73. | Source committed at `docs/privacy-policy.md`; the URL is a repo-settings action, not a code fact |
 | **Data safety** | **No data collected. No data shared.** | Long form below — this is the only row whose answer needs an argument |
 | **Content ratings** (IARC questionnaire) | Every substantive question **no**; rates as low as the questionnaire allows | Long form below |
-| **Target audience and content** | Adults. Not designed for, or appealing to, children; no child age band selected | A product decision, not a code fact. Selecting a child band pulls in Families policy requirements that do not apply |
+| **Target audience and content** | **13-15, 16-17, and 18 and over.** Owner decision 2026-08-12 — see *Target audience* below | A product decision, not a code fact. **This row said "adults, no child age band" until it was filed**, and the app ships a **Scholastic (ICSA)** sequence, which is high-school sailing |
 | **Ads** | **No ads.** The app contains no advertising | No ad SDK among the dependencies (`wear/build.gradle.kts`, `dependencies` block); no `com.google.android.gms.permission.AD_ID` in the merged manifest |
+| **Advertising ID** | **Not used** | `com.google.android.gms.permission.AD_ID` is not declared in the merged manifest. From `targetSdk` 33 an app must declare it to read the ID at all, so its absence is the answer. **Check the merged manifest, not the source** — Console's own page warns that an SDK's library manifest can inject this permission, which is precisely the check this document already does |
 | **News apps** | No | Not a news or magazine app |
 | **COVID-19 contact tracing and status apps** | No | No contact-tracing or health-status function |
 | **Government apps** | No | Not published on behalf of, or in association with, a government entity |
@@ -44,12 +47,70 @@ An answer below is true of *that* build. A later `versionCode` inherits nothing 
 | **Foreground service permissions** | `specialUse`, with the written justification | `docs/play-store-fgs-justification.md` — paste that document's *Declaration text* section. **This is the only row with real rejection risk** |
 | **App access** | **All functionality is available without any special access.** No login, no region lock, no unlocked-content gate; no reviewer credentials needed | No account/sign-in code in `wear/src`; the only `startActivity` leaves for a **system settings screen**, never a login or a web page (`MainActivity.kt:726`) |
 
-Two more that Console asks conditionally rather than as their own checklist rows:
+And one that Console asks conditionally rather than as its own checklist row:
 
 | Console section | Answer | Evidence |
 |---|---|---|
-| **Advertising ID** (asked inside Data safety) | Not used | `com.google.android.gms.permission.AD_ID` is not declared in the merged manifest. From `targetSdk` 33 an app must declare it to read the ID at all, so its absence is the answer |
 | **Photo and video permissions** (asked only if the permission is declared) | Not applicable | No `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO` / `READ_EXTERNAL_STORAGE` in the merged manifest |
+
+*Advertising ID sat in this conditional table, described as "asked inside Data safety", until the
+form was actually opened on 2026-08-12. It is **its own required section** in App content, and
+Console states plainly that releases targeting Android 13 are blocked until it is answered — which
+this app's `targetSdk` 35 makes unavoidable. It has been moved into the main table above.*
+
+## What Console actually asked — measured 2026-08-12
+
+The section above was written from Play's documentation. On 2026-08-12 the form was opened for the
+first time, and **Console does not ask for several things this document anticipated — and does ask
+for one it filed as conditional.** Recording the difference row by row rather than as a count, because
+the boundary at the top of this file said Console is authoritative at fill-in time, and this is what
+that turned out to mean.
+
+| This document's row | In Console's App content? |
+|---|---|
+| Privacy policy, Data safety, Content ratings, Target audience, Ads, Government apps, Financial features, Health apps | Yes, each its own section |
+| **App access** | Yes, but named **"Sign in details"** |
+| **Advertising ID** | Yes, and **required** — see the correction above |
+| **News apps** | **No.** Asked inside the content-rating questionnaire instead |
+| **COVID-19 contact tracing** | **No.** Not asked at all |
+| **Data deletion** | **No.** Folded into Data safety |
+| **Foreground service permissions** | **No — and this is the one that matters.** See below |
+
+**The FGS justification is not an App content task.** It does not appear until a bundle declaring
+`FOREGROUND_SERVICE_SPECIAL_USE` has been uploaded, so the item this document calls "the only row
+with real rejection risk" is gated on **#79**, not on the app merely existing in Console. Nothing
+in #75 can discharge it. `docs/play-store-fgs-justification.md` stays ready to paste.
+
+Console also lists two tasks that are **not** App content and belong elsewhere: *select an app
+category and provide contact details*, and *set up your store listing* — those are #76 / #77 / #78.
+
+### Target audience — why this is 13 and over
+
+Filed as **13-15, 16-17, and 18 and over**. This document previously said adults-only with no child
+age band, on the reasoning that the app's user is the race officer running the start rather than the
+competitor. That was reversed at fill-in time by owner decision, because the app ships a
+**Scholastic (ICSA)** sequence and ICSA is high-school sailing — an age range visible in the product
+itself is hard to argue away in a store listing.
+
+Selecting an under-18 band brings the **Families policy** into scope, and Console enumerates four
+obligations on saving. All four are satisfied trivially, and *because of what this app is rather than
+by any work*: content appropriate for children (a race timer), only child-appropriate ads and only
+from certified networks (there are no ads at all), and COPPA / GDPR compliance (no `INTERNET`
+permission, nothing transmitted, nothing collected). **The heavier-looking answer cost nothing here.**
+
+One ordering trap found on the way: the age checkboxes below 13 were **disabled**, with Console
+explaining that the app's ESRB rating was already 'teen' or higher — before the rating questionnaire
+had been completed. A content rating therefore **gates which age groups are selectable**, so answer
+Content ratings first if an under-13 band is ever wanted.
+
+### What was filed on 2026-08-12
+
+Seven saved: Ads, Sign in details, Government apps, Financial features, Health apps, Advertising ID,
+Target audience. Each saves as **staged**, not submitted — Console's own wording is *"Change saved.
+Send for review in Publishing overview"*, so nothing reaches Google until that separate step.
+
+Content ratings was started (category *All Other App Types*, contact `hsc.coach@gmail.com`, IARC
+Terms accepted, all nine questionnaire answers **no**) and Data safety was not started.
 
 ## Data safety — the reasoning, not only the answer
 
@@ -197,7 +258,13 @@ alters a claim the policy makes: they are a preference, a preference, and a two-
 restoring a device volume, and none is personal, identifying, or transmitted. The **enumeration** is
 incomplete, not the conclusion. Correcting it belongs to #73, which is still open.
 
-**Where the entries actually get made.** #79 creates the app in Console; its acceptance criteria carry
-"App content section complete with no outstanding items". #73 must publish the privacy policy first,
-because the URL is a required field. The FGS text is ready in `docs/play-store-fgs-justification.md`
-(#74).
+**Where the entries actually get made.** The Console app already exists — created 2026-08-03 as
+`io.github.sailordave17.racetimer`, status Draft — so #79's first criterion was satisfied before this
+document was written, and #79 now covers the *upload*, not the app's creation. Seven declarations
+were filed 2026-08-12 (above). Two remain gated and neither can be discharged by #75:
+
+- **Privacy policy URL** — a required field with no value to enter. GitHub Pages is not enabled on
+  this repo (`/pages` returns 404, *measured 2026-08-12*), so `docs/privacy-policy.md` has no public
+  URL. That is **#73**, whose contact-address input is now settled as `hsc.coach@gmail.com`.
+- **Foreground service permissions** — not offered as a task until a bundle declaring `specialUse`
+  is uploaded. That is **#79**. The text is ready in `docs/play-store-fgs-justification.md` (#74).
