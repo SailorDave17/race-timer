@@ -24,7 +24,7 @@ uploaded rows, that trigger cannot be checked — which is why #81's AC 1 points
 
 | versionCode | versionName | Commit | Track | Uploaded | Notes |
 |---|---|---|---|---|---|
-| 1 | 1.0 | [`f4f7e7d`](https://github.com/SailorDave17/race-timer/commit/f4f7e7de277d8a70aaf4104548bbb9f07885e310) | Internal testing | *(not yet uploaded)* | First build. Prepared 2026-08-12 on `feature/79-first-internal-build`. |
+| 1 | 1.0 | [`cadaea9`](https://github.com/SailorDave17/race-timer/commit/cadaea9) | Internal testing | *(not yet uploaded)* | First build. Prepared 2026-08-12; **re-taken** from `cadaea9` after the artifact was rebuilt — see below. |
 
 ## How each field is established
 
@@ -45,15 +45,33 @@ is that it was taken rather than remembered.
   that command is correct for an `.aab` and **wrong for an APK**, where it prints
   `Not a signed jar file` and still exits 0.
 
+## The archive is overwritten by any release build, on any branch
+
+Worth knowing before you trust the file: `:wear:archiveReleaseArtifacts` writes
+`release-archive/v<versionCode>/` **from whatever tree Gradle just built**, and `versionCode` is the
+only thing in the path. It does not record which commit or branch produced the artifact, and it does
+not refuse to replace one from a different branch.
+
+*Measured 2026-08-12*: running an unrelated story's quality gate replaced this build's `.aab` with one
+containing that story's unmerged code, silently, while this table still described the old artifact.
+The bundle was rebuilt from `cadaea9` and re-verified — including a negative control confirming the
+unmerged change is **absent** from the dex — and the row above was re-taken.
+
+**So: verify the artifact against this table immediately before uploading, rather than trusting that
+the file has sat untouched.** Making the task stamp its source commit and refuse a mismatched
+overwrite would remove the hazard; that is not built.
+
 ## Build 1 — verification taken at build time
 
 Recorded here because the evidence is cheapest to capture at the moment the artifact is produced,
 and some of it cannot be reconstructed afterwards.
 
-- Built from a clean tree at `f4f7e7d`, with all 79 Gradle tasks executed (`--rerun-tasks`), so no
-  step was served from the cache.
+- Built from a clean tree at `cadaea9` (develop, with #179 merged), all Gradle tasks executed
+  (`--rerun-tasks`), so no step was served from the cache.
 - `:shared:test` — **367 tests, 0 failures**, confirmed from `shared/build/test-results/test/*.xml`
-  rather than from Gradle's own summary.
+  rather than from Gradle's own summary, and CI is green on `cadaea9` itself. `cadaea9` differs from
+  the originally-recorded `f4f7e7d` by documentation only — `git diff f4f7e7d cadaea9 -- wear/src
+  shared/src` is empty — so the app binary is the same one those tests ran against.
 - Signature — `CN=Race Timer Upload, O=SailorDave17`, SHA-256 matching the fingerprint in
   `release-signing.md`.
 - Package identity inside the bundle — `io.github.sailordave17.racetimer`, with `com.racetimer.wear`
