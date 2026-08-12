@@ -1,7 +1,7 @@
 # Privacy Policy — Race Timer
 
 **Effective date:** [DATE OF PUBLICATION]
-**Applies to:** Race Timer for Wear OS (`com.racetimer.wear`)
+**Applies to:** Race Timer for Wear OS (`io.github.sailordave17.racetimer`)
 
 ## Summary
 

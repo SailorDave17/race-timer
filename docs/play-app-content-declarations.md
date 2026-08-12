@@ -1,7 +1,7 @@
 # Play Console — App content declarations
 
-Every declaration in Play Console's **App content** section for `com.racetimer.wear` (Race Timer for
-Wear OS), with the answer and the evidence it rests on. Tracked as issue #75.
+Every declaration in Play Console's **App content** section for `io.github.sailordave17.racetimer`
+(Race Timer for Wear OS), with the answer and the evidence it rests on. Tracked as issue #75.
 
 This file exists to be a **diff base**. The answers are cheap to give and expensive to re-derive: at
 the next release, or the moment a permission is added, the question is not "what is true?" but "what
@@ -19,9 +19,9 @@ Two boundaries worth stating up front:
 
 | | |
 |---|---|
-| Package | `com.racetimer.wear` (`wear/build.gradle.kts:69`) |
-| `versionCode` / `versionName` | `1` / `1.0` (`:74`, `:75`) |
-| `minSdk` / `targetSdk` / `compileSdk` | `30` / `35` / `35` (`:70`, `:73`, `:66`) |
+| Package | `io.github.sailordave17.racetimer` (`applicationId` in `wear/build.gradle.kts`) |
+| `versionCode` / `versionName` | `1` / `1.0` (same file, keys of those names) |
+| `minSdk` / `targetSdk` / `compileSdk` | `30` / `35` / `35` (same file, keys of those names) |
 | Verified against | `develop` at `aafa5de`, 2026-08-11 |
 
 An answer below is true of *that* build. A later `versionCode` inherits nothing automatically.
@@ -154,7 +154,8 @@ Every claim above was checked against `develop` at `aafa5de` on **2026-08-11**.
 `wear/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml`
 holds after a `:wear:bundleRelease`, and it is **not** the same list as
 `wear/src/main/AndroidManifest.xml`. The source declares five permissions; the merged manifest carries
-six — androidx.core injects `com.racetimer.wear.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, an
+six — androidx.core injects `io.github.sailordave17.racetimer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
+(it is built from `applicationId`, so it moved with the rename), an
 app-private, signature-level permission that grants nothing to anything else, is not user-visible, and
 changes no answer here. It is recorded because *finding an unexpected sixth permission at upload time*
 is the kind of surprise this document exists to remove, and because reading only the source file is
