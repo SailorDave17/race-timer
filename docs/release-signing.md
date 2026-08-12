@@ -253,6 +253,23 @@ moves permanently at the first upload:
 So the recovery path above is cheap insurance today and becomes load-bearing the moment #79 pushes the
 first bundle. That is the deadline on this work, and it is not a date.
 
+### The locators are still in git history, and that was accepted
+
+Owner decision, 2026-08-12, taken with the cost asymmetry above stated. The redaction that removed the
+keystore path, alias, password-manager entry and backup location from this file **does not remove them
+from the commit history**, and rotating the key was offered as the clean fix while it is still free —
+one `keytool` run today, a Google support request after the first upload.
+
+Rotation was declined, and the reasoning is worth keeping because it is the thing to re-examine if it
+ever stops holding: **what history discloses is a map, not a credential.** The passwords sit behind the
+owner's Google account, and the section above already names 2FA on that account as the single control
+this whole arrangement rests on. Someone who learns which entry to attack still has to beat it.
+
+What would change the answer: this key guarding something already published, the Google account's 2FA
+being weakened, or any sign the entry has been probed. The cheap partial mitigation — renaming the
+entry and moving the file, which invalidates the two locators history exposes without touching the key
+or its fingerprint — stays available and was explicitly not ruled out.
+
 ## Version strategy
 
 Set in `wear/build.gradle.kts` `defaultConfig`, currently `versionCode = 1` / `versionName = "1.0"`.
