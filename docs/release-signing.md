@@ -12,9 +12,17 @@ development machine.
 
 ## The upload key
 
-- Keystore: `C:/Users/HSCCo/keys/race-timer-upload.jks` — **outside the repo**, never committed.
-  `.gitignore` excludes `*.jks`, `*.keystore`, and `keystore.properties`.
-- Alias: `upload` (RSA 4096, SHA384withRSA, valid to 2053).
+**This repository is public, so locators are deliberately not written here.** The keystore's path on
+disk, its alias, and the name of the password-manager entry holding the credentials are each a step
+someone would need in order to go after the key, and none of them is needed to *understand* this
+procedure. They live in the owner's password manager alongside the passwords, under the entry for
+this keystore. What follows is written so it stays useful without them.
+
+- Keystore: a `.jks` file **outside the repo**, never committed. `.gitignore` excludes `*.jks`,
+  `*.keystore`, and `keystore.properties*`. Its path is machine-specific — see *Local signing
+  config*.
+- Alias: recorded in the password-manager entry's *username* field. RSA 4096, SHA384withRSA, valid
+  to 2053.
 - Certificate SHA-256 fingerprint:
 
   ```
@@ -30,11 +38,14 @@ development machine.
 `wear/build.gradle.kts` reads a gitignored `keystore.properties` at the repo root:
 
 ```properties
-storeFile=C:/Users/HSCCo/keys/race-timer-upload.jks
+storeFile=<absolute path to the .jks on this machine>
 storePassword=…
-keyAlias=upload
+keyAlias=…
 keyPassword=…
 ```
+
+All four values come from the password-manager entry for this keystore, except `storeFile`, which is
+wherever *this* machine keeps the file.
 
 **`storeFile` is an absolute path, so this file is machine-specific and must never be copied
 between machines.** On a second development machine the keystore lands wherever that machine puts
@@ -134,12 +145,13 @@ stores**, and neither is in this repo:
 
 | Half | Where it lives |
 |---|---|
-| `race-timer-upload.jks` | Google Drive, 4,296 bytes, linked from #71 |
-| Store password and key password | **Google Password Manager**, entry `race-timer-upload-keystore.com`, username `upload` |
+| The keystore file | Cloud drive, 4,296 bytes. The owner knows the folder |
+| Store password, key password, and the key alias | The owner's password manager, in the entry for this keystore |
 
 **One secret, not two.** `storePassword` and `keyPassword` hold the **same value** for this keystore, so the
 manager entry stores one password and both properties take it. The entry's *username* field carries the key
-alias, `upload`, which is the third thing a restore needs and is otherwise easy to forget.
+alias, which is the third thing a restore needs and is otherwise easy to forget — so the entry alone
+answers all three questions.
 
 **What this protects against, and what it does not.** Owner decision, 2026-08-10. The two halves are
 in separate stores, so no single folder holds both and a shared Drive link discloses nothing usable.
@@ -154,10 +166,12 @@ something already published.
 Agents do not move key material — that division held through #71 and #127 and it holds here. The
 owner performs steps 1 and 2; an agent can verify from step 3 down, by metadata and hash only.
 
-1. Download `race-timer-upload.jks` from Drive to `C:/Users/HSCCo/keys/`. Confirm **4,296 bytes**; a
-   different size means a different file, and the fingerprint check below will fail anyway.
+1. Download the keystore from the cloud drive to a directory outside the repo. Confirm **4,296
+   bytes**; a different size means a different file, and the fingerprint check below will fail
+   anyway.
 2. Recreate `keystore.properties` at the repo root using the template in *Local signing config*
-   above, taking both passwords from Google Password Manager. It is gitignored and stays local.
+   above, taking both passwords **and the alias** from the password-manager entry, and pointing
+   `storeFile` at wherever step 1 put the file. It is gitignored and stays local.
 3. Build: `./gradlew :wear:clean :wear:bundleRelease`. **`BUILD SUCCESSFUL` proves nothing here** —
    see *Always check the bundle is actually signed*. A missing or wrong `keystore.properties` yields
    an unsigned bundle and the same green line.
@@ -215,8 +229,11 @@ for running it rather than a footnote to it:
   with that prefix and never a suffix-free variant.
 - **Both passwords hold the same value**, so the manager stores one secret rather than the two the
   prose implied.
-- **"It's in Google Password Manager" is a category, not a location.** The entry name is what a
-  restore actually needs, which is why it is written out above.
+- **"It's in a password manager" is a category, not a location.** A restore needs the specific
+  entry, not the tool's name. That finding stands, and the entry is identified in the manager
+  itself rather than written out here — *see the note at the top of* The upload key. Recording it
+  in a public repository would have handed a reader the exact entry to attack, which is the
+  correction made when that was noticed on 2026-08-12.
 
 Generalised into cairn as `running-a-procedure-finds-what-writing-it-cannot-2026-08-10`.
 
