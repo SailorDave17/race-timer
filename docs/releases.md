@@ -38,28 +38,14 @@ is that it was taken rather than remembered.
 - **Commit** — `git rev-parse HEAD` on a **clean** tree at build time. A dirty tree makes the SHA a
   lie about what shipped, so check `git status` before trusting it. **If the bundle is rebuilt before
   it is uploaded, re-take this field** — a prepared row's SHA describes the artifact that existed
-  when the row was written, and rebuilding replaces that artifact without touching the table.
+  when the row was written. A rebuild used to replace that artifact silently; since
+  [#184](https://github.com/SailorDave17/race-timer/issues/184) the archive records its own
+  provenance and will not do so, but the row is still yours to keep honest.
 - **Uploaded** — the date Play accepted the bundle, from the Console, not the date it was built.
 - **Signing** — every bundle here is signed with the upload key whose SHA-256 fingerprint is recorded
   in [`release-signing.md`](release-signing.md). Verify with `keytool -printcert -jarfile <bundle>`;
   that command is correct for an `.aab` and **wrong for an APK**, where it prints
   `Not a signed jar file` and still exits 0.
-
-## The archive is overwritten by any release build, on any branch
-
-Worth knowing before you trust the file: `:wear:archiveReleaseArtifacts` writes
-`release-archive/v<versionCode>/` **from whatever tree Gradle just built**, and `versionCode` is the
-only thing in the path. It does not record which commit or branch produced the artifact, and it does
-not refuse to replace one from a different branch.
-
-*Measured 2026-08-12*: running an unrelated story's quality gate replaced this build's `.aab` with one
-containing that story's unmerged code, silently, while this table still described the old artifact.
-The bundle was rebuilt from `cadaea9` and re-verified — including a negative control confirming the
-unmerged change is **absent** from the dex — and the row above was re-taken.
-
-**So: verify the artifact against this table immediately before uploading, rather than trusting that
-the file has sat untouched.** Making the task stamp its source commit and refuse a mismatched
-overwrite would remove the hazard; that is not built.
 
 ## Build 1 — verification taken at build time
 
