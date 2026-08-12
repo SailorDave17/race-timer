@@ -121,7 +121,13 @@ an instruction as a signal.
   piece, so blast lengths are exactly what `CueTiming` states. The `ToneGenerator` path this replaced
   treated its duration as a *cap*: 500 ms delivered 512 ms five times and 520 ms once in the same race
 - **Scheduled cues, not polled** — cues are scheduled against the anchor rather than sampled by a
-  tick loop, which took cue accuracy from ±200 ms to ±13 ms on hardware
+  tick loop, which took cue accuracy from ±200 ms to ±13 ms on hardware. **±13 ms is a median, not a
+  bound** — the #114 run recorded one cue at `lateMs=66`, with a documented `queuedMs=10` ceiling on
+  top of it, so the defensible worst case is nearer **66 ms**. Anywhere the number is read as a
+  *guarantee* rather than a description — a Play declaration, the store listing, anything a reviewer
+  or a sailor sees — say **sub-second** instead of quoting this figure. That is the whole of
+  [#82](https://github.com/SailorDave17/race-timer/issues/82), and the reasoning is worked through in
+  [`docs/store/listing.md`](docs/store/listing.md)
 - **Foreground service + Ongoing Activity** — the countdown survives screen-off and backgrounding
 - **Screen policy is a table, not a habit** — keep-awake and max-brightness are two pure functions of
   timer state in `shared/ScreenPolicy.kt`, and they deliberately disagree on exactly one state so a
@@ -254,7 +260,7 @@ internal testing.
 | **Shipped** | Six sequences including both race-manager modes, signal-box lead-in, Sync, rendered cue audio, scheduled cues, foreground service, screen policy, restore-after-kill |
 | **Play internal testing** ([#66](https://github.com/SailorDave17/race-timer/issues/66)) | Developer account, upload keystore, icon set, store listing and screenshots, privacy policy, App content declarations, first internal build |
 | **Shipped toward that** | `compileSdk`/`targetSdk` 35 ([#116](https://github.com/SailorDave17/race-timer/pull/116), closing [#69](https://github.com/SailorDave17/race-timer/issues/69)) on the AGP 8.6.1 / Gradle 8.9 toolchain ([#111](https://github.com/SailorDave17/race-timer/pull/111), closing [#68](https://github.com/SailorDave17/race-timer/issues/68)) — the 2026-08-31 Wear OS deadline is met |
-| **Known open defects** | No pre-start warning when Do Not Disturb has silenced the cues ([#96](https://github.com/SailorDave17/race-timer/issues/96)), first-cue audio trails its haptic ([#98](https://github.com/SailorDave17/race-timer/issues/98)), the display can stick 180° off — a device fault, not the app ([#115](https://github.com/SailorDave17/race-timer/issues/115)) |
+| **Known open defects** | Under Do Not Disturb the watch loses **both** channels, so the gun never fires ([#144](https://github.com/SailorDave17/race-timer/issues/144)), with no pre-start warning that the cues will be silent ([#96](https://github.com/SailorDave17/race-timer/issues/96)); a cue dropped or truncated mid-race says nothing ([#161](https://github.com/SailorDave17/race-timer/issues/161)); the Settings remedy cannot clear the foreground-service block it raises ([#165](https://github.com/SailorDave17/race-timer/issues/165)). The display can still stick 180° off — a device fault, not the app: [#115](https://github.com/SailorDave17/race-timer/issues/115) is closed but **the remedy did not hold**, and [#147](https://github.com/SailorDave17/race-timer/issues/147) runs the control arm that would settle the cause |
 | **Later** | Named custom presets, round-down sync toggle, Wear Tile + complication, phone companion, rolling/chained starts |
 
 The Google Play account the app publishes under — and why publishing from a different one would create
