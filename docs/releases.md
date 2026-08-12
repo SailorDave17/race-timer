@@ -45,6 +45,30 @@ is that it was taken rather than remembered.
   that command is correct for an `.aab` and **wrong for an APK**, where it prints
   `Not a signed jar file` and still exits 0.
 
+## The archive stamps its own provenance, and refuses a mismatch (#184)
+
+`release-archive/v<versionCode>/` carries a **`provenance.txt`** written by `archiveReleaseArtifacts`:
+the commit, the branch, whether the working tree was clean, and the version pair. Its first line is
+the `identity:` — the commit plus the clean/dirty flag — and that is what gets compared.
+
+**A release build refuses to overwrite an archive whose identity differs.** Deliberate replacement is
+`-ParchiveOverwrite`; the refusal names both identities and says so.
+
+Why this exists, and why the flag is half the check: the archive keys on `versionCode` alone, which
+moves once per Play upload while branches move constantly — so before #184 every release build on
+every branch wrote to the same directory and the last one won, silently. *Measured 2026-08-12*: the
+bundle prepared for the first upload was replaced **three times in three hours** by ordinary gate runs
+on an unrelated branch. Nothing failed; the `.aab` is gitignored so `git status` stayed clean, and a
+signed bundle from the wrong branch is indistinguishable from the right one without opening the dex.
+
+**All three had the same commit.** A branch cut from the integration branch and not yet committed has
+exactly the base SHA, so a commit-only check would have passed every time while the working tree
+carried the change that made the artifact wrong. `clean@X → dirty@X` is the signal, and it is proven
+in both directions — a same-commit dirty flip is refused, an identical re-run is not.
+
+**A `dirty: true` stamp means the commit does not describe the bundle.** That is allowed — iteration
+needs it — but do not upload one without recording what was different.
+
 ## Build 1 — verification taken at build time
 
 Recorded here because the evidence is cheapest to capture at the moment the artifact is produced,

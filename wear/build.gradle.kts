@@ -199,6 +199,30 @@ val archiveReleaseArtifacts = tasks.register("archiveReleaseArtifacts") {
                 ?.trim()
                 .orEmpty()
             if (recorded.isNotEmpty() && recorded != identity && !archiveOverwriteAllowed) {
+                // Two different answers, because these are two different situations.
+                //
+                // A DIRTY build is never an upload candidate - the commit does not describe it - so
+                // there is nothing to decide: skip, say so loudly, leave the archive alone, and let
+                // the build carry on. That matters because :wear:bundleRelease is one of the three
+                // quality-gate commands, and failing it would break the gate for a reason that has
+                // nothing to do with the code under test. All three measured clobbers were this case.
+                //
+                // A CLEAN build at a different commit is a genuine conflict between two shippable
+                // artifacts, and nobody should guess which one wins. That one refuses, per the
+                // allowlist-that-forces-a-question shape: the cost is an edit, and the edit is where
+                // somebody asks which bundle they actually meant.
+                if (dirty) {
+                    logger.lifecycle(
+                        buildString {
+                            appendLine("NOT archiving: the working tree is dirty and the archive holds a different build.")
+                            appendLine("  keeping:    $recorded")
+                            appendLine("  not stored: $identity  (branch $branch)")
+                            appendLine("The bundle is still at ${bundle.path} if you need it.")
+                            append("Commit, or pass -ParchiveOverwrite, to archive this one. See #184.")
+                        }
+                    )
+                    return@doLast
+                }
                 throw GradleException(
                     buildString {
                         appendLine("Refusing to overwrite release-archive/v$releaseVersionCode.")
@@ -206,8 +230,9 @@ val archiveReleaseArtifacts = tasks.register("archiveReleaseArtifacts") {
                         appendLine("  already there: $recorded")
                         appendLine("  this build:    $identity  (branch $branch)")
                         appendLine()
-                        appendLine("These are different sources, so this would replace an artifact somebody")
-                        appendLine("may be about to upload to Play. A burned versionCode cannot be reclaimed.")
+                        appendLine("Both are clean builds, so this is a real choice between two shippable")
+                        appendLine("artifacts and guessing is not safe - the archive is what gets uploaded to")
+                        appendLine("Play, and a burned versionCode cannot be reclaimed.")
                         appendLine()
                         appendLine("If the archived bundle is finished with, delete the directory and re-run.")
                         appendLine("To overwrite deliberately: -ParchiveOverwrite")
