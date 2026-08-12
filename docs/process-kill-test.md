@@ -76,10 +76,15 @@ back finds the race still running and never touches the restore path at all. Onl
 - **Settings → Apps → Race Timer → Force stop** on the watch. This is the route #9 wrote the procedure
   around, and it is worth doing once because it is what the sailor's own device does to a backgrounded
   app.
-- `adb shell am force-stop com.racetimer.wear`. **The same call**, but issued at an instant you choose
+- `adb shell am force-stop io.github.sailordave17.racetimer`. **The same call**, but issued at an instant you choose
   and can write down — which is the only reason scenarios C and D are reachable at all.
 
-Relaunch with `adb shell am start -n com.racetimer.wear/.MainActivity`, or from the watch's app list.
+Relaunch with
+`adb shell am start -n io.github.sailordave17.racetimer/com.racetimer.wear.MainActivity`, or from the
+watch's app list. **The class must be spelled out.** `am start -n` resolves a leading-dot shorthand
+against the *package* half, which is the `applicationId`; the activity lives in the `namespace`
+package, and the two are deliberately different here, so `/.MainActivity` would look for a class that
+does not exist.
 
 ## Instruments, and the discipline that makes them evidence
 
@@ -95,8 +100,8 @@ Learned the expensive way on #122, and recorded in cairn's `install-then-hand-of
 - Read the persisted race directly where the build allows it:
 
   ```sh
-  adb -s $S shell "run-as com.racetimer.wear \
-    cat /data/data/com.racetimer.wear/shared_prefs/race_timer_state.xml"
+  adb -s $S shell "run-as io.github.sailordave17.racetimer \
+    cat /data/data/io.github.sailordave17.racetimer/shared_prefs/race_timer_state.xml"
   ```
 
   The four keys written and cleared as a set are `sequence_id`, `gun_elapsed_ms`, `gun_wall_clock_ms`
@@ -147,7 +152,7 @@ Start a sequence, kill it mid-countdown, relaunch, confirm the countdown comes b
 1. Pick **US Sailing 5-4-1-Go**. Screenshot. Tap Start.
 2. Let it run past 4:00. Screenshot the running countdown, and note the wall-clock time of the
    screenshot — the two together pin the gun instant.
-3. `adb -s $S shell am force-stop com.racetimer.wear` — note the wall-clock instant.
+3. `adb -s $S shell am force-stop io.github.sailordave17.racetimer` — note the wall-clock instant.
 4. Relaunch. The pre-start screen must offer **Resume / Start over**, and the number beside Resume must
    be the *live* remaining time: it keeps counting down while you look at it, and it must agree with
    `(gun instant) − (now)` from step 2's arithmetic rather than with the sequence's full 5:00.
@@ -251,7 +256,7 @@ nothing behind them.
 Then clear the test state so it cannot offer itself on a real launch:
 
 ```sh
-adb -s $S shell pm clear com.racetimer.wear
+adb -s $S shell pm clear io.github.sailordave17.racetimer
 ```
 
 `pm clear` also takes `picked_sequence_id` and the saved custom duration with it. That is the point, but

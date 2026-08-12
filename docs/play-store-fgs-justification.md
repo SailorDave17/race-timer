@@ -1,7 +1,7 @@
 # Play Console — `FOREGROUND_SERVICE_SPECIAL_USE` justification
 
 Text for the foreground-service declaration in Play Console's **App content** section, for
-`com.racetimer.wear` (Race Timer for Wear OS). Tracked as issue #74.
+`io.github.sailordave17.racetimer` (Race Timer for Wear OS). Tracked as issue #74.
 
 `specialUse` is the type Play scrutinises hardest, because it is the escape hatch. Reviewers push
 back when they believe a standard type would have served, so the argument below spends most of its

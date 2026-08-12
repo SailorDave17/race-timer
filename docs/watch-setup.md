@@ -94,7 +94,9 @@ step 5 alone is usually enough.
 ./gradlew :wear:installDebug  # build and deploy to the connected watch
 ```
 
-The app installs as `com.racetimer.wear`.
+The app installs as `io.github.sailordave17.racetimer`. That is the `applicationId`, and it is
+deliberately not the Kotlin package (`com.racetimer.*`) — an `adb` call wants the former, a stack
+trace shows the latter.
 
 The SDK-34 build installed cleanly on this Android 16 (API 36) watch; the app has since moved to
 `compileSdk`/`targetSdk` 35 (#69) with no install change expected.
@@ -105,7 +107,7 @@ A successful build log is not evidence the watch is running that APK — a stale
 incremental push, or a second connected device all look like success. Compare hashes:
 
 ```bash
-adb shell pm path com.racetimer.wear     # -> package:/data/app/.../base.apk
+adb shell pm path io.github.sailordave17.racetimer   # -> package:/data/app/.../base.apk
 adb pull <that-path> ./on-device.apk
 sha256sum ./on-device.apk wear/build/outputs/apk/debug/wear-debug.apk
 ```

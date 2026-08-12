@@ -66,7 +66,10 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.racetimer.wear"
+        // Play/on-device identity. Deliberately different from `namespace` above, which stays
+        // com.racetimer.wear so the Kotlin packages and the -keep rule in proguard-rules.pro are
+        // untouched. Registered under Android developer verification as "Mad Cow Race Timer".
+        applicationId = "io.github.sailordave17.racetimer"
         minSdk = 30
         // Wear OS is a carve-out from the general Play target-API rule: API 35 by 2026-08-31,
         // where regular apps must reach 36. See #69.
