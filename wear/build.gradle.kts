@@ -1,3 +1,4 @@
+import java.time.ZonedDateTime
 import java.util.Properties
 
 plugins {
@@ -253,6 +254,10 @@ val archiveReleaseArtifacts = tasks.register("archiveReleaseArtifacts") {
                 appendLine("dirty: $dirty")
                 appendLine("versionCode: $releaseVersionCode")
                 appendLine("versionName: $releaseVersionName")
+                // Deliberately NOT part of the identity line: two builds of the same sources are the
+                // same artifact whenever they were made, and putting the clock in the comparison
+                // would make every re-run a mismatch.
+                appendLine("archivedAt: ${ZonedDateTime.now()}")
                 appendLine()
                 appendLine("dirty=true means the working tree carried uncommitted changes, so the commit")
                 appendLine("above does NOT describe what is in this bundle. Do not upload a dirty build")

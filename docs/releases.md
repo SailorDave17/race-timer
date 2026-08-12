@@ -51,8 +51,16 @@ is that it was taken rather than remembered.
 the commit, the branch, whether the working tree was clean, and the version pair. Its first line is
 the `identity:` — the commit plus the clean/dirty flag — and that is what gets compared.
 
-**A release build refuses to overwrite an archive whose identity differs.** Deliberate replacement is
-`-ParchiveOverwrite`; the refusal names both identities and says so.
+**A release build will not silently replace an archive whose identity differs**, and it does one of
+two things depending on which situation it is in:
+
+| This build | Archive holds | What happens |
+|---|---|---|
+| **dirty** | anything different | **skipped**, loudly, build carries on — a dirty build is not an upload candidate, and `:wear:bundleRelease` is a quality-gate step that must not fail for a non-code reason |
+| **clean** | a different clean build | **refused**, build fails — two shippable artifacts, and guessing which wins is not safe |
+| either | the same identity | overwritten, which is a no-op |
+
+Deliberate replacement in either case is `-ParchiveOverwrite`. Both messages name the two identities.
 
 Why this exists, and why the flag is half the check: the archive keys on `versionCode` alone, which
 moves once per Play upload while branches move constantly — so before #184 every release build on
