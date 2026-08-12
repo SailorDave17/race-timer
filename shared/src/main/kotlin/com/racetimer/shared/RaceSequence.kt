@@ -15,7 +15,7 @@ package com.racetimer.shared
  * What a cue is *for*, which decides how it sounds and feels rather than how many blasts it has.
  *
  * [SignalPattern] counts blasts and states durations; it has no way to say "this one is a different
- * kind of thing". The voice is that axis. Both channels read it — see `CueTiming` on the wear side —
+ * kind of thing". The voice is that axis. Both channels read it — see [CueTiming] —
  * so a voice that is easy to pick out by ear is equally easy to pick out by feel, which is the whole
  * point on a watch that may be muted or have no speaker at all.
  */
@@ -29,6 +29,21 @@ enum class CueVoice {
      * sailor must never mistake one for the other.
      */
     SYNC,
+
+    /**
+     * An instruction to the *wearer* to act, right now — not something the fleet is being told.
+     *
+     * One user today: the end of a lead-in's prep stage, where the race manager must press the
+     * signal box or the whole race runs misaligned (see `LeadIn.kt`). That instant is the most
+     * important in the lead-in and it had nothing on it: [SYNC] ticks count *into* a mark and
+     * deliberately are not one, so five ticks left the mark itself silent.
+     *
+     * Distinct from both on both channels, and distinguishable by **texture** rather than by count.
+     * A count can be misheard as a blast pattern — `3 short` is a real cue at 0:30 of this very
+     * sequence — so this is a fast stutter at full strength that reads as one event, not as a number
+     * of blasts. See [CueTiming.PROMPT_ON] and [CueWaveform].
+     */
+    PROMPT,
 }
 
 /**
@@ -68,11 +83,19 @@ data class SignalPattern(
  * @param offsetMs      Milliseconds before the start gun (positive).  The gun itself is 0.
  * @param signal        The blast pattern to play/buzz at this cue.
  * @param isGun         True only for the 0:00 "Start" cue.
+ * @param isLeadIn      True for a cue belonging to the run-up *ahead* of the sequence's own first
+ *                      signal, rather than to the sequence itself — see `LeadIn.kt`. These are the
+ *                      only cues that may sit above [RaceSequence.sequenceMs], and marking them is
+ *                      what lets that value stay the sequence's own duration instead of growing by
+ *                      whatever the run-up happens to be. Nothing else reads it: a lead-in tick is
+ *                      told apart *by the sailor* through [CueVoice.SYNC], the way every other sync
+ *                      tick is.
  */
 data class SequenceCue(
     val offsetMs: Long,
     val signal: SignalPattern,
     val isGun: Boolean = false,
+    val isLeadIn: Boolean = false,
 )
 
 // ---------------------------------------------------------------------------
@@ -90,17 +113,36 @@ data class SequenceCue(
  *                 once the gun fires, instead of settling into [TimerState.FINISHED] and resetting.
  *                 For a race committee (as opposed to a sailor), the gun is not the end of the job —
  *                 it is the moment race duration starts mattering. See [TimerState.COUNTING_UP].
- * @param totalMs  Total countdown duration = the offset of the first cue.
+ * @param leadInMs Silent run-up ahead of the sequence's own first signal, or 0 for a sequence that
+ *                 begins at its first signal the way every built-in does. Set only by
+ *                 [withLeadIn] — see `LeadIn.kt` for what it is for.
  */
 data class RaceSequence(
     val id: String,
     val name: String,
     val cues: List<SequenceCue>,
     val countUpAfterFinish: Boolean = false,
+    val leadInMs: Long = 0L,
 ) {
-    // Computed once at construction rather than on each read: the idle screen reads this every UI
-    // refresh, and a getter re-scanned all ~30 cues each time to return a value that cannot change.
-    val totalMs: Long = cues.maxOfOrNull { it.offsetMs } ?: 0L
+    /**
+     * The sequence's **own** countdown: where its first signal sits, unaffected by any lead-in.
+     *
+     * Reads only the cues that belong to the sequence, so a run-up bolted on top cannot inflate it —
+     * that inflation is exactly the accident to avoid, since a lead-in's ticks fire in the last five
+     * seconds of the lead and so sit at `sequenceMs + 5 s` whatever the lead actually is. Deriving
+     * the countdown from the largest offset would therefore report a 70-second lead as a 5-second
+     * one, silently, and [TimerEngine.start] anchors the gun on exactly that number.
+     */
+    val sequenceMs: Long = cues.filterNot { it.isLeadIn }.maxOfOrNull { it.offsetMs } ?: 0L
+
+    /**
+     * What the clock starts at and what [TimerEngine.start] anchors the gun on: the lead-in, then
+     * the sequence.
+     *
+     * Computed once at construction rather than on each read: the idle screen reads this every UI
+     * refresh, and a getter re-scanned all ~30 cues each time to return a value that cannot change.
+     */
+    val totalMs: Long = sequenceMs + leadInMs
 }
 
 // ---------------------------------------------------------------------------
@@ -241,8 +283,12 @@ object BuiltInSequences {
      * These are not signals and must not be heard as ones, so they carry [CueVoice.SYNC]. Their job
      * is to give a sailor whose watch has drifted a beat of warning *before* the mark, which is the
      * only moment the drift can still be corrected — the mark itself is too late.
+     *
+     * `internal` rather than private because a lead-in's run-up is this same five-tick cadence,
+     * built from this same function (see `LeadIn.kt`). One definition, so the run into a lead-in's
+     * end and the run into a US Sailing signal cannot come to mean two different things.
      */
-    private fun syncRunInto(signalOffsetMs: Long, signalName: String): List<SequenceCue> =
+    internal fun syncRunInto(signalOffsetMs: Long, signalName: String): List<SequenceCue> =
         (5 downTo 1).map { sec ->
             SequenceCue(
                 offsetMs = signalOffsetMs + sec * 1_000L,
@@ -256,37 +302,103 @@ object BuiltInSequences {
 
     // --- US Sailing 5-4-1-go (RRS 26) ---
     //
-    // Voiced for the wrist rather than for the horn: RRS 26 signals are long horn blasts, but a
-    // sailor cannot count a 500 ms buzz against another 500 ms buzz without looking. Every cue here
-    // is short blasts, and the two that matter procedurally — prep up at 4:00, prep down at 1:00 —
-    // are doubled so they stand out from the plain minute ticks around them.
+    // **Long above the minute, short below it.** That line is the sequence's grammar: a long blast is
+    // a signal the committee is sounding, a short one is the wrist counting, and [CueVoice.SYNC] is a
+    // tick running into a signal. A sailor never has to work out which of the three they just felt,
+    // because the three never share a shape. The shared [finalMinuteTail] is the short half of that
+    // rule and is unchanged — the last minute is counting, not signalling.
+    //
+    // Above the minute the *count* separates two kinds of mark. The three that move a flag — warning
+    // at 5:00, prep up at 4:00, prep down at 1:00 — are **doubled**; the two that only report the
+    // time, 3:00 and 2:00, are **single**. RRS 26 sounds one signal at each mark, so the doubling is a
+    // wrist re-voicing rather than a transcription, and always has been: 4:00 and 1:00 were doubled
+    // long before 5:00 joined them.
+    //
+    // This **overturns #45**, which voiced every cue short on the reasoning that a sailor cannot count
+    // one 500 ms buzz against another without looking. #117 is the owner's report from the water: the
+    // minute signals sounded too short, and what they expected was long blasts. Direct evidence from
+    // the person wearing it outranks the argument as written — and that argument was asserted, never
+    // measured, against the only case that matters here, one long against two.
+    //
+    // Still not [usSailingRaceManager], which sounds **1 long** at its three signals and is silent at
+    // 3:00 and 2:00. The two sequences share their offsets and nothing else — asserted by a test — and
+    // that stayed true through this change rather than by luck: the doubling is what keeps a sailor's
+    // 5:00 distinct from a committee's.
     val usSailing: RaceSequence = RaceSequence(
         id = "us_sailing_5_4_1",
         name = "US Sailing 5-4-1-Go",
         cues = listOf(
             SequenceCue(
                 offsetMs = 5 * 60_000L,
-                signal = SignalPattern(shortBlasts = 1, label = "Warning — class flag up"),
+                signal = SignalPattern(longBlasts = 2, label = "Warning — class flag up"),
             ),
         ) + syncRunInto(4 * 60_000L, "prep") + listOf(
             SequenceCue(
                 offsetMs = 4 * 60_000L,
-                signal = SignalPattern(shortBlasts = 2, label = "Preparatory — P/I/Z/U flag up"),
+                signal = SignalPattern(longBlasts = 2, label = "Preparatory — P/I/Z/U flag up"),
             ),
             SequenceCue(
                 offsetMs = 3 * 60_000L,
-                signal = SignalPattern(shortBlasts = 1, label = "3 minutes"),
+                signal = SignalPattern(longBlasts = 1, label = "3 minutes"),
             ),
             SequenceCue(
                 offsetMs = 2 * 60_000L,
-                signal = SignalPattern(shortBlasts = 1, label = "2 minutes"),
+                signal = SignalPattern(longBlasts = 1, label = "2 minutes"),
             ),
         ) + syncRunInto(1 * 60_000L, "one-minute") + listOf(
             SequenceCue(
                 offsetMs = 1 * 60_000L,
-                signal = SignalPattern(shortBlasts = 2, label = "One-minute — prep flag down"),
+                signal = SignalPattern(longBlasts = 2, label = "One-minute — prep flag down"),
             ),
         ) + finalMinuteTail + sustainedGun,
+    )
+
+    // --- US Sailing 5-4-1-go (RRS 26), race-manager variant ---
+    //
+    // The committee side of [usSailing], and deliberately NOT built on it. The offsets line up and
+    // nothing else does, so there is no shared head to extract the way [scholasticHead] is genuinely
+    // shared — an extraction here would have to be parameterised on every cue it contained, which is
+    // a copy with extra steps. #59 shipped the mirror-image mistake in its first pass, assuming two
+    // tails that looked alike were alike.
+    //
+    // Three departures from the sailor sequence, each with a reason:
+    //
+    //  - **1 long at 5:00, 4:00 and 1:00**, where a sailor gets 2 long at each. Confirmed by the
+    //    iStart Owner's Manual v2.0, whose Rule 26 loud-horn schedule is 1 long at each of those three
+    //    marks: a race manager is *sounding* the signals, so the count matches what their own horn is
+    //    doing rather than being re-voiced for legibility. (The sailor sequence doubles them for the
+    //    wrist; until #117 it also sounded them short, and this bullet said so.)
+    //  - **Silent at 3:00 and 2:00.** Same reasoning that keeps 0:50 and 0:40 out of
+    //    [raceManagerTail]: those are cross-check marks for a sailor, and the committee is the thing
+    //    being cross-checked against. The manual's table has no entries there either.
+    //  - **A third sync run into the gun**, replacing [finalMinuteTail] outright. All three run-ins
+    //    are then the same device, so the race manager learns one cadence and it means the same thing
+    //    every time — and it keeps the run-in categorically distinct from the signals, which matters
+    //    most at the gun, the one mark that must not be anticipated by mistake.
+    //
+    // [countUpAfterFinish] is the whole of the count-up behaviour and the whole of lead-in
+    // eligibility (`offersLeadIn` reads exactly this flag): nothing downstream branches on which
+    // race-manager sequence is loaded, and this is the first sequence that could prove it.
+    val usSailingRaceManager: RaceSequence = RaceSequence(
+        id = "us_sailing_race_manager",
+        name = "US Sailing - Race Manager",
+        cues = listOf(
+            SequenceCue(
+                offsetMs = 5 * 60_000L,
+                signal = SignalPattern(longBlasts = 1, label = "Warning — class flag up"),
+            ),
+        ) + syncRunInto(4 * 60_000L, "prep") + listOf(
+            SequenceCue(
+                offsetMs = 4 * 60_000L,
+                signal = SignalPattern(longBlasts = 1, label = "Preparatory — P/I/Z/U flag up"),
+            ),
+        ) + syncRunInto(1 * 60_000L, "one-minute") + listOf(
+            SequenceCue(
+                offsetMs = 1 * 60_000L,
+                signal = SignalPattern(longBlasts = 1, label = "One-minute — prep flag down"),
+            ),
+        ) + syncRunInto(0L, "start") + sustainedGun,
+        countUpAfterFinish = true,
     )
 
     // --- Scholastic / ICSA 3-minute sequence ---
@@ -340,8 +452,14 @@ object BuiltInSequences {
         ),
     )
 
-    /** All built-in sequences in display order. */
-    val all: List<RaceSequence> = listOf(usSailing, scholastic, scholasticRaceManager, club)
+    /**
+     * All built-in sequences in display order.
+     *
+     * Each race-manager variant sits directly under the sailor sequence it is the committee side of,
+     * so the picker reads as two pairs and a standalone rather than as five unrelated modes.
+     */
+    val all: List<RaceSequence> =
+        listOf(usSailing, usSailingRaceManager, scholastic, scholasticRaceManager, club)
 
     // -----------------------------------------------------------------------
     // Custom sequence
@@ -379,9 +497,17 @@ object BuiltInSequences {
      * saved Custom race come back as a US Sailing one: `custom_8m` is not in [all], so a lookup that
      * substitutes on miss reports success while running the wrong duration and the wrong cues. A null
      * forces the caller to decide, and to say so on screen (see `docs/message-surface.md`).
+     *
+     * The lead-in branch is the same property one level out: a race armed with a lead persists as
+     * `scholastic_race_manager_alert60s` and nothing else, so this is what makes a process death
+     * during the run-up come back on the right clock rather than 70 seconds short. Note the id
+     * carries the **box's alert window**, not the total lead it produces — the 60 there is what
+     * yields a 70-second run-up once [LEAD_IN_PREP_SECONDS] is added (see `LeadIn.leadInId`).
      */
     fun resolve(id: String): RaceSequence? =
-        all.firstOrNull { it.id == id } ?: customMinutes(id)?.let { custom(it) }
+        all.firstOrNull { it.id == id }
+            ?: leadInFromId(id)
+            ?: customMinutes(id)?.let { custom(it) }
 
     /**
      * A race of [totalMinutes] whole minutes, counted down in the Scholastic/ICSA voice.

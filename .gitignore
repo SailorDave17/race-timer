@@ -15,13 +15,19 @@ bin/
 # Local SDK properties (not to be versioned)
 local.properties
 
-# Signing keystore files
+# Signing keystore files and the local signing config that names them
 *.jks
 *.keystore
+keystore.properties*
 
 # Generated APK/AAB files
 *.apk
 *.aab
+
+# Retained release artefacts (bundle + R8 mapping, stamped by versionCode). Kept out of git because
+# a mapping is ~17 MB and changes every build; it is durable only once uploaded — see
+# docs/release-signing.md.
+release-archive/
 
 # macOS
 .DS_Store

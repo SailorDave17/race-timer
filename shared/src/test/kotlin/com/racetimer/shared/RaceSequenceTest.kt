@@ -22,24 +22,67 @@ class RaceSequenceTest {
         assertTrue(gun.isGun)
     }
 
-    @Test fun `usSailing is voiced for the wrist, not the horn`() {
-        // Every cue is short blasts: a sailor cannot count one 500 ms buzz against another without
-        // looking at the watch, which is the whole thing this sequence is trying to avoid.
-        val long = BuiltInSequences.usSailing.cues.filter { it.signal.longBlasts > 0 }
-        assertEquals("no usSailing cue may use a long blast", emptyList<SequenceCue>(), long)
+    @Test fun `usSailing sounds long above the minute and short below it`() {
+        // REPLACES `usSailing is voiced for the wrist, not the horn` (#45), which asserted that no cue
+        // here may carry a long blast at all. #117 overturned that on the owner's on-water report, so
+        // this test is *moved to the new rule* rather than deleted: the sequence still has a voicing
+        // property worth pinning, and it is now a boundary rather than a ban.
+        //
+        // Long = a signal the committee is sounding. Short = the wrist counting. The line is 1:00.
+        // Sync ticks and the sustained gun are neither and are excluded by kind, not by offset.
+        var signals = 0
+        var ticks = 0
+        for (cue in BuiltInSequences.usSailing.cues) {
+            if (cue.signal.voice != CueVoice.BLAST || cue.isGun) continue
+            if (cue.offsetMs >= 60_000L) {
+                signals++
+                assertTrue(
+                    "signal at ${cue.offsetMs} ms must be long blasts only",
+                    cue.signal.longBlasts > 0 && cue.signal.shortBlasts == 0,
+                )
+            } else {
+                ticks++
+                assertTrue(
+                    "wrist tick at ${cue.offsetMs} ms must be short blasts only",
+                    cue.signal.shortBlasts > 0 && cue.signal.longBlasts == 0,
+                )
+            }
+        }
+        // Positive control. Every assertion above sits behind a `continue`, so a change to
+        // SignalPattern's default voice — or anything else that stopped these cues counting as
+        // blasts — would empty the loop and leave this test green having checked nothing. The counts
+        // are what make "it passed" mean "it looked".
+        assertEquals("blast signals above the minute", 5, signals)
+        assertEquals("wrist ticks below the minute", 14, ticks)
     }
 
-    @Test fun `usSailing ticks once at each plain minute`() {
-        assertPattern(BuiltInSequences.usSailing, 5 * 60_000L, longBlasts = 0, shortBlasts = 1)
-        assertPattern(BuiltInSequences.usSailing, 3 * 60_000L, longBlasts = 0, shortBlasts = 1)
-        assertPattern(BuiltInSequences.usSailing, 2 * 60_000L, longBlasts = 0, shortBlasts = 1)
+    @Test fun `usSailing sounds one long at the plain minute reminders`() {
+        // 3:00 and 2:00 move no flag — they report the time, so they stay single where the three
+        // procedural marks are doubled. 5:00 left this group in #117: it is the warning signal, and
+        // grouping it with the plain reminders is what made it sound wrong on the water.
+        assertPattern(BuiltInSequences.usSailing, 3 * 60_000L, longBlasts = 1, shortBlasts = 0)
+        assertPattern(BuiltInSequences.usSailing, 2 * 60_000L, longBlasts = 1, shortBlasts = 0)
     }
 
-    @Test fun `usSailing doubles the two procedural signals`() {
-        // Prep up and prep down are the marks that matter; they must stand out from the plain
-        // minute ticks either side of them.
-        assertPattern(BuiltInSequences.usSailing, 4 * 60_000L, longBlasts = 0, shortBlasts = 2)
-        assertPattern(BuiltInSequences.usSailing, 1 * 60_000L, longBlasts = 0, shortBlasts = 2)
+    @Test fun `usSailing doubles the three procedural signals`() {
+        // Warning, prep up, prep down — every mark that puts a flag up or takes one down, and no
+        // others. Doubled so they stand apart from the plain minute reminders either side of them.
+        // Was two marks until #117 added 5:00; the count is the assertion, so a fourth doubled mark
+        // or a demoted one fails here.
+        // The expected marks are named outright rather than filtered out of the sequence: deriving
+        // them from `longBlasts == 2` and then asserting `longBlasts == 2` would pass whatever the
+        // code said. Having to edit this list when a mark changes is the assertion working.
+        val procedural = listOf(5 * 60_000L, 4 * 60_000L, 1 * 60_000L)
+        for (offset in procedural) {
+            assertPattern(BuiltInSequences.usSailing, offset, longBlasts = 2, shortBlasts = 0)
+        }
+        // And no others — a fourth doubled mark is as wrong as a demoted one.
+        assertEquals(
+            procedural,
+            BuiltInSequences.usSailing.cues
+                .filter { it.signal.voice == CueVoice.BLAST && it.signal.longBlasts >= 2 }
+                .map { it.offsetMs },
+        )
     }
 
     @Test fun `usSailing runs five sync ticks into the 4 and 1 minute signals`() {
@@ -55,21 +98,47 @@ class RaceSequenceTest {
         }
     }
 
-    @Test fun `sync is used for exactly the ten usSailing countdown ticks and nothing else`() {
-        // A sync tick is not a signal. If one ever appears outside these ten offsets, a sailor is
-        // being told a mark is coming when none is.
-        val expected = listOf(4 * 60_000L, 1 * 60_000L)
-            .flatMap { base -> (5L downTo 1L).map { base + it * 1_000L } }
-            .sortedDescending()
-        val actual = BuiltInSequences.all
-            .flatMap { seq -> seq.cues.map { seq to it } }
-            .filter { (_, cue) -> cue.signal.voice == CueVoice.SYNC }
-        assertEquals(
-            "every sync cue must belong to usSailing",
-            setOf(BuiltInSequences.usSailing.id),
-            actual.map { it.first.id }.toSet(),
-        )
-        assertEquals(expected, actual.map { it.second.offsetMs }.sortedDescending())
+    @Test fun `every sync run counts into a real cue, and runs the full five`() {
+        // GENERALISED for #105, deliberately — this used to enumerate the ten offsets usSailing was
+        // then the only owner of, and assert every SYNC cue in `all` sat on one of them.
+        //
+        // The rule that test was written to protect is in its own comment: "a sync tick is not a
+        // signal — if one ever appears outside these ten offsets, a sailor is being told a mark is
+        // coming when none is." That rule is *a sync run announces something*. Enumerating where sync
+        // was allowed enforced it only for as long as there was one legitimate user, and made a
+        // second one — us_sailing_race_manager, which runs three — indistinguishable from the bug.
+        //
+        // Stated as the property, it covers every sequence including ones not written yet, and it is
+        // strictly stronger: the old version would have accepted a run of four ticks, or a run into
+        // an offset that had since lost its signal. What it no longer pins is that usSailing in
+        // particular has runs at 4:00 and 1:00 — that was never this test's job and is asserted
+        // outright by `usSailing runs five sync ticks into the 4 and 1 minute signals`, with the
+        // matching test for the race-manager variant below.
+        val sequences = BuiltInSequences.all + BuiltInSequences.custom(totalMinutes = 3)
+        for (seq in sequences) {
+            val syncOffsets = seq.cues.filter { it.signal.voice == CueVoice.SYNC }.map { it.offsetMs }
+            val signalOffsets = seq.cues
+                .filterNot { it.signal.voice == CueVoice.SYNC }
+                .map { it.offsetMs }
+                .toSet()
+
+            // Each tick sits 1-5 s above a cue that actually sounds.
+            val announced = syncOffsets.map { tick ->
+                val target = (1L..5L).map { tick - it * 1_000L }.firstOrNull { it in signalOffsets }
+                assertNotNull("${seq.id}: sync tick at $tick ms announces no cue", target)
+                target!!
+            }
+
+            // And no run is short: five ticks, one per second, or the cadence means something else.
+            for (target in announced.toSet()) {
+                for (sec in 5L downTo 1L) {
+                    assertTrue(
+                        "${seq.id}: run into $target ms is missing its $sec-second tick",
+                        target + sec * 1_000L in syncOffsets,
+                    )
+                }
+            }
+        }
     }
 
     @Test fun `usSailing gun is a sustained 3 second signal`() {
@@ -92,6 +161,125 @@ class RaceSequenceTest {
         val offsets = BuiltInSequences.usSailing.cues.map { it.offsetMs }
         assertEquals(offsets.sortedDescending(), offsets)
         assertEquals("no offset may fire twice", offsets.size, offsets.distinct().size)
+    }
+
+    // --- US Sailing Race Manager (#105) ---------------------------------------
+
+    @Test fun `usSailingRaceManager sounds 1 long at each of the three signals`() {
+        // The headline difference from the sailor sequence, which sounds 1 short at 5:00 and 2 short
+        // at 4:00 and 1:00. A race manager is sounding the signals rather than counting them, so the
+        // long matches their own horn — and the iStart manual's Rule 26 loud-horn schedule is 1 long
+        // at exactly these three marks.
+        for (offset in listOf(5 * 60_000L, 4 * 60_000L, 1 * 60_000L)) {
+            assertPattern(BuiltInSequences.usSailingRaceManager, offset, longBlasts = 1, shortBlasts = 0)
+        }
+    }
+
+    @Test fun `usSailingRaceManager is silent at 3 and 2 minutes`() {
+        // Deliberate, and the same reasoning that strips 0:50 and 0:40 out of the Scholastic
+        // race-manager tail: those are a sailor's cross-check marks, and the committee is the thing
+        // being cross-checked against. The manual's table has no entries there either.
+        val marks = BuiltInSequences.usSailingRaceManager.cues
+            .filter { it.offsetMs == 3 * 60_000L || it.offsetMs == 2 * 60_000L }
+        assertEquals(emptyList<SequenceCue>(), marks)
+    }
+
+    @Test fun `usSailingRaceManager runs five sync ticks into each of its three signals`() {
+        // Three runs, not two: the sailor sequence has none into the gun, and this replaces its
+        // finalMinuteTail with one. All three are the same device, so the race manager learns one
+        // cadence — and it stays categorically distinct from the signals at the one mark that must
+        // never be anticipated by mistake.
+        for (base in listOf(4 * 60_000L, 1 * 60_000L, 0L)) {
+            for (sec in 5L downTo 1L) {
+                val offset = base + sec * 1_000L
+                val cue = BuiltInSequences.usSailingRaceManager.cues.firstOrNull { it.offsetMs == offset }
+                assertNotNull("expected a sync tick at $offset ms", cue)
+                assertEquals("sync tick at $offset ms", CueVoice.SYNC, cue!!.signal.voice)
+                assertEquals(1, cue.signal.shortBlasts)
+                assertEquals(0, cue.signal.longBlasts)
+            }
+        }
+    }
+
+    @Test fun `usSailingRaceManager has no doubled final five, unlike a sailor's countdown`() {
+        // What it has instead of finalMinuteTail. Stated as its own assertion rather than left to
+        // the exclusion in `every sailor sequence doubles the last five seconds` — an exclusion says
+        // only that the cadence is absent, and the point is that a *different* one is present.
+        for (sec in 5L downTo 1L) {
+            val cue = BuiltInSequences.usSailingRaceManager.cues.first { it.offsetMs == sec * 1_000L }
+            assertEquals("at $sec s", CueVoice.SYNC, cue.signal.voice)
+            assertEquals("at $sec s", 1, cue.signal.shortBlasts)
+        }
+    }
+
+    @Test fun `usSailingRaceManager has nothing between 0-59 and 0-06`() {
+        // No finalMinuteTail: the 0:50/0:40 warnings, the 3-short/2-short calls at 0:30/0:20 and the
+        // single ticks from 0:10 to 0:06 are all a sailor's, and none of them are here.
+        val belowTheMinute = BuiltInSequences.usSailingRaceManager.cues.filter { it.offsetMs in 6_000L..59_000L }
+        assertEquals(emptyList<SequenceCue>(), belowTheMinute)
+    }
+
+    @Test fun `usSailingRaceManager has 19 cues`() {
+        // 3 signals + 3 sync runs of 5 + the gun.
+        assertEquals(19, BuiltInSequences.usSailingRaceManager.cues.size)
+    }
+
+    @Test fun `usSailingRaceManager totalMs is 5 minutes`() {
+        assertEquals(5 * 60_000L, BuiltInSequences.usSailingRaceManager.totalMs)
+        assertEquals(5 * 60_000L, BuiltInSequences.usSailingRaceManager.sequenceMs)
+        assertEquals(0L, BuiltInSequences.usSailingRaceManager.leadInMs)
+    }
+
+    @Test fun `usSailingRaceManager cues are sorted descending and unique`() {
+        val offsets = BuiltInSequences.usSailingRaceManager.cues.map { it.offsetMs }
+        assertEquals(offsets.sortedDescending(), offsets)
+        assertEquals("no offset may fire twice", offsets.size, offsets.distinct().size)
+    }
+
+    @Test fun `usSailingRaceManager ends in the shared sustained gun`() {
+        val gun = BuiltInSequences.usSailingRaceManager.cues.last()
+        assertTrue("last cue must be the gun", gun.isGun)
+        assertEquals(0L, gun.offsetMs)
+        assertEquals(3_000L, gun.signal.sustainedMs)
+        // Identity, not equality: the same cue object usSailing and scholastic end on, so a change
+        // to the gun cannot reach four sequences and miss the fifth.
+        assertSame(BuiltInSequences.usSailing.cues.last(), gun)
+    }
+
+    @Test fun `usSailing is byte-for-byte unchanged by the race-manager variant`() {
+        // AC 2, asserted rather than inspected. The two sequences share offsets and share nothing
+        // else, so the risk this guards is a well-meant extraction of a "common head" — the mistake
+        // #59 shipped in reverse, assuming two tails that looked alike were alike.
+        val sailor = BuiltInSequences.usSailing
+        assertEquals(30, sailor.cues.size)
+        assertEquals(5 * 60_000L, sailor.totalMs)
+        assertFalse("usSailing is a sailor's race", sailor.countUpAfterFinish)
+        // Its own voicing at the three marks the race-manager variant sounds as 1 long. #117 changed
+        // what these values are and not what the test is for: the guard is that the two sequences
+        // cannot be merged behind a shared head, and doubling is now what holds them apart at 5:00.
+        assertPattern(sailor, 5 * 60_000L, longBlasts = 2, shortBlasts = 0)
+        assertPattern(sailor, 4 * 60_000L, longBlasts = 2, shortBlasts = 0)
+        assertPattern(sailor, 1 * 60_000L, longBlasts = 2, shortBlasts = 0)
+        // And the parts the race manager drops entirely: the plain minute reminders and the sailor tail.
+        assertPattern(sailor, 3 * 60_000L, longBlasts = 1, shortBlasts = 0)
+        assertPattern(sailor, 2 * 60_000L, longBlasts = 1, shortBlasts = 0)
+        assertEquals(
+            BuiltInSequences.scholastic.cues.filter { it.offsetMs < 60_000L },
+            sailor.cues.filter { it.offsetMs < 60_000L },
+        )
+    }
+
+    @Test fun `the two US Sailing variants share their offsets and nothing else`() {
+        // The reason no head is extracted. Same marks, different voice at every one of them — an
+        // extraction would have to be parameterised on each cue it contained, which is a copy with
+        // extra steps and two places to edit.
+        val sailor = BuiltInSequences.usSailing
+        val manager = BuiltInSequences.usSailingRaceManager
+        for (offset in listOf(5 * 60_000L, 4 * 60_000L, 1 * 60_000L)) {
+            val a = sailor.cues.first { it.offsetMs == offset }
+            val b = manager.cues.first { it.offsetMs == offset }
+            assertNotEquals("cues at $offset ms must not be the same signal", a.signal, b.signal)
+        }
     }
 
     @Test fun `scholastic has 19 cues`() {
@@ -163,18 +351,15 @@ class RaceSequenceTest {
     }
 
     @Test fun `no cue in any sequence outruns the gap to the next one`() {
-        // Blast lengths mirror CueTiming in the wear module, which HapticManager and ToneManager
-        // both play a cue on. A cue that runs past its successor would overlap it on both channels.
+        // Blast lengths come from CueTiming, which HapticManager and ToneManager both play a cue on.
+        // A cue that runs past its successor would overlap it on both channels. This used to carry a
+        // hand-copied mirror of those constants back when CueTiming lived in the wear module and was
+        // out of reach here — so a retune there would have left this test asserting the old shape.
         // Now covers every built-in, not just scholastic: usSailing's sync ticks fire at 1-second
         // spacing, the tightest gap anywhere, and 4:01 must not bleed into the signal it announces.
-        val longMs = 500L + 250L
-        val shortMs = 150L + 150L
-        val syncMs = 60L + 60L
         for (seq in BuiltInSequences.all) {
             for ((cue, next) in seq.cues.zipWithNext()) {
-                val sync = cue.signal.voice == CueVoice.SYNC
-                val patternMs = cue.signal.longBlasts * (if (sync) syncMs else longMs) +
-                    cue.signal.shortBlasts * (if (sync) syncMs else shortMs)
+                val patternMs = CueTiming.durationMs(cue.signal, cue.isGun)
                 val gapMs = cue.offsetMs - next.offsetMs
                 assertTrue(
                     "${seq.id} cue at ${cue.offsetMs} ms runs $patternMs ms into a $gapMs ms gap",
@@ -186,9 +371,13 @@ class RaceSequenceTest {
 
     @Test fun `club's gun is the only one still on the legacy triple-buzz`() {
         // A gun carrying no sustainedMs is what falls through to the triple-buzz branch in
-        // HapticManager. scholastic, usSailing and scholasticRaceManager all state their own 3 s
-        // (the last of these by sharing scholastic's sustainedGun cue); club has taken on the final
-        // five but nothing else, so its gun must keep the behaviour it has today.
+        // HapticManager. Every sequence but club states its own 3 s (the race-manager variants by
+        // sharing the same sustainedGun cue); club has taken on the final five but nothing else, so
+        // its gun must keep the behaviour it has today.
+        //
+        // #105 adds us_sailing_race_manager to the list rather than changing what is asserted: the
+        // new sequence ends in the same shared sustainedGun, which is the point — "same as every
+        // other sequence" is true of all four of these and remains untrue of club.
         val sustained = BuiltInSequences.all
             .flatMap { seq -> seq.cues.map { seq to it } }
             .filter { (_, cue) -> cue.signal.sustainedMs > 0L }
@@ -196,6 +385,7 @@ class RaceSequenceTest {
             setOf(
                 BuiltInSequences.scholastic.id,
                 BuiltInSequences.usSailing.id,
+                BuiltInSequences.usSailingRaceManager.id,
                 BuiltInSequences.scholasticRaceManager.id,
             ),
             sustained.map { it.first.id }.toSet(),
@@ -263,19 +453,38 @@ class RaceSequenceTest {
         assertEquals(3 * 60_000L, BuiltInSequences.scholasticRaceManager.totalMs)
     }
 
-    @Test fun `scholasticRaceManager is the only sequence that counts up after the gun`() {
-        // Guards against a future sequence quietly opting in (or scholasticRaceManager quietly
-        // losing the flag) the same way `every sequence doubles the last five seconds` guards the
-        // final-five cadence above.
+    @Test fun `the race-manager modes are exactly the sequences that count up after the gun`() {
+        // RENAMED AND WIDENED for #105: the old name — `scholasticRaceManager is the only sequence
+        // that counts up after the gun` — became false the moment a second committee mode existed.
+        //
+        // The assertion itself is unchanged in kind, and deliberately so. It still pins the whole
+        // set rather than checking membership, because its job is to catch a sequence *quietly*
+        // opting in: countUpAfterFinish is not only the count-up flag, it is what `offersLeadIn`
+        // reads to decide which sequences may be armed with a lead-in (#104), so a sailor sequence
+        // acquiring it by accident both breaks the reset at the gun and hands sailors a control
+        // built for a committee boat. Two things, one flag, one guard.
         val countUp = BuiltInSequences.all.filter { it.countUpAfterFinish }
-        assertEquals(listOf(BuiltInSequences.scholasticRaceManager), countUp)
+        assertEquals(
+            listOf(BuiltInSequences.usSailingRaceManager, BuiltInSequences.scholasticRaceManager),
+            countUp,
+        )
     }
 
-    @Test fun `built-in sequences other than scholasticRaceManager do not count up`() {
+    @Test fun `no sailor sequence counts up`() {
+        // The same rule by exclusion, and kept as its own test rather than folded into the one above
+        // because the two fail differently: that one fails when the *set* is wrong, in either
+        // direction, while this one names the offending sailor sequence in its message. A committee
+        // flag on a sailor sequence is the dangerous direction — it is the one that changes what
+        // happens at the gun of a race someone is sailing.
+        val raceManagers = setOf(
+            BuiltInSequences.usSailingRaceManager.id,
+            BuiltInSequences.scholasticRaceManager.id,
+        )
         for (seq in BuiltInSequences.all) {
-            if (seq.id == BuiltInSequences.scholasticRaceManager.id) continue
+            if (seq.id in raceManagers) continue
             assertFalse("${seq.id} should not set countUpAfterFinish", seq.countUpAfterFinish)
         }
+        assertFalse("custom is a sailor's race", BuiltInSequences.custom(5).countUpAfterFinish)
     }
 
     @Test fun `club has 9 cues`() {
@@ -309,15 +518,29 @@ class RaceSequenceTest {
         }
     }
 
-    @Test fun `every sequence doubles the last five seconds, except scholasticRaceManager`() {
+    @Test fun `every sailor sequence doubles the last five seconds, but no race-manager mode does`() {
         // Iterated over `all` plus a custom rather than asserted per sequence: the point of this
         // cadence is that it is universal, so a sequence added later must not be able to opt out
         // quietly. If a new sequence lands without the final five, this is what should catch it.
         //
-        // scholasticRaceManager is a deliberate, requested exception — see raceManagerTail's doc in
-        // RaceSequence.kt and `scholasticRaceManager tail matches the requested race-manager cadence`
-        // below, which pins down what it uses instead (single ticks, not doubled).
-        val sequences = (BuiltInSequences.all - BuiltInSequences.scholasticRaceManager) +
+        // TWO named exceptions now, both race-manager modes, and both for the same reason rather
+        // than by coincidence — the doubled final five is a *sailor's* phase-change signal, marking
+        // the seconds they live through with their head up and their hands full. A race manager is
+        // sounding that countdown, not racing to it.
+        //
+        //  - scholasticRaceManager uses single ticks (raceManagerTail's doc in RaceSequence.kt, and
+        //    `scholasticRaceManager tail matches the requested race-manager cadence` below).
+        //  - usSailingRaceManager (#105) uses a CueVoice.SYNC run into the gun instead, so its last
+        //    five seconds are not blasts at all — pinned by `usSailingRaceManager runs five sync
+        //    ticks into each of its three signals`.
+        //
+        // Adding an exception here is therefore not a weakening: each exclusion has a test naming
+        // what that sequence does instead, so nothing has become unasserted by being excluded.
+        val raceManagers = listOf(
+            BuiltInSequences.usSailingRaceManager,
+            BuiltInSequences.scholasticRaceManager,
+        )
+        val sequences = (BuiltInSequences.all - raceManagers.toSet()) +
             BuiltInSequences.custom(totalMinutes = 3)
         for (seq in sequences) {
             for (sec in 5L downTo 1L) {
@@ -451,5 +674,40 @@ class RaceSequenceTest {
         assertNotNull("no ${sequence.id} cue at $offsetMs ms", cue)
         assertEquals("long blasts at $offsetMs ms", longBlasts, cue!!.signal.longBlasts)
         assertEquals("short blasts at $offsetMs ms", shortBlasts, cue.signal.shortBlasts)
+    }
+
+    // --- Nothing fires after the gun (#126) -------------------------------------
+
+    @Test fun `no built-in sequence has a cue after the gun`() {
+        // Load-bearing for the doze answer in docs/timing-accuracy.md, and stated there as a fact
+        // about the sequences rather than a hope. TimerService releases the wake lock at the gun for
+        // a countUpAfterFinish sequence — deliberately, since a committee count-up is unbounded and
+        // has nothing left to sound — and lets the watch suspend for the rest of the race.
+        //
+        // That is safe only while the cue queue is empty by then. A cue at a negative offset would
+        // be a cue scheduled into a window where the CPU is allowed to sleep and the handler posts on
+        // the uptime clock, so it could be deferred indefinitely with nothing reporting it. The
+        // reasoning lives in a document; this is what stops the document quietly becoming wrong.
+        for (sequence in BuiltInSequences.all) {
+            val afterGun = sequence.cues.filter { it.offsetMs < 0L }
+            assertTrue(
+                "${sequence.id} has ${afterGun.size} cue(s) after the gun: " +
+                    afterGun.map { it.signal.label },
+                afterGun.isEmpty(),
+            )
+        }
+    }
+
+    @Test fun `every count-up sequence ends on its gun`() {
+        // The sharper half of the rule above, aimed at exactly the sequences that release the wake
+        // lock: it is not enough that no cue sits *after* the gun — the gun must be the last cue, so
+        // the queue is provably drained at the moment COUNTING_UP begins.
+        val countUp = BuiltInSequences.all.filter { it.countUpAfterFinish }
+        assertTrue("no count-up sequences found; this test has stopped testing anything", countUp.isNotEmpty())
+        for (sequence in countUp) {
+            val last = sequence.cues.last()
+            assertTrue("${sequence.id} does not end on its gun", last.isGun)
+            assertEquals("${sequence.id} gun is not at offset 0", 0L, last.offsetMs)
+        }
     }
 }
