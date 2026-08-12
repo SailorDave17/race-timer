@@ -1,0 +1,86 @@
+name: Publish privacy policy
+
+# Play fetches the privacy policy URL, and a dead one is grounds for removal - so the published copy
+# has to track docs/privacy-policy.md rather than being republished when somebody remembers. That is
+# the whole reason this workflow exists: a hand-copied policy is a second copy, and the policy is
+# already declared a dependency of the manifest.
+on:
+  push:
+    branches: [develop]
+    paths:
+      - docs/privacy-policy.md
+      - .github/scripts/build-privacy-page.py
+      - .github/workflows/publish-privacy-policy.yml
+  workflow_dispatch:
+
+concurrency:
+  group: publish-privacy-policy
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish to gh-pages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same script the first publish was made with, so the live page cannot drift from what
+      # this workflow would produce. It refuses to publish if the maintainer block does not strip
+      # cleanly or the effective date is missing - both failures are silent in a rendered page.
+      - name: Build the site
+        run: python3 .github/scripts/build-privacy-page.py "$RUNNER_TEMP/site"
+
+      - name: Publish
+        env:
+          TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/site"
+          git init -q
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${TOKEN}@github.com/${REPO}.git"
+
+          # Parent the new commit on the existing branch so history is appended, never rewritten.
+          # A publish branch is generated output and force-pushing it is the usual shortcut, but
+          # this repository treats rewriting a remote branch as something only the owner does, and
+          # a build artefact is not a reason to make an exception.
+          if git fetch -q --depth=1 origin gh-pages 2>/dev/null; then
+            git reset -q --soft FETCH_HEAD
+          fi
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "published copy already matches the source - nothing to do"
+            exit 0
+          fi
+
+          git commit -q -m "publish: privacy policy from ${GITHUB_SHA:0:8}"
+          git push -q origin HEAD:gh-pages
+          echo "published https://sailordave17.github.io/race-timer/privacy-policy"
+
+      # Publishing is not the same as being reachable, and the failure mode of a privacy policy URL
+      # is that nobody notices until a Play review does. Pages needs a moment to build.
+      - name: Confirm the page is actually served
+        run: |
+          set -euo pipefail
+          URL=https://sailordave17.github.io/race-timer/privacy-policy
+          for i in $(seq 1 20); do
+            CODE=$(curl -s -o /tmp/page -w '%{http_code}' -L --max-time 20 "$URL" || true)
+            if [ "$CODE" = "200" ]; then
+              grep -q "Effective date" /tmp/page \
+                || { echo "200 but the page has no effective date on it"; exit 1; }
+              grep -qi "MAINTAINER" /tmp/page \
+                && { echo "the maintainer block reached the public page"; exit 1; }
+              echo "ok - $URL serves the policy"
+              exit 0
+            fi
+            echo "attempt $i: HTTP $CODE, waiting for the Pages build"
+            sleep 15
+          done
+          echo "$URL did not return 200"
+          exit 1

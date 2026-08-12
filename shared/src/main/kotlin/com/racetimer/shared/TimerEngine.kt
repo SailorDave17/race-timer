@@ -294,15 +294,26 @@ class TimerEngine(
      */
     fun sync(roundDown: Boolean = false, guardMs: Long = 1_000L, maxCorrectionMs: Long = 30_000L) {
         if (state != TimerState.RUNNING) return
+        val seq = sequence ?: return
 
         val now = clock.elapsedMs()
+        val remaining = gunTimeMs - now
+
+        // Inert through a lead-in (#104). A sync is a correction against a sequence already under
+        // way — the whole run-up is the window *before* there is anything to be corrected against,
+        // since the signal box has not been started yet. Snapping here would be worse than useless:
+        // with a 70 s lead on a 3:00 sequence the clock reads 4:07, nearest-minute lands on 4:00,
+        // and seven seconds of lead vanish — the exact misalignment the lead-in exists to prevent,
+        // with no signal to notice it by. Refused *before* the double-tap guard is armed, so it
+        // costs a later, legitimate sync nothing.
+        if (isInLeadIn(seq, remaining)) return
+
         // null == never synced this session, so the first sync is always allowed. (Do not fold this
         // into a sentinel Long: `now - Long.MIN_VALUE` overflows negative and swallowed every
         // first sync of a race.)
         lastSyncTimeMs?.let { if (now - it < guardMs) return }
         lastSyncTimeMs = now
 
-        val remaining = gunTimeMs - now
         var snapped = snapToMinute(remaining, roundDown)
 
         // A sync is a *correction*, not a jump: never move the clock more than maxCorrectionMs.
@@ -320,7 +331,6 @@ class TimerEngine(
         // reaches O, so anything with O >= the pre-snap remaining is already spent; re-adding it (the
         // old `<= snapped` bug) double-fired a horn whenever a sync rounded up onto a fired boundary.
         // Strictly `<` for that reason, unlike restore's `<=`: here the boundary cue has fired.
-        val seq = sequence ?: return
         queueCues(seq) { it.offsetMs < remaining }
 
         listeners.forEach { it.onSync(snapped) }
@@ -559,6 +569,80 @@ fun gunTimeFromSnapshot(snap: TimerEngine.Snapshot, nowElapsedMs: Long, nowWallM
  */
 fun remainingFromSnapshot(snap: TimerEngine.Snapshot, nowElapsedMs: Long, nowWallMs: Long): Long =
     gunTimeFromSnapshot(snap, nowElapsedMs, nowWallMs) - nowElapsedMs
+
+/**
+ * The number a "Resume" offer may stand on, or null when the saved race must not be offered at all.
+ *
+ * The offer on screen and what Start actually does have to agree, and there are two ways they drift:
+ *
+ * 1. **A different sequence is selected.** `TimerService.onStartCommand` restores only when the
+ *    persisted id equals the id Start sends, so a saved `custom_8m` has no claim on a screen showing
+ *    `custom_5m` — a tap there runs 5:00 from the top. Custom reaches this without ever leaving the
+ *    sequence, because re-dialling the stepper changes the id, which is how the preview came to sit
+ *    on the previous duration while Start correctly ran the new one.
+ * 2. **The saved gun has already passed.** A spent countdown has no race to come back to. A
+ *    [RaceSequence.countUpAfterFinish] race is the exception — past the gun is where it lives, and
+ *    restoring resumes the count-up — so its negative reading is returned rather than refused.
+ *
+ * Returned rather than acted on, so a caller holding the snapshot keeps it: withholding the offer is
+ * not the same as discarding the race, which only Stop, a fresh start, or the post-gun teardown do.
+ * Selecting the saved race's own sequence again therefore brings the offer back.
+ */
+fun resumeOfferRemainingMs(
+    snap: TimerEngine.Snapshot,
+    sequence: RaceSequence,
+    selectedSequenceId: String,
+    nowElapsedMs: Long,
+    nowWallMs: Long,
+): Long? = recoverableRemainingMs(snap, sequence, nowElapsedMs, nowWallMs)
+    ?.takeIf { snap.sequenceId == selectedSequenceId }
+
+/**
+ * The same saved race seen from the other side: what tapping Start is about to **throw away**.
+ *
+ * Non-null exactly when a recoverable race is saved and the sailor has a *different* sequence
+ * selected — the case [resumeOfferRemainingMs] withholds the offer for. `ACTION_START` will then take
+ * the load-and-start branch and `persistSnapshot()` will write the new race over the old one, which is
+ * a one-tap, unrecoverable loss with nothing on screen to warn of it (#89).
+ *
+ * These two functions are **exact complements** over a recoverable race — the id either matches or it
+ * does not — so at most one is ever non-null, and both read recoverability from
+ * [recoverableRemainingMs] rather than deciding it again. That matters here specifically: the rule was
+ * previously written out twice in `MainActivity`, inverted relative to itself, which is how the
+ * mismatch case went unnoticed in the first place.
+ *
+ * Returns the doomed race's live remaining time so a caller can name what is being lost. Negative for a
+ * count-up race past its gun, exactly as [remainingFromSnapshot] defines it.
+ */
+fun discardedOnStartRemainingMs(
+    snap: TimerEngine.Snapshot,
+    sequence: RaceSequence,
+    selectedSequenceId: String,
+    nowElapsedMs: Long,
+    nowWallMs: Long,
+): Long? = recoverableRemainingMs(snap, sequence, nowElapsedMs, nowWallMs)
+    ?.takeIf { snap.sequenceId != selectedSequenceId }
+
+/**
+ * Is there anything left of this saved race, whatever sequence is currently selected?
+ *
+ * The single recoverability rule behind both public readings above. A countdown whose gun has passed is
+ * spent and worth neither offering nor protecting; a [RaceSequence.countUpAfterFinish] race past its
+ * gun is neither, because that is where it lives.
+ *
+ * Deliberately blind to the selection: a spent race must come back null for *both* callers, so that
+ * starting something else over the top of it happens without ceremony. Warning about a race with
+ * nothing left to resume would train the sailor to ignore the warning that matters.
+ */
+private fun recoverableRemainingMs(
+    snap: TimerEngine.Snapshot,
+    sequence: RaceSequence,
+    nowElapsedMs: Long,
+    nowWallMs: Long,
+): Long? {
+    val remaining = remainingFromSnapshot(snap, nowElapsedMs, nowWallMs)
+    return if (remaining <= 0L && !sequence.countUpAfterFinish) null else remaining
+}
 
 // ---------------------------------------------------------------------------
 // Sync helper (pure, testable)

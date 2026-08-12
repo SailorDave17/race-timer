@@ -46,6 +46,18 @@ jobs:
       - name: Assemble wear debug APK
         run: ./gradlew :wear:assembleDebug -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
 
+      # CI has never built a release in this repo, so R8 only ever ran when someone
+      # remembered to run it by hand - which is how the first release build happened
+      # four days after the toolchain that enabled it (#127, #70). This step is the
+      # guard that stops that recurring: R8 runs on every push and PR, and a failure
+      # here fails the run.
+      #
+      # Unsigned by design, and no secret reaches the runner. wear/build.gradle.kts
+      # creates the release signingConfig only when a keystore.properties exists; CI
+      # has none, so the bundle builds unsigned. Signing in CI stays deferred to #81.
+      - name: Build wear release bundle (unsigned - this is where R8 runs)
+        run: ./gradlew :wear:bundleRelease -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
+
       - name: Upload test report
         # Failures are exactly when the report is worth reading.
         if: failure()

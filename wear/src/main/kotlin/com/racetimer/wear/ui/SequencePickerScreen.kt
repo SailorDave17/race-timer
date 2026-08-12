@@ -24,6 +24,11 @@ import com.racetimer.shared.RaceSequence
 /**
  * Screen that lets the user pick a race sequence before starting.
  *
+ * It briefly also carried a "Play cues on silent" toggle (#95), removed on owner directive
+ * 2026-08-06: *the race timer must never not have audible cues.* The app is back to having no
+ * settings at all, which is the right shape for it — a control whose only useful position is the
+ * default is a way of asking the sailor to be responsible for something the app should simply do.
+ *
  * @param onSequenceSelected  Called with the chosen [RaceSequence] when the user taps it.
  * @param onCustomSelected    Called when the user taps Custom, which has no duration yet — it needs
  *                            [CustomDurationScreen] before there is a sequence to select.

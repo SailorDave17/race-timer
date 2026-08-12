@@ -1,13 +1,10 @@
-package com.racetimer.wear
-
-import com.racetimer.shared.CueVoice
-import com.racetimer.shared.SignalPattern
+package com.racetimer.shared
 
 /**
  * The on/off boundaries of a blast, in milliseconds.
  *
- * These define the *shape* of a cue for both of its channels: [HapticManager] builds its vibration
- * waveform from them and [ToneManager] schedules its tones on them, so a three-long cue is three
+ * These define the *shape* of a cue for both of its channels: `HapticManager` builds its vibration
+ * waveform from them and `ToneManager` schedules its tones on them, so a three-long cue is three
  * buzzes against three tones, aligned. They live here rather than inside either manager because
  * the shape is only right while both agree on it — tuning one in isolation is exactly how the two
  * drift apart.
@@ -15,8 +12,12 @@ import com.racetimer.shared.SignalPattern
  * The same reasoning covers [CueVoice.SYNC]: its lighter, quicker shape is defined here once so the
  * buzz and the tone stay the same length as each other, and so [durationMs] reports that length
  * rather than a blast's.
+ *
+ * Lives in `shared` rather than beside its two callers in the wear module because it needs no
+ * Android SDK to compute anything, and the sequence tests assert against it directly — they used to
+ * carry a hand-copied mirror of these constants, which is the same drift risk one module out.
  */
-internal object CueTiming {
+object CueTiming {
 
     /** Sound and buzz time of one long blast. */
     const val LONG_ON = 500L
@@ -33,7 +34,7 @@ internal object CueTiming {
      * Both this and [LONG_OFF] were widened during #58 — to 250 and 400 — while `3 short` and
      * `3 long` were reported running together, and then put back once the real cause was found: the
      * audio output closing between blasts and charging a ~54 ms restart to whichever one followed a
-     * close (see [ToneManager]'s keep-alive generator). The cues were uneven, not tight, and widening
+     * close (see `ToneManager`'s keep-alive generator). The cues were uneven, not tight, and widening
      * the gap was treating the symptom.
      *
      * Worth knowing before reaching for this again: it cannot be widened far. The doubled ticks of
@@ -64,19 +65,51 @@ internal object CueTiming {
      */
     const val SYNC_AMPLITUDE = 110
 
+    /**
+     * Sound and buzz time of one pulse of a [CueVoice.PROMPT] cue.
+     *
+     * Shorter than [SYNC_ON] and run at full strength, which is the combination that makes a prompt
+     * read as a *texture* rather than as a count. Five of these back to back is 400 ms of stutter —
+     * one event, felt as a burst — where five short blasts would be 1.5 s of countable pulses. That
+     * distinction is load-bearing: the prompt fires 15 or 60 seconds before a `3 long`, and a race
+     * manager who counts it as a blast pattern has misread an instruction as a signal.
+     */
+    const val PROMPT_ON = 40L
+
+    /** Silence between the pulses of a prompt. Equal to [PROMPT_ON], which is what makes it a stutter. */
+    const val PROMPT_OFF = 40L
+
+    /**
+     * Vibration strength of a prompt — the strongest there is, against 255 for a long blast.
+     *
+     * A prompt is the one cue the wearer must *act* on, and the wrist is the only channel guaranteed
+     * to reach them: the speaker may be muted, and their eyes are on the signal box rather than the
+     * watch. [SYNC_AMPLITUDE] takes the opposite decision for the opposite reason.
+     */
+    const val PROMPT_AMPLITUDE = 255
+
     /** Buzzes in the legacy gun triple-buzz, used by cues that state no [SignalPattern.sustainedMs]. */
     const val GUN_REPEAT = 3
 
     /** Sound/silence of one blast of [pattern], picked by its [SignalPattern.voice]. */
     fun onMs(pattern: SignalPattern, long: Boolean): Long = when (pattern.voice) {
         CueVoice.SYNC -> SYNC_ON
+        CueVoice.PROMPT -> PROMPT_ON
         CueVoice.BLAST -> if (long) LONG_ON else SHORT_ON
     }
 
     /** Silence after one blast of [pattern]. Pairs with [onMs]. */
     fun offMs(pattern: SignalPattern, long: Boolean): Long = when (pattern.voice) {
         CueVoice.SYNC -> SYNC_OFF
+        CueVoice.PROMPT -> PROMPT_OFF
         CueVoice.BLAST -> if (long) LONG_OFF else SHORT_OFF
+    }
+
+    /** Vibration strength of [pattern], by voice. A long blast and a prompt both run at full. */
+    fun amplitude(pattern: SignalPattern, long: Boolean): Int = when (pattern.voice) {
+        CueVoice.SYNC -> SYNC_AMPLITUDE
+        CueVoice.PROMPT -> PROMPT_AMPLITUDE
+        CueVoice.BLAST -> if (long) 255 else 200
     }
 
     /**
@@ -89,7 +122,7 @@ internal object CueTiming {
      * Reads [SignalPattern.voice] through [onMs]/[offMs] rather than assuming blast timings: a sync
      * tick is a quarter the length of a short blast, and reporting it as a blast would overstate
      * every sync cue to both callers that depend on this — the gap check in the sequence tests and
-     * the audio teardown delay in [ToneManager].
+     * the audio teardown delay in `ToneManager`.
      */
     fun durationMs(pattern: SignalPattern, isGun: Boolean = false): Long = when {
         pattern.sustainedMs > 0L -> pattern.sustainedMs
@@ -98,4 +131,30 @@ internal object CueTiming {
             pattern.longBlasts * (onMs(pattern, long = true) + offMs(pattern, long = true)) +
                 pattern.shortBlasts * (onMs(pattern, long = false) + offMs(pattern, long = false))
     }
+
+    /**
+     * When the audio track carrying a cue may be emptied, given when the cue *actually* started.
+     *
+     * `ToneManager` resets its track between cues — `pause` then `flush` — because those are round
+     * trips to the audio server and doing them here rather than on the next cue's deadline is worth
+     * more than the whole of its lead-in. The reset therefore has to sit after the sound, and
+     * [marginMs] past it rather than on it, because the hardware is still draining buffered audio at
+     * a cue's nominal end and flushing into that tail cuts the end off the cue.
+     *
+     * The rule is here rather than at the one call site because it was **wrong** there, and silently
+     * (#98). The reset was scheduled off [scheduledStartMs] — the only time known when the cue was
+     * submitted — so a cue that started late kept its original reset time and lost the overrun off its
+     * end. Measured on an SM-R925U, a first cue starting 645 ms late delivered **1920 ms of a 2250 ms
+     * cue**, with every call still reporting success. That is a cue quietly shortened, which for the
+     * three-second gun would be the worst thing in the app to shorten.
+     *
+     * Takes the later of the two starts rather than always the actual one, so a cue that somehow ran
+     * *early* cannot pull its own reset forward into itself.
+     */
+    fun resetAtMs(
+        scheduledStartMs: Long,
+        actualStartMs: Long,
+        durationMs: Long,
+        marginMs: Long,
+    ): Long = maxOf(scheduledStartMs, actualStartMs) + durationMs + marginMs
 }

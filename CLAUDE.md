@@ -35,8 +35,8 @@ Start, via the `ACTION_START` restore path.
   it stays testable this way.
 - `./gradlew :wear:installDebug` — deploy to the watch.
 - To confirm what actually landed, compare hashes rather than trusting the build log:
-  `adb shell pm path com.racetimer.wear`, pull it, sha256 against
+  `adb shell pm path io.github.sailordave17.racetimer`, pull it, sha256 against
   `wear/build/outputs/apk/debug/wear-debug.apk`.
 
-Watch pairing details and the adb pair-port gotcha are recorded in the bmad repo at
+Watch pairing details and the adb pair-port gotcha are recorded in the cairn repo at
 `memory/reference/wear-os-adb-pairing-2026-07-30.md`.

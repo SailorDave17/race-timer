@@ -1,0 +1,14 @@
+# One shell command per line, run from the repo root. Non-zero exit refuses the
+# push to develop/main. Lines starting with # are ignored.
+#
+# --no-watch-fs --rerun-tasks is not optional here. Gradle's file-watcher goes
+# stale on this machine and reports BUILD SUCCESSFUL on a suite it never
+# compiled - compileTestKotlin UP-TO-DATE on a file edited seconds earlier. That
+# is the one hazard in cairn's Windows list that fails with a PASS rather than
+# an error, so a gate without these flags can go green on code it never ran.
+# See memory/global/windows-shell-hazards-2026-08-01.md.
+./gradlew :shared:test --no-watch-fs --rerun-tasks
+#
+# :wear:assembleDebug is deliberately NOT here. CI runs it and it costs minutes;
+# a pre-push slow enough to be worth skipping gets skipped, and a gate that is
+# routinely bypassed protects nothing.

@@ -386,6 +386,221 @@ class TimerEngineTest {
         assertEquals(130_000L, remainingFromSnapshot(snap, afterRebootElapsed, afterRebootWall))
     }
 
+    // --- Whether a saved race may be offered at all ----------------------------
+
+    @Test fun `resumeOfferRemainingMs withholds a saved race when another sequence is selected`() {
+        // The bug this guards: re-dialling the Custom stepper changes the id, so a saved 8:00 race
+        // stops matching what Start would run — but the pre-start screen went on previewing its
+        // clock. Start was right all along (TimerService restores only on savedSeqId == sequenceId),
+        // so the screen promised the previous duration and then delivered the newly chosen one.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        val nowSelected = BuiltInSequences.custom(totalMinutes = 5)
+        assertNull(resumeOfferRemainingMs(snap, saved, nowSelected.id, fakeNow, fakeWall))
+    }
+
+    @Test fun `resumeOfferRemainingMs offers the saved race when its own sequence is selected`() {
+        // The other half: fixing the above must not cost the offer the case it exists for.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        assertEquals(420_000L, resumeOfferRemainingMs(snap, saved, saved.id, fakeNow, fakeWall))
+    }
+
+    @Test fun `resumeOfferRemainingMs withholds without discarding, so re-selecting brings it back`() {
+        // Withheld, not cleared: wandering to another sequence and back must not destroy a race the
+        // service is still holding. One snapshot, two answers, decided only by what is selected.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        assertNull(resumeOfferRemainingMs(snap, saved, BuiltInSequences.club.id, fakeNow, fakeWall))
+        assertEquals(420_000L, resumeOfferRemainingMs(snap, saved, saved.id, fakeNow, fakeWall))
+    }
+
+    @Test fun `resumeOfferRemainingMs withholds a countdown whose gun has passed`() {
+        val saved = BuiltInSequences.club // 3:00
+        engine.load(saved)
+        engine.start()
+        val snap = engine.snapshot()!!
+
+        assertNull(
+            resumeOfferRemainingMs(snap, saved, saved.id, fakeNow + 180_001L, fakeWall + 180_001L),
+        )
+    }
+
+    @Test fun `resumeOfferRemainingMs still offers a count-up race past its gun`() {
+        // Past the gun is where a race-manager sequence lives, so the negative reading is the offer
+        // rather than a refusal — the one case where a spent clock is still resumable.
+        val saved = BuiltInSequences.scholasticRaceManager
+        engine.load(saved)
+        engine.start()
+        val snap = engine.snapshot()!!
+
+        assertEquals(
+            -120_000L,
+            resumeOfferRemainingMs(snap, saved, saved.id, fakeNow + 300_000L, fakeWall + 300_000L),
+        )
+    }
+
+    // --- What Start is about to throw away (#89) -------------------------------
+
+    @Test fun `discardedOnStartRemainingMs names the race a mismatched Start would destroy`() {
+        // The loss #89 is about: ACTION_START takes the load-and-start branch on an id mismatch and
+        // persistSnapshot() writes the new race over the old one. Nothing on screen said so.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        val doomed = BuiltInSequences.custom(totalMinutes = 5)
+        assertEquals(
+            420_000L,
+            discardedOnStartRemainingMs(snap, saved, doomed.id, fakeNow, fakeWall),
+        )
+    }
+
+    @Test fun `discardedOnStartRemainingMs is silent when the saved race is the selected one`() {
+        // Selecting the saved race's own sequence means Start resumes it, not destroys it.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        assertNull(discardedOnStartRemainingMs(snap, saved, saved.id, fakeNow, fakeWall))
+    }
+
+    @Test fun `a spent countdown is neither offered nor worth warning about`() {
+        // Both sides go quiet together. Warning about a race with nothing left to resume would train
+        // the sailor to ignore the warning that matters.
+        val saved = BuiltInSequences.club // 3:00
+        engine.load(saved)
+        engine.start()
+        val snap = engine.snapshot()!!
+        val spentElapsed = fakeNow + 180_001L
+        val spentWall = fakeWall + 180_001L
+
+        assertNull(resumeOfferRemainingMs(snap, saved, saved.id, spentElapsed, spentWall))
+        assertNull(discardedOnStartRemainingMs(snap, saved, "custom_5m", spentElapsed, spentWall))
+    }
+
+    @Test fun `the offer and the discard warning are exact complements`() {
+        // The structural guarantee behind #89's fix: one recoverability rule, two readings of it, so
+        // they cannot drift the way the expiry rule did when it was written out twice inverted.
+        // Whatever is selected, a recoverable race is either resumable or doomed - never both, never
+        // neither.
+        val saved = BuiltInSequences.custom(totalMinutes = 8)
+        engine.load(saved)
+        engine.start()
+        fakeNow += 60_000L
+        fakeWall += 60_000L
+        val snap = engine.snapshot()!!
+
+        val selections = listOf(
+            saved.id,
+            BuiltInSequences.custom(totalMinutes = 5).id,
+            BuiltInSequences.club.id,
+            BuiltInSequences.usSailing.id,
+            BuiltInSequences.scholasticRaceManager.id,
+        )
+        for (selected in selections) {
+            val offered = resumeOfferRemainingMs(snap, saved, selected, fakeNow, fakeWall)
+            val doomed = discardedOnStartRemainingMs(snap, saved, selected, fakeNow, fakeWall)
+            assertTrue(
+                "exactly one of offer/discard must answer for selection=$selected, got $offered / $doomed",
+                (offered == null) != (doomed == null),
+            )
+            assertEquals("both must report the same clock", 420_000L, offered ?: doomed)
+        }
+    }
+
+    @Test fun `a count-up race past its gun is still worth warning about`() {
+        // The count-up exception has to reach the warning too, not just the offer: past the gun is
+        // where a race-manager race lives, so it is still destroyable and still worth protecting.
+        val saved = BuiltInSequences.scholasticRaceManager
+        engine.load(saved)
+        engine.start()
+        val snap = engine.snapshot()!!
+
+        assertEquals(
+            -120_000L,
+            discardedOnStartRemainingMs(
+                snap, saved, BuiltInSequences.club.id,
+                fakeNow + 300_000L, fakeWall + 300_000L,
+            ),
+        )
+    }
+
+    // --- What "a race is on screen" actually means (#87) ------------------------
+
+    @Test fun `a stopped engine is IDLE but still holds its sequence`() {
+        // Why the pre-start screen asks the state rather than whether a sequence is loaded (#87).
+        // stop() keeps the sequence on purpose — see its doc, and the pausedRemainingMs line that
+        // exists so the idle screen reads a full duration rather than 0:00 — so
+        // `loadedSequence != null` stayed true after Stop. The screen went on rendering the *stopped*
+        // race's length while the sailor picked a different sequence, and Start then correctly ran
+        // the new one, disagreeing with the number they had just read.
+        engine.load(BuiltInSequences.club) // 3:00
+        engine.start()
+        fakeNow += 30_000L
+        fakeWall += 30_000L
+        engine.stop()
+
+        assertEquals(TimerState.IDLE, engine.currentState)
+        assertNotNull("stop() keeps the sequence on purpose", engine.loadedSequence)
+        // The trap in one line: this is the *stopped* race's duration, and it is what the screen was
+        // showing under whatever sequence name the sailor had since picked.
+        assertEquals(180_000L, engine.remainingMs)
+    }
+
+    @Test fun `a race past its gun is not IDLE, so the gun stays on screen`() {
+        // The other side of the same condition: FINISHED must keep rendering from the engine. Treating
+        // "no race" as "not RUNNING" instead of "IDLE" would flip the screen to the next sequence's
+        // duration at the exact moment the gun fires.
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        fakeNow += 180_000L
+        fakeWall += 180_000L
+        engine.tick()
+
+        assertEquals(TimerState.FINISHED, engine.currentState)
+        assertTrue("the gun must still own the screen", engine.currentState != TimerState.IDLE)
+    }
+
+    @Test fun `a count-up race and its frozen summary are both non-IDLE`() {
+        // RACE_ENDED exists precisely to hold the final time up for the race committee, so it has to
+        // count as a race on screen too — the one case where a *finished* race must outrank the
+        // selection for as long as the sailor is still looking at it.
+        engine.load(BuiltInSequences.scholasticRaceManager) // 3:00, counts up past the gun
+        engine.start()
+        fakeNow += 200_000L
+        fakeWall += 200_000L
+        engine.tick()
+        assertEquals(TimerState.COUNTING_UP, engine.currentState)
+
+        engine.endRace()
+        assertEquals(TimerState.RACE_ENDED, engine.currentState)
+
+        engine.stop()
+        assertEquals("only Stop returns it to the pre-start screen", TimerState.IDLE, engine.currentState)
+    }
+
     // --- State restoration ----------------------------------------------------
 
     @Test fun `restore resumes correctly on same boot`() {
@@ -737,6 +952,214 @@ class TimerEngineTest {
         assertNull(engine.msUntilNextCue())
     }
 
+    // --- Lead-in (#104) -------------------------------------------------------
+
+    // A 60 s box alert: 10 s prep + 60 s alert window = a 70 s lead on a 3:00 sequence.
+    private val armed70 = withLeadIn(BuiltInSequences.scholasticRaceManager, 60)!!
+
+    @Test fun `an armed race starts its countdown at the lead plus the sequence`() {
+        engine.load(armed70)
+        engine.start()
+        assertEquals(4 * 60_000L + 10_000L, engine.remainingMs)
+    }
+
+    @Test fun `sync is inert throughout the lead-in`() {
+        // At 4:07 remaining, nearest-minute lands on 4:00 and silently deletes seven seconds of the
+        // lead — the exact misalignment the lead-in exists to prevent, and there is nothing to snap
+        // to anyway because the signal box has not been started yet.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(3_000L)                       // 4:07 remaining
+        val before = engine.remainingMs
+
+        engine.sync()
+
+        assertNull("no snap may be reported", syncedTo)
+        // The anchor must not move: a snap would have jumped this to a whole 4:00.
+        assertEquals(before, engine.remainingMs, 150L)
+    }
+
+    @Test fun `sync works again the moment the sequence proper begins`() {
+        // The refusal is scoped to the run-up, not to the race: a race manager whose watch drifts
+        // during the sequence itself must still be able to snap it, exactly as before.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(70_000L + 5_000L)             // 2:55 remaining, past the 3:00 mark
+        assertFalse(isInLeadIn(armed70, engine.remainingMs))
+
+        engine.sync()
+
+        assertEquals(3 * 60_000L, syncedTo)
+    }
+
+    @Test fun `a sync refused during the lead-in does not arm the double-tap guard`() {
+        // The refusal has to come *before* lastSyncTimeMs is recorded, or a tap during the run-up
+        // swallows the sailor's next real one. The shortest legal lead is the 10 s prep alone, so with the default
+        // 1 s guard the two syncs can never fall close enough together for the ordering to matter —
+        // this widens the guard past the lead deliberately, which is the only way the assertion can
+        // tell a guard armed by a refusal from one that was not.
+        val armed5 = withLeadIn(BuiltInSequences.scholasticRaceManager, BOX_ALERT_NONE)!!
+        engine.load(armed5)
+        engine.start()
+        engine.sync(guardMs = 10_000L)          // refused: still in the lead-in
+        advanceTo(10_100L)                      // just past the mark, well inside the widened guard
+
+        engine.sync(guardMs = 10_000L)
+
+        assertEquals("the first real sync must be honoured", 3 * 60_000L, syncedTo)
+    }
+
+    @Test fun `stage 1 ticks into the press prompt, then stage 2 runs silent`() {
+        // armed70 is a 60 s box alert on a 3:00 sequence: 4:10 total, press at 4:00, sequence at 3:00.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(10_100L)                      // through the whole prep stage
+
+        assertEquals(
+            "five ticks then the press prompt",
+            listOf(245_000L, 244_000L, 243_000L, 242_000L, 241_000L, 240_000L),
+            cues.map { it.offsetMs },
+        )
+        assertTrue("all of stage 1 is lead-in", cues.all { it.isLeadIn })
+        assertEquals(5, cues.count { it.signal.voice == CueVoice.SYNC })
+        assertEquals(CueVoice.PROMPT, cues.last().signal.voice)
+
+        // Stage 2 is the box's alert window and the watch says nothing in it.
+        val afterStageOne = cues.size
+        advanceTo(69_900L)
+        assertEquals("stage 2 must be silent", afterStageOne, cues.size)
+
+        // ...and the sequence's own first signal ends it.
+        advanceTo(70_100L)
+        assertEquals(afterStageOne + 1, cues.size)
+        assertFalse("the 3:00 signal belongs to the sequence", cues.last().isLeadIn)
+        assertEquals(3, cues.last().signal.longBlasts)
+        assertEquals(180_000L, cues.last().offsetMs)
+    }
+
+    @Test fun `an armed race restores mid-lead-in on the right clock`() {
+        // AC 11. The lead lives inside the sequence id, so the revived engine resolves the same
+        // armed sequence and comes back on the same anchor rather than 70 seconds short.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(30_000L)
+        val snap = engine.snapshot()!!
+        assertEquals(armed70.id, snap.sequenceId)
+
+        fakeNow += 10_000L
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        val resolved = BuiltInSequences.resolve(snap.sequenceId)!!
+        val outcome = revived.restore(resolved, snap)
+
+        assertEquals(RestoreOutcome.EXACT, outcome)
+        assertEquals(TimerState.RUNNING, revived.currentState)
+        assertEquals(4 * 60_000L + 10_000L - 40_000L, revived.remainingMs, 50L)
+        assertTrue("still in the run-up", isInLeadIn(resolved, revived.remainingMs))
+    }
+
+    @Test fun `a restore mid-lead-in still has every run-in tick to come`() {
+        engine.load(armed70)
+        engine.start()
+        advanceTo(2_000L)                       // still in the prep stage, before the first tick
+        val snap = engine.snapshot()!!
+
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        revived.restore(BuiltInSequences.resolve(snap.sequenceId)!!, snap)
+        cues.clear()
+        revived.addListener(listener)
+        while (fakeNow < 70_100L) {
+            fakeNow += 100L
+            revived.tick()
+        }
+
+        assertEquals("five ticks and the press prompt", 6, cues.count { it.isLeadIn })
+        assertEquals(1, cues.count { it.signal.voice == CueVoice.PROMPT })
+    }
+
+    @Test fun `a restore past the lead-in has no run-in ticks left`() {
+        // The complement, and the one that would break if restore's `offsetMs <= remaining` filter
+        // ever stopped applying to cues sitting above the sequence's own duration.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(80_000L)                      // past 3:00; the run-in has been and gone
+        val snap = engine.snapshot()!!
+
+        val revived = TimerEngine(fakeClock, fakeWallClock)
+        revived.restore(BuiltInSequences.resolve(snap.sequenceId)!!, snap)
+        cues.clear()
+        revived.addListener(listener)
+        while (fakeNow < armed70.totalMs + 1_000L) {
+            fakeNow += 100L
+            revived.tick()
+        }
+
+        assertEquals(0, cues.count { it.isLeadIn })
+        assertTrue("the race still reaches its gun", gunFired)
+    }
+
+    @Test fun `an armed race still counts up after the gun`() {
+        // The lead-in must not cost the race-manager mode the thing that makes it one.
+        engine.load(armed70)
+        engine.start()
+        advanceTo(armed70.totalMs + 2_000L)
+        assertEquals(TimerState.COUNTING_UP, engine.currentState)
+    }
+
+    // --- Sync extends the countdown, without bound (#126) ----------------------
+
+    @Test fun `each round-up sync pushes the gun further out than it was`() {
+        // The premise behind TimerService re-arming its wake lock on ACTION_SYNC. A sync is a
+        // *correction*, and a single one is bounded at half a minute — but it is bounded per sync,
+        // not per race, and nothing in the engine caps the total.
+        engine.load(BuiltInSequences.scholastic)
+        engine.start()
+        val atStart = engine.remainingMs
+
+        // Just past the half-minute mark each time, which is where nearest-minute rounds up.
+        fakeNow = 29_999L
+        engine.sync()
+        val afterOne = engine.remainingMs + fakeNow
+
+        assertTrue(
+            "a round-up sync should push the gun later, but the race got no longer: " +
+                "$atStart -> $afterOne",
+            afterOne > atStart,
+        )
+    }
+
+    @Test fun `repeated syncs extend a race by more than any single sync could`() {
+        // This is the part that defeats a fixed margin sized off the countdown at start. Three
+        // round-up syncs move the gun by ~90 s in total, and there is nothing stopping a fourth: the
+        // only limits are the 1 s double-tap guard and how long the race manager keeps tapping.
+        //
+        // Deliberately asserted as "more than one sync's worth" rather than against
+        // TimerService.WAKE_LOCK_MARGIN_MS, which lives in the wear module and is not visible here.
+        // Pinning a number copied across that boundary would make this test agree with a constant
+        // instead of with the behaviour, and the constant is free to change.
+        engine.load(BuiltInSequences.scholastic)
+        engine.start()
+        val atStart = engine.remainingMs
+
+        var extension = 0L
+        for (round in 1..3) {
+            // Wind forward to the point where exactly 2:30.001 remains, so nearest-minute snaps up
+            // to 3:00 and the gun moves ~30 s further out. Recomputed each round because the
+            // previous sync moved the anchor.
+            fakeNow += engine.remainingMs - 150_001L
+            val before = engine.remainingMs
+            engine.sync()
+            val moved = engine.remainingMs - before
+            assertTrue("sync $round did not round up (moved ${moved}ms)", moved > 25_000L)
+            extension += moved
+        }
+
+        assertTrue(
+            "three syncs should extend the race well past what one can (was ${extension}ms)",
+            extension > 60_000L,
+        )
+        assertEquals(atStart + extension, engine.remainingMs + fakeNow)
+    }
+
     // --- Helper ---------------------------------------------------------------
 
     /** Advance fake clock in 100 ms steps, calling tick() each step. */
@@ -753,5 +1176,181 @@ class TimerEngineTest {
             "Expected ~$expected but was $actual (tolerance ±$tolerance)",
             Math.abs(actual - expected) <= tolerance
         )
+    }
+
+    // --- Wall-clock adjustment, and listener removal ---------------------------
+    //
+    // Both were found untested on 2026-08-11 by mutating them and watching the whole 321-test suite
+    // stay green: `pollClockAdjustment` forced to return false reddened **nothing**, and
+    // `removeListener` reduced to a no-op reddened **nothing**. Neither is reached by any other
+    // case, so these are holes rather than naming artefacts — the distinction a name-grep cannot
+    // make and a mutation can.
+    //
+    // What makes the clock path worth guarding: it is the one place the engine reads a clock it does
+    // not trust. Everything else here is monotonic and cannot jump, which is exactly why a
+    // wall-clock jump has no other symptom — the countdown stays correct throughout, so a broken
+    // detector is invisible to every other assertion in this file.
+
+    private val clockAdjustments = mutableListOf<Long>()
+
+    /** Records the callback the shared fixture's listener does not override. */
+    private val adjustmentListener = object : TimerListener {
+        override fun onCue(cue: SequenceCue) {}
+        override fun onGun() {}
+        override fun onTick(remainingMs: Long) {}
+        override fun onSync(snappedToMs: Long) {}
+        override fun onClockAdjusted(remainingMs: Long) { clockAdjustments += remainingMs }
+    }
+
+    private fun runningRaceWithAdjustmentListener() {
+        clockAdjustments.clear()
+        engine.addListener(adjustmentListener)
+        engine.load(BuiltInSequences.club)
+        engine.start()
+    }
+
+    @Test fun `two clocks moving together is not an adjustment`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 5_000L
+        fakeWall += 5_000L
+        assertFalse(engine.pollClockAdjustment())
+        assertTrue(clockAdjustments.isEmpty())
+    }
+
+    @Test fun `a wall-clock jump forward past the threshold is reported`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L + 10_000L // an NTP correction pushing the wall clock 10 s ahead
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+    }
+
+    @Test fun `a wall-clock jump backward past the threshold is reported`() {
+        // The `drift <= -thresholdMs` branch. A manual time change goes either way, and a detector
+        // that only looked forward would be silently half a detector.
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L - 10_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+    }
+
+    @Test fun `drift just under the threshold is not an adjustment`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L + 1_999L
+        assertFalse(engine.pollClockAdjustment())
+        assertTrue(clockAdjustments.isEmpty())
+    }
+
+    @Test fun `drift exactly at the threshold is an adjustment`() {
+        // The comparison is `>=`; written the other way it would drop the case its own default names.
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L + 2_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+    }
+
+    @Test fun `the threshold is a parameter, not only its default`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L + 3_000L
+        assertFalse("3s of drift is under a 5s threshold", engine.pollClockAdjustment(5_000L))
+        assertTrue(clockAdjustments.isEmpty())
+        assertTrue("...and over a 1s one", engine.pollClockAdjustment(1_000L))
+        assertEquals(1, clockAdjustments.size)
+    }
+
+    @Test fun `each jump is reported once, because detection re-baselines`() {
+        // The doc says "re-baselines on detection so each jump is reported once". Without that, a
+        // tick loop polling every 50 ms fires a notice on every tick for the rest of the race.
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L
+        fakeWall += 1_000L + 10_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+
+        fakeNow += 1_000L
+        fakeWall += 1_000L // both clocks moving together again, at the new offset
+        assertFalse("the same jump must not be reported twice", engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+    }
+
+    @Test fun `a second, separate jump is reported again`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L; fakeWall += 1_000L + 10_000L
+        assertTrue(engine.pollClockAdjustment())
+        fakeNow += 1_000L; fakeWall += 1_000L + 10_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(2, clockAdjustments.size)
+    }
+
+    @Test fun `the remaining time reported is the monotonic one, untouched by the jump`() {
+        // The whole point of the design: the countdown is anchored to the monotonic clock, so a wall
+        // clock jumping a minute must not move the gun. If this ever reported wall-derived time a
+        // sailor would see the race jump, and nothing else in this file would notice.
+        runningRaceWithAdjustmentListener()
+        fakeNow += 30_000L
+        fakeWall += 30_000L + 60_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(BuiltInSequences.club.totalMs - 30_000L, clockAdjustments.single())
+    }
+
+    @Test fun `an idle countdown reports no clock adjustment`() {
+        clockAdjustments.clear()
+        engine.addListener(adjustmentListener)
+        engine.load(BuiltInSequences.club)
+        fakeWall += 60_000L
+        assertFalse(engine.pollClockAdjustment())
+        assertTrue(clockAdjustments.isEmpty())
+    }
+
+    @Test fun `a paused countdown reports no clock adjustment`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 5_000L
+        engine.pause()
+        fakeWall += 60_000L
+        assertFalse(engine.pollClockAdjustment())
+        assertTrue(clockAdjustments.isEmpty())
+    }
+
+    @Test fun `a removed listener stops hearing cues`() {
+        val heard = mutableListOf<SequenceCue>()
+        val temporary = object : TimerListener {
+            override fun onCue(cue: SequenceCue) { heard += cue }
+            override fun onGun() {}
+            override fun onTick(remainingMs: Long) {}
+            override fun onSync(snappedToMs: Long) {}
+        }
+        engine.addListener(temporary)
+        engine.load(BuiltInSequences.club)
+        engine.start()
+
+        // Run to the first cue so the listener demonstrably works *before* it is removed. Otherwise
+        // "heard nothing afterwards" is satisfied by a listener that never heard anything at all —
+        // the positive control that makes the removal assertion mean something.
+        val seq = BuiltInSequences.club
+        fakeNow = seq.totalMs - seq.cues.first().offsetMs
+        engine.tick()
+        val heardWhileAttached = heard.size
+        assertTrue("the listener must work before removal can prove anything", heardWhileAttached > 0)
+
+        engine.removeListener(temporary)
+        fakeNow = seq.totalMs
+        engine.tick()
+        assertEquals("a removed listener kept receiving cues", heardWhileAttached, heard.size)
+    }
+
+    @Test fun `a removed listener stops hearing clock adjustments`() {
+        runningRaceWithAdjustmentListener()
+        fakeNow += 1_000L; fakeWall += 1_000L + 10_000L
+        assertTrue(engine.pollClockAdjustment())
+        assertEquals(1, clockAdjustments.size)
+
+        engine.removeListener(adjustmentListener)
+        fakeNow += 1_000L; fakeWall += 1_000L + 10_000L
+        assertTrue("the engine still detects the jump", engine.pollClockAdjustment())
+        assertEquals("but the removed listener must not hear it", 1, clockAdjustments.size)
     }
 }
