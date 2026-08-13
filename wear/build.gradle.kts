@@ -1,3 +1,4 @@
+import java.time.ZonedDateTime
 import java.util.Properties
 
 plugins {
@@ -128,12 +129,50 @@ android {
 // The task asserts its inputs rather than copying what it finds: a copy with a missing source is a
 // silent no-op, and an empty archive is indistinguishable from one that was never needed.
 val releaseVersionCode = android.defaultConfig.versionCode
+val releaseVersionName = android.defaultConfig.versionName
 val releaseBundle = layout.buildDirectory.file("outputs/bundle/release/wear-release.aab")
 val releaseMapping = layout.buildDirectory.file("outputs/mapping/release/mapping.txt")
 
+// #184. The archive keys on versionCode alone, and versionCode moves once per Play upload while
+// branches move constantly - so every release build on every branch wrote to the same directory and
+// the last one won, silently.
+//
+// *Measured 2026-08-12*: the bundle prepared for the first Play upload was replaced THREE times in
+// three hours by ordinary gate runs on an unrelated story's branch, each time swapping a reviewed
+// artifact for one carrying unmerged code, while docs/releases.md went on describing the old one.
+// Nothing failed. The .aab is gitignored, so `git status` stayed clean, and a signed bundle from the
+// wrong branch is indistinguishable from the right one without opening the dex.
+//
+// The stakes are why this is a refusal rather than a warning: the archive is what a human uploads to
+// Play, a versionCode can never be reclaimed once burned, and the package name locks permanently at
+// first upload.
+//
+// **The discriminator is (commit, clean/dirty), not commit alone**, and that is not a detail - all
+// three occurrences had the SAME commit. A feature branch cut from the integration branch and not yet
+// committed has exactly the base SHA, so a commit-only check would have passed every time while the
+// working tree carried the change that made the artifact wrong. Clean@X -> dirty@X is the real signal.
+val repoRootDir = rootProject.layout.projectDirectory.asFile
+val archiveOverwriteAllowed = providers.gradleProperty("archiveOverwrite").isPresent
+
+fun gitOutput(root: java.io.File, vararg args: String): String =
+    try {
+        val process = ProcessBuilder(listOf("git", *args))
+            .directory(root)
+            .redirectErrorStream(true)
+            .start()
+        val text = process.inputStream.bufferedReader().readText().trim()
+        if (process.waitFor() == 0) text else ""
+    } catch (_: Exception) {
+        // No git on PATH, or not a checkout. Provenance degrades to "unknown" rather than failing the
+        // build: an archive with a weaker stamp still beats no archive, and a release built outside a
+        // checkout is somebody's deliberate choice.
+        ""
+    }
+
 val archiveReleaseArtifacts = tasks.register("archiveReleaseArtifacts") {
     group = "publishing"
-    description = "Copies the release bundle and R8 mapping into release-archive/v<versionCode>/."
+    description = "Copies the release bundle and R8 mapping into release-archive/v<versionCode>/, " +
+        "refusing to overwrite an archive built from different sources."
     doLast {
         val bundle = releaseBundle.get().asFile
         val mapping = releaseMapping.get().asFile
@@ -144,11 +183,88 @@ val archiveReleaseArtifacts = tasks.register("archiveReleaseArtifacts") {
             "No R8 mapping at ${mapping.path}. isMinifyEnabled must stay true for the release build, " +
                 "or a crash report from this bundle cannot be deobfuscated."
         }
+
+        val commit = gitOutput(repoRootDir, "rev-parse", "HEAD").ifEmpty { "unknown" }
+        val branch = gitOutput(repoRootDir, "rev-parse", "--abbrev-ref", "HEAD").ifEmpty { "unknown" }
+        val dirty = gitOutput(repoRootDir, "status", "--porcelain").isNotEmpty()
+        // The identity line is what gets compared. Everything else in the file is for a human.
+        val identity = "$commit dirty=$dirty"
+
         val destination = rootProject.layout.projectDirectory.dir("release-archive/v$releaseVersionCode").asFile
+        val provenance = destination.resolve("provenance.txt")
+
+        if (provenance.isFile) {
+            val recorded = provenance.readLines()
+                .firstOrNull { it.startsWith("identity: ") }
+                ?.removePrefix("identity: ")
+                ?.trim()
+                .orEmpty()
+            if (recorded.isNotEmpty() && recorded != identity && !archiveOverwriteAllowed) {
+                // Two different answers, because these are two different situations.
+                //
+                // A DIRTY build is never an upload candidate - the commit does not describe it - so
+                // there is nothing to decide: skip, say so loudly, leave the archive alone, and let
+                // the build carry on. That matters because :wear:bundleRelease is one of the three
+                // quality-gate commands, and failing it would break the gate for a reason that has
+                // nothing to do with the code under test. All three measured clobbers were this case.
+                //
+                // A CLEAN build at a different commit is a genuine conflict between two shippable
+                // artifacts, and nobody should guess which one wins. That one refuses, per the
+                // allowlist-that-forces-a-question shape: the cost is an edit, and the edit is where
+                // somebody asks which bundle they actually meant.
+                if (dirty) {
+                    logger.lifecycle(
+                        buildString {
+                            appendLine("NOT archiving: the working tree is dirty and the archive holds a different build.")
+                            appendLine("  keeping:    $recorded")
+                            appendLine("  not stored: $identity  (branch $branch)")
+                            appendLine("The bundle is still at ${bundle.path} if you need it.")
+                            append("Commit, or pass -ParchiveOverwrite, to archive this one. See #184.")
+                        }
+                    )
+                    return@doLast
+                }
+                throw GradleException(
+                    buildString {
+                        appendLine("Refusing to overwrite release-archive/v$releaseVersionCode.")
+                        appendLine()
+                        appendLine("  already there: $recorded")
+                        appendLine("  this build:    $identity  (branch $branch)")
+                        appendLine()
+                        appendLine("Both are clean builds, so this is a real choice between two shippable")
+                        appendLine("artifacts and guessing is not safe - the archive is what gets uploaded to")
+                        appendLine("Play, and a burned versionCode cannot be reclaimed.")
+                        appendLine()
+                        appendLine("If the archived bundle is finished with, delete the directory and re-run.")
+                        appendLine("To overwrite deliberately: -ParchiveOverwrite")
+                        append("See #184 and docs/releases.md.")
+                    }
+                )
+            }
+        }
+
         destination.mkdirs()
         bundle.copyTo(destination.resolve(bundle.name), overwrite = true)
         mapping.copyTo(destination.resolve("mapping.txt"), overwrite = true)
-        logger.lifecycle("Archived ${bundle.name} and mapping.txt to ${destination.path}")
+        provenance.writeText(
+            buildString {
+                appendLine("identity: $identity")
+                appendLine("commit: $commit")
+                appendLine("branch: $branch")
+                appendLine("dirty: $dirty")
+                appendLine("versionCode: $releaseVersionCode")
+                appendLine("versionName: $releaseVersionName")
+                // Deliberately NOT part of the identity line: two builds of the same sources are the
+                // same artifact whenever they were made, and putting the clock in the comparison
+                // would make every re-run a mismatch.
+                appendLine("archivedAt: ${ZonedDateTime.now()}")
+                appendLine()
+                appendLine("dirty=true means the working tree carried uncommitted changes, so the commit")
+                appendLine("above does NOT describe what is in this bundle. Do not upload a dirty build")
+                appendLine("without recording what was different - see docs/releases.md.")
+            }
+        )
+        logger.lifecycle("Archived ${bundle.name} and mapping.txt to ${destination.path} ($identity)")
     }
 }
 
