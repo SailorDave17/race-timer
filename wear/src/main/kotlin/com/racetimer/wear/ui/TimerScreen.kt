@@ -134,11 +134,14 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
  * @param inLeadIn       True while a running race is still in its lead-in. Drops the Sync button for
  *                       the duration: there is nothing to snap to before the signal box has been
  *                       started, and snapping would delete part of the lead (`isInLeadIn`).
- * @param startNotice    Non-null when something about the watch is worth telling the sailor (#13).
- *                       A [NoticeTier.WARNING] renders as a Tier 3 line under the sequence name and
- *                       changes nothing else; a [NoticeTier.BLOCKING] renders as the Tier 2 panel
- *                       *in place of* the Start button. The rule producing it is `startNotice` in
- *                       `shared/` — this screen decides where it goes, never whether it applies.
+ * @param startNotice    Non-null when something about the watch is worth telling the sailor (#13,
+ *                       #96). A [NoticeTier.WARNING] renders as a Tier 3 line under the sequence
+ *                       name and changes nothing else; a [NoticeTier.BLOCKING] renders as the Tier 2
+ *                       panel *in place of* the Start button. Two rules in `shared/` produce it and
+ *                       the caller picks between them by state — `startNotice` before Start,
+ *                       `armedNotice` during a running race, which is the only one that can be
+ *                       non-null while the countdown is live and never returns a blocking notice.
+ *                       This screen decides where it goes, never whether it applies.
  * @param onRemedy       Called with [StartNotice.remedy] when the sailor taps a notice's action.
  * @param onStart        Called when the user taps Start, or Resume when [resumeOffered].
  * @param onStartOver    Called when the user taps Start over. Only reachable when [resumeOffered].
@@ -254,11 +257,20 @@ fun TimerScreen(
                 )
             }
 
-            // A standing fact about the watch rather than about the race (#13). Tier 3, the same
-            // surface and colours as the two lines above, and it yields to both: the discard warning
-            // is about the very next tap and the re-sync prompt is about the clock being wrong, which
-            // outrank a caveat the sailor has already been shown once. That is rule 6 — one message
-            // at a time — resolved here because this is the only place that knows all three are up.
+            // A caveat about the watch rather than about the race (#13), or — while a race is
+            // running — the one caveat that is about the race (#96). Tier 3, the same surface and
+            // colours as the two lines above, and it yields to both: the discard warning is about
+            // the very next tap and the re-sync prompt is about the clock being wrong, which outrank
+            // a caveat about a channel the sailor has a second channel for. That is rule 6 — one
+            // message at a time — resolved here because this is the only place that knows all three
+            // are up.
+            //
+            // The scrim is not optional here and #96 is why. Until then every notice reaching this
+            // branch was confined to the pre-start screen, where navy is the only background; the
+            // Do Not Disturb warning stays up through the amber minute and the red final ten, which
+            // is the exposure that made bare `#FFC107` a defect in #123. `MessageContrastTest`
+            // derives this surface's backgrounds by driving `armedNotice`, so the check follows the
+            // rule rather than a comment.
             //
             // A blocking notice deliberately does *not* render here. It goes in the button zone
             // below, so that it takes Start's place rather than sitting above a Start that still

@@ -32,6 +32,7 @@ import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.DeviceReadiness
 import com.racetimer.shared.LaunchNotice
+import com.racetimer.shared.NoticeTier
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
@@ -40,6 +41,7 @@ import com.racetimer.shared.StartRemedy
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.armedNotice
 import com.racetimer.shared.discardedOnStartRemainingMs
 import com.racetimer.shared.forcesMaxBrightness
 import com.racetimer.shared.formatCountdown
@@ -149,14 +151,20 @@ class MainActivity : ComponentActivity() {
     private var uiDiscardWarning by mutableStateOf<String?>(null)
 
     /**
-     * The one thing worth telling the sailor about the state of this watch, or null (#13).
+     * The one thing worth telling the sailor about the state of this watch, or null (#13, #96).
      *
-     * The *judgement* is [startNotice] in `shared/`; this holds only its answer. Which tier it
-     * lands on decides whether it appears as a Tier 3 line under the sequence name or as a Tier 2
-     * panel standing where the Start button would be — and `TimerScreen` makes that second case
-     * structural rather than conditional by rendering the panel *in place of* the button, inside
-     * the branch that draws it. Blocking therefore cannot reach a running race by construction,
-     * which is rule 3 of `docs/message-surface.md` enforced by geometry rather than by a flag.
+     * The *judgement* is never here. Two rules in `shared/` produce it and they do not overlap:
+     * [startNotice] answers the pre-start screen from five conditions readable before a tap, and
+     * [armedNotice] answers a running race from the one condition that can only be measured by
+     * arming it. `refreshUiState` picks whichever branch it is in, so exactly one is ever live.
+     *
+     * Which tier it lands on decides whether it appears as a Tier 3 line under the sequence name or
+     * as a Tier 2 panel standing where the Start button would be — and `TimerScreen` makes that
+     * second case structural rather than conditional by rendering the panel *in place of* the
+     * button, inside the branch that draws it. Blocking therefore cannot reach a running race by
+     * construction, which is rule 3 of `docs/message-surface.md` enforced by geometry rather than by
+     * a flag — and [armedNotice], the only rule that can speak during a race, returns a
+     * [NoticeTier.WARNING] or nothing at all.
      */
     private var uiStartNotice by mutableStateOf<StartNotice?>(null)
 
@@ -961,9 +969,19 @@ class MainActivity : ComponentActivity() {
         }
         // A race is under way, so nothing here is actionable and rule 3 of docs/message-surface.md
         // forbids taking the screen. The panel is already unreachable by construction — it renders
-        // inside the idle button branch — and clearing the state as well keeps a stale Tier 3 line
-        // from riding along under the sequence name for the length of a race (#13).
-        uiStartNotice = null
+        // inside the idle button branch — and dropping the pre-start judgement as well keeps a stale
+        // Tier 3 line from riding along under the sequence name for the length of a race (#13).
+        //
+        // What replaces it is the one warning that belongs *only* here (#96). The five conditions
+        // above are all knowable before Start; whether the cues could be made audible is not, because
+        // the platform refuses a volume raise without saying so. `TimerService` finds out by trying
+        // at the moment the race is armed, and this is the first screen that can carry the answer.
+        // `armedNotice` returns null in every state but RUNNING and whenever the raise was not
+        // refused, so the ordinary race is byte-for-byte the screen it was.
+        uiStartNotice = armedNotice(
+            state = engine.currentState,
+            cueVolumeRefused = timerService?.cueVolumeRefused == true,
+        )
         // A race the engine is actually running outranks a saved one: it has already been answered.
         clearResumeOffer()
         // And the lead-in that armed it was a per-race choice, spent the moment the engine took the
