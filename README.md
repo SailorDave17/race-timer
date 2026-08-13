@@ -161,6 +161,17 @@ race-timer/
 │       ├── SystemMonotonicClock.kt — the engine's clock, on Android
 │       ├── CueAudioProfile.kt      — seam: what a CueStream means on THIS device
 │       └── HapticUsagePolicy.kt    — seam: what a vibration is declared as here
+├── phone/            # Phone standalone app (#197, epic #196)
+│   └── src/
+│       ├── main/kotlin/com/racetimer/phone/
+│       │   ├── MainActivity.kt          — Compose UI, the display refresh loop
+│       │   ├── PhoneTimerViewModel.kt   — holds the race across a rotation
+│       │   └── ui/
+│       │       ├── PhoneReadout.kt          — engine state -> what the screen says
+│       │       ├── PhoneTheme.kt
+│       │       ├── TimerScreen.kt           — the console clock
+│       │       └── SequencePickerScreen.kt
+│       └── test/                 — JVM unit tests; Robolectric only for the manifest
 └── wear/             # Wear OS standalone app
     └── src/main/
         ├── kotlin/com/racetimer/wear/
@@ -179,8 +190,10 @@ race-timer/
         └── res/
 ```
 
-The dependency direction is one-way and worth preserving: `wear` depends on `shared-android` depends
-on `shared`, never the reverse. Keeping `shared` free of Android types is what lets the whole timing
+The dependency direction is one-way and worth preserving: each app module depends on
+`shared-android`, which depends on `shared`, never the reverse — and `wear` and `phone` never
+reference each other, which `phone`'s `ModuleBoundaryTest` asserts in both directions rather than
+leaving to a grep somebody remembers to run. Keeping `shared` free of Android types is what lets the whole timing
 core run on the JVM in seconds with no emulator — and it is where the rules that would otherwise get
 written twice, and drift, are made assertable.
 
@@ -224,16 +237,23 @@ successful push is what both states look like.
 # Build the Wear OS debug APK
 ./gradlew :wear:assembleDebug
 
+# Phone module: unit tests, then the debug APK
+./gradlew :phone:testDebugUnitTest
+./gradlew :phone:assembleDebug
+
 # Build the release bundle — runs R8, so it catches shrinker breakage the debug build cannot
 ./gradlew :wear:bundleRelease
 
-# Install on a connected Wear OS device / emulator
+# Install on a connected device / emulator
 ./gradlew :wear:installDebug
+./gradlew :phone:installDebug
 ```
 
-Those first three are exactly what CI enforces on every pull request — see
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml). `bundleRelease` joined the gate in #129 so
-that R8 runs on every push rather than only when somebody remembered.
+Everything above except the two `installDebug` lines is exactly what CI enforces on every pull
+request — read the list off [`.github/workflows/ci.yml`](.github/workflows/ci.yml) rather than
+counting it here. `bundleRelease` joined the gate in #129 so that R8 runs on every push rather than
+only when somebody remembered, and the phone steps joined it in #197, in the same change that
+created the module.
 
 It behaves differently here than on CI, which matters when you run the gate locally: this machine has
 a `keystore.properties` and therefore signs, while CI has none and builds unsigned — see
