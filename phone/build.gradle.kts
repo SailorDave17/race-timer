@@ -97,4 +97,22 @@ dependencies {
     testImplementation(libs.junit)
     // Scoped to the non-audio surfaces per #160's owner decision — see the catalog comment.
     testImplementation(libs.robolectric)
+
+    // Compose UI testing, on the JVM under Robolectric — no device (#225, owner decision
+    // 2026-08-13). This is a NEW instrument for this repo: no module had one, and #160's scoped
+    // yes explicitly did not cover Compose screens. It was granted for one reason, and the reason
+    // bounds it: #225's first criterion is that sequence selection cannot be reached until the
+    // officer has answered the display surface, and "is there a path from a person to this code"
+    // is answerable nowhere else (cairn `exported-is-not-reachable`).
+    //
+    // Why the #64 objection does not apply here. That rejection was "a shadow records that the call
+    // happened, it does not model what the call does" — fatal when the property is what a real
+    // AudioTrack delivers. The property here is NAVIGATION, where "records that the tap happened"
+    // is exactly sufficient — the same reasoning that flipped #160 the other way. The audio and
+    // haptic NO is untouched and no assertion may reach for it.
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    // Supplies the empty activity `createComposeRule` launches into. debugImplementation, not
+    // testImplementation: it contributes a manifest entry, which is a merge-time artefact.
+    debugImplementation(libs.compose.ui.test.manifest)
 }
