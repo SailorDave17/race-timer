@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Same label as the watch: one Play listing, one name on two form factors. -->
+    <string name="app_name">Mad Cow Race Timer</string>
+</resources>

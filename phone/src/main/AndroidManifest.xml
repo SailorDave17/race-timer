@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- No permissions, deliberately. A silent, foreground-only countdown needs none: the cues
+         (#202), the screen-off foreground service (#203) and the wake lock (#199/#203) each bring
+         their own, and each belongs to the story that adds the behaviour. Anything declared here
+         ahead of its use would show up in the Play declarations (#212) describing a capability the
+         app does not have — and it is the MERGED manifest Play reads, not this file. -->
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+
+        <!-- allowBackup is false by epic #196 decision D5, and it is set explicitly because the
+             platform default is TRUE. Auto Backup ships SharedPreferences to the user's Google
+             account even with no INTERNET permission — an off-device copy of state this app never
+             asked to transmit, and a sentence the published privacy policy would have to carry.
+             Nothing is persisted here yet (#205 owns restore); the flag is set now because the
+             moment to decide is when the manifest is authored, not when the first key is written. -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.Material.NoActionBar">
+            <!-- No android:screenOrientation. The console phone is propped however the officer
+                 props it, and the countdown lays out for whatever it gets. `CLAUDE.md` bars the
+                 attribute on the WATCH for a different reason (wrist placement is a system
+                 rotation); here it is simply a constraint with nothing asking for it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>

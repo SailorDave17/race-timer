@@ -46,6 +46,16 @@ jobs:
       - name: Assemble wear debug APK
         run: ./gradlew :wear:assembleDebug -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
 
+      # The phone module joins the gate in the same change that creates it (#197). :wear has been
+      # here since the start and had no test source set for four months; :phone gets both on day
+      # one, so its orchestration cannot become hardware-verified-or-nothing the way #160 records
+      # the watch's having done.
+      - name: Run phone unit tests
+        run: ./gradlew :phone:testDebugUnitTest -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
+
+      - name: Assemble phone debug APK
+        run: ./gradlew :phone:assembleDebug -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
+
       # CI has never built a release in this repo, so R8 only ever ran when someone
       # remembered to run it by hand - which is how the first release build happened
       # four days after the toolchain that enabled it (#127, #70). This step is the
@@ -58,18 +68,22 @@ jobs:
       - name: Build wear release bundle (unsigned - this is where R8 runs)
         run: ./gradlew :wear:bundleRelease -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
 
-      - name: Upload test report
+      - name: Upload test reports
         # Failures are exactly when the report is worth reading.
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: shared-test-report
-          path: shared/build/reports/tests/test/
+          name: test-reports
+          path: |
+            shared/build/reports/tests/test/
+            phone/build/reports/tests/testDebugUnitTest/
           retention-days: 14
 
-      - name: Upload debug APK
+      - name: Upload debug APKs
         uses: actions/upload-artifact@v4
         with:
-          name: wear-debug-apk
-          path: wear/build/outputs/apk/debug/wear-debug.apk
+          name: debug-apks
+          path: |
+            wear/build/outputs/apk/debug/wear-debug.apk
+            phone/build/outputs/apk/debug/phone-debug.apk
           retention-days: 14

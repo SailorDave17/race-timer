@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- COPY of wear/src/main/res/drawable/ic_launcher_background.xml. Two application modules
+     cannot share a resource directory, so the launcher mark exists once per module and the copies
+     are bound by this comment and nothing else. If one changes, change both — and see the list in
+     ic_launcher_foreground.xml, which now names four copies of one geometry. -->
+<!-- Adaptive-icon background layer: full-bleed charcoal grey, the field half of the scarlet-and-grey
+     scheme (owner decision, 2026-08-12).
+
+     This deliberately no longer matches colors.xml bg_normal (#1A1A2E). It did until the recolour,
+     and the comment here said so; the countdown UI is unchanged and only the icon and the store
+     artwork moved, so the tie is broken on purpose rather than by drift. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#2E2E2E"
+        android:pathData="M0,0L108,0L108,108L0,108Z" />
+</vector>

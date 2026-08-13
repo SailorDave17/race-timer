@@ -32,3 +32,4 @@ rootProject.name = "race-timer"
 include(":shared")
 include(":shared-android")
 include(":wear")
+include(":phone")
