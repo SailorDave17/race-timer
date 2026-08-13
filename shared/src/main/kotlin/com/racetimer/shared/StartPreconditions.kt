@@ -244,3 +244,72 @@ fun armedNotice(state: TimerState, cueVolumeRefused: Boolean): StartNotice? =
     } else {
         null
     }
+
+// --- A cue lost mid-race (#161) ---------------------------------------------
+
+/**
+ * Which way the audio path lost a cue the sailor was timing a start off (#161).
+ *
+ * Three paths in `ToneManager.writeCue` fail *after* the race is under way, and until #161 all
+ * three produced a log line and nothing else. They collapse to two consequences, which is why this
+ * enum has two cases rather than three:
+ *
+ * - [DROPPED] — the write returned `<= 0`, or threw [IllegalStateException] and took the track with
+ *   it. Either way the cue does not sound at all.
+ * - [TRUNCATED] — the tail write of a cue longer than the buffer threw, so the cue starts and stops
+ *   early.
+ *
+ * ### Why the two are distinguished, when the sailor's remedy is the same
+ *
+ * Both leave the wrist as the surviving channel, so "watch/feel the wrist" is the action either
+ * way, and one message would have satisfied rule 5 of `docs/message-surface.md`. They are separated
+ * because the *failure modes differ in kind*, not in degree. A dropped cue is **absent** — the
+ * sailor hears nothing and knows to trust the wrist. A truncated cue is **present and wrong**: a
+ * three-second gun cut to a fraction of itself sounds like a short blast, which in every sequence
+ * this app ships is a different mark. Silence is noticed; a plausible wrong signal is acted on.
+ *
+ * ### No state parameter, unlike [armedNotice]
+ *
+ * `armedNotice` takes a [TimerState] because it describes a standing condition that is true in
+ * states where it is not worth saying. A lost cue is news, and it can only be news in a state where
+ * a cue fired — which includes `COUNTING_UP`, since a race-manager sequence goes on signalling past
+ * the gun. So there is no state in which this notice could arrive and be wrong to show, and a gate
+ * asserting one would be a branch that can never be taken.
+ */
+enum class CueLoss {
+    /** The cue did not sound at all. */
+    DROPPED,
+
+    /** The cue sounded, and stopped early. */
+    TRUNCATED,
+}
+
+/**
+ * Tier 1. Consequence first, then the channel that still works — the shape [NOTICE_CUE_VOLUME_REFUSED]
+ * set in #96, and for the same reason: #144 measured 30 of 30 cue vibrations delivered under total
+ * silence, so the wrist is genuinely the channel to fall back on rather than a hopeful clause.
+ */
+const val NOTICE_CUE_DROPPED = "Cue silent — wrist still buzzing"
+
+/**
+ * Tier 1. "Cut short" rather than "truncated": the sailor needs to know the blast they just heard
+ * was not the whole blast, because its length is what tells the marks apart.
+ */
+const val NOTICE_CUE_TRUNCATED = "Cue cut short — wrist still buzzing"
+
+/**
+ * The banner copy for a cue the audio path lost, or null when nothing was lost.
+ *
+ * The whole judgement for #161, in `shared/` where the JVM suite can assert it, for the reason this
+ * file's header gives: the alternative is a `when` inside an Activity callback that only a wrist can
+ * check, and this repo has already shipped a message surface nobody could see (#102).
+ *
+ * Null-in / null-out deliberately, so the caller can hand it the read-and-clear result directly —
+ * `showTransientMessage(cueLossNotice(service.consumeCueLoss()) ?: return)` — without a second
+ * branch on the activity side deciding what "nothing was lost" looks like.
+ */
+fun cueLossNotice(loss: CueLoss?): String? = when (loss) {
+    CueLoss.DROPPED -> NOTICE_CUE_DROPPED
+    CueLoss.TRUNCATED -> NOTICE_CUE_TRUNCATED
+    null -> null
+}

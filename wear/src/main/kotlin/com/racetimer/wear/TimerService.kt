@@ -23,6 +23,7 @@ import com.racetimer.android.HapticManager
 import com.racetimer.android.SystemMonotonicClock
 import com.racetimer.android.ToneManager
 import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.CueLoss
 import com.racetimer.shared.CueStream
 import com.racetimer.shared.CueTiming
 import com.racetimer.shared.cueStream
@@ -212,6 +213,23 @@ class TimerService : Service() {
      */
     val audioUnavailable: Boolean?
         get() = if (this::tone.isInitialized) tone.audioUnavailable else null
+
+    /**
+     * Take the cue this race's audio path lost, clearing it — null when nothing is owed (#161).
+     *
+     * A pass-through to `ToneManager.consumeCueLoss`, which owns the record because it is the only
+     * thing that knows a write failed. This service is on the path for the same reason it carries
+     * [audioUnavailable]: the activity binds to the service, not to the tone manager.
+     *
+     * Guarded on `isInitialized` like [audioUnavailable], and for the same reason — [tone] is
+     * `lateinit`, and the activity's refresh can reach a bound service before `onCreate` has
+     * finished. Null here means "nothing to say", which is what the caller does with it anyway.
+     *
+     * Takes no lock. The point of the atomic behind it is that this can be called from the main
+     * thread every 100 ms without ever waiting on the audio path — see `ToneManager.pendingCueLoss`.
+     */
+    fun consumeCueLoss(): CueLoss? =
+        if (this::tone.isInitialized) tone.consumeCueLoss() else null
 
     /**
      * Runs once the gun cue has finished sounding and "GO!" has had its [GUN_LINGER_MS] on screen.
@@ -477,6 +495,13 @@ class TimerService : Service() {
                 // runs here rather than in `onCreate` for the same reason the route does — the sailor
                 // may have touched the volume since.
                 ensureCueStreamAudible(route)
+
+                // Drop a loss the last race left uncollected, for the reason the line above resets
+                // `cueVolumeRefused`: it is a verdict about **that** race (#161). The activity only
+                // collects while a race is under way, so a cue lost in the last seconds of one — or
+                // any time the activity was not on screen — would otherwise sit in the atomic and
+                // surface as a banner over the *next* start. Read-and-clear is the discard.
+                tone.consumeCueLoss()
 
                 // Backstop only. The render that matters was posted when the sailor picked the
                 // sequence (see [warmUpCues]) — this call is here for the paths that never went

@@ -2,6 +2,7 @@ package com.racetimer.shared
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -41,6 +42,21 @@ class StartPreconditionsTest {
         NOTICE_BATTERY_SAVER,
         NOTICE_CUE_VOLUME_REFUSED,
     )
+
+    /**
+     * Tier 1 cue-loss copy (#161), deliberately **not** folded into [allConstants].
+     *
+     * That list is the set `startNotice` is allowed to produce, and the exhaustive mask test asserts
+     * membership in it. Adding two strings that rule can never emit would widen the thing that test
+     * checks against, which is the opposite of what it is for.
+     */
+    private val cueLossConstants = listOf(
+        NOTICE_CUE_DROPPED,
+        NOTICE_CUE_TRUNCATED,
+    )
+
+    /** Every string a sailor can read, for the guards that are about the copy rather than the rule. */
+    private val everyCopy = allConstants + cueLossConstants
 
     // --- The ordinary case ----------------------------------------------------------------------
 
@@ -248,7 +264,7 @@ class StartPreconditionsTest {
     @Test fun `every notice fits the screen it has to render on`() {
         // The geometry is docs/message-surface.md's, and a copy edit is exactly the change nobody
         // re-measures. Two lines of caption1 inside the width cap is the budget.
-        for (copy in allConstants) {
+        for (copy in everyCopy) {
             assertTrue(
                 "\"$copy\" is ${copy.length} characters, over the $NOTICE_MAX_CHARS the panel holds",
                 copy.length <= NOTICE_MAX_CHARS,
@@ -259,7 +275,7 @@ class StartPreconditionsTest {
     @Test fun `no two conditions share a message`() {
         // A sailor reading "Battery saver — sound may be cut" must be able to conclude which
         // condition fired. Distinct copy is what makes the notice diagnostic rather than decorative.
-        assertEquals(allConstants.size, allConstants.toSet().size)
+        assertEquals(everyCopy.size, everyCopy.toSet().size)
     }
 
     // --- Negative control -----------------------------------------------------------------------
@@ -347,5 +363,75 @@ class StartPreconditionsTest {
         // And the list is non-empty, or the assertion above would hold against a rule that never
         // produced anything at all.
         assertTrue("no pre-start copy was collected, so the check proves nothing", everyPreStartText.size >= 5)
+    }
+
+    // --- cueLossNotice: a cue the audio path lost mid-race (#161) --------------------------------
+
+    @Test fun `a cue that did not sound is announced as silent`() {
+        assertEquals(NOTICE_CUE_DROPPED, cueLossNotice(CueLoss.DROPPED))
+    }
+
+    @Test fun `a cue that stopped early is announced as cut short`() {
+        assertEquals(NOTICE_CUE_TRUNCATED, cueLossNotice(CueLoss.TRUNCATED))
+    }
+
+    @Test fun `nothing lost is nothing said`() {
+        // The null-in/null-out half of the contract. `MainActivity` hands this the read-and-clear
+        // result directly, so the ordinary race — every cue sounding — passes null through here on
+        // every one of its refreshes and must produce no banner.
+        assertNull(cueLossNotice(null))
+    }
+
+    @Test fun `every way of losing a cue has copy, including any added later`() {
+        // Driven off the enum rather than off a list written by hand, so a third CueLoss case added
+        // without copy fails here instead of reaching a sailor as a silent loss — which is the exact
+        // defect #161 exists to close, reintroduced one enum case at a time.
+        for (loss in CueLoss.values()) {
+            assertNotNull("$loss has no copy", cueLossNotice(loss))
+        }
+        assertTrue("the enum is empty, so the loop above proves nothing", CueLoss.values().isNotEmpty())
+    }
+
+    @Test fun `a dropped cue and a truncated cue are distinguishable`() {
+        // AC 4. The decision this encodes: a dropped cue is absent and a truncated one is present
+        // and wrong — a three-second gun cut short sounds like a short blast, which is a different
+        // mark in every sequence this app ships. Collapsing them to one string would pass every
+        // other test in this section.
+        val texts = CueLoss.values().map { cueLossNotice(it) }
+        assertEquals("two losses must not share one message", texts.size, texts.toSet().size)
+    }
+
+    @Test fun `the pre-start rule can never produce a cue-loss banner`() {
+        // The mirror of the armed-notice test above, and the same reasoning: a sailor reading "Cue
+        // silent" before Start would be reading about a race that has already finished. The two
+        // rules answer disjoint screens and this is the half `shared` can see.
+        val everyPreStartText = buildList {
+            for (readiness in listOf(
+                ready,
+                ready.copy(foregroundServiceRefused = true),
+                ready.copy(audioUnavailable = true),
+                ready.copy(notificationsBlocked = true),
+                ready.copy(vibratorAbsent = true),
+                ready.copy(batterySaverActive = true),
+            )) {
+                for (silent in listOf(false, true)) {
+                    startNotice(readiness, silent)?.let { add(it.text) }
+                }
+            }
+        }
+        for (copy in cueLossConstants) {
+            assertFalse("the pre-start rule produced $copy", everyPreStartText.contains(copy))
+        }
+        assertTrue("no pre-start copy was collected, so the check proves nothing", everyPreStartText.size >= 5)
+    }
+
+    @Test fun `the armed warning and the cue-loss banner are different messages`() {
+        // Both are about cues a sailor cannot hear, and they are deliberately separate surfaces:
+        // #96's is a standing condition for the length of the countdown (Tier 3), this is one event
+        // that has already happened (Tier 1). Sharing copy would make the tier the only difference,
+        // and a sailor cannot see a tier.
+        for (copy in cueLossConstants) {
+            assertNotEquals(NOTICE_CUE_VOLUME_REFUSED, copy)
+        }
     }
 }

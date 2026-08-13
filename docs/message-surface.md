@@ -73,7 +73,7 @@ driven by the `message: String?` parameter and cleared through `onMessageExpired
 | Backing | `#FF3A2A00` (opaque dark amber), 8 dp rounded corners, 8 × 3 dp padding |
 | Lifetime | `showTransientMessage` sets `uiMessage`; a `LaunchedEffect` **in `TimerScreen`** clears it after `MESSAGE_DURATION_MS` = 3 s, counted from the composition that puts it on screen |
 | Interaction | None. Not tappable, not dismissible, does not block anything |
-| Consumers | Five, all via `showTransientMessage`: `restorePendingSelection` → "Saved race unreadable — starting fresh" and "Saved sequence unreadable — using default"; `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady"; `announceRestoreOutcome` → "Resumed race in progress" (`EXACT`) and "Old race ended — starting fresh" (`EXPIRED`) |
+| Consumers | Seven, all via `showTransientMessage`: `restorePendingSelection` → "Saved race unreadable — starting fresh" and "Saved sequence unreadable — using default"; `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady"; `announceRestoreOutcome` → "Resumed race in progress" (`EXACT`) and "Old race ended — starting fresh" (`EXPIRED`); `announceCueLoss` → "Cue silent — wrist still buzzing" (`DROPPED`) and "Cue cut short — wrist still buzzing" (`TRUNCATED`), #161 |
 
 ### Why it is below the readout, and why the screen owns the timer (#102)
 
@@ -267,6 +267,8 @@ fails rather than wraps.
 | Spent snapshot discarded | 1 | "Old race ended — starting fresh" | none — **shipped** |
 | Degraded recovery | 3 | "Recovered — tap Sync to confirm" | Sync — **shipped**, scrimmed #123 |
 | Cue volume raise refused (Do Not Disturb) | 3 | "Do Not Disturb — cues silent, wrist still buzzing" | none — **shipped** (#96), `RUNNING` only |
+| Cue dropped mid-race | 1 | "Cue silent — wrist still buzzing" | none — **shipped** (#161) |
+| Cue truncated mid-race | 1 | "Cue cut short — wrist still buzzing" | none — **shipped** (#161) |
 
 ### The notification row moved from Tier 2 to Tier 3, and that was a decision
 
@@ -292,9 +294,17 @@ Copy is a starting point, not fixed — all of it is untested on a wrist in sun.
 ## Error-surface audit (#13 AC5)
 
 *"Every error surface has a visible message, not just a log line."* That is a claim about the whole
-app rather than about a feature, so it is discharged as an audit: every `Log.w`/`Log.e` in `wear/`
-classified, with the ones that stay silent saying why. Re-run it with
-`grep -rn "Log\.\(w\|e\)(" wear/src/main/kotlin/` — 20 sites as of 2026-08-11.
+app rather than about a feature, so it is discharged as an audit: every `Log.w`/`Log.e` on the
+watch's own code paths classified, with the ones that stay silent saying why. Re-run it with
+`grep -rn "Log\.\(w\|e\)(" wear/src/main/kotlin/ shared-android/src/main/kotlin/` — 20 sites as of
+2026-08-13, **5 in `wear/` and 15 in `shared-android/`**.
+
+*The command above named only `wear/` until #161, and by then it could not see the three sites this
+audit's own gap section was about.* `ToneManager` and `HapticManager` moved to `:shared-android` when
+the phone module was founded, taking three quarters of the sites with them. Nothing looked wrong: the
+total was still 20, because 5 + 15 is what 20 had been, so re-running the check reproduced the
+documented number **while reading a different set of files**. A count that survives its own subject
+moving is not a check that passed — it is two errors agreeing. Name both trees.
 
 ### Visible to the sailor
 
@@ -309,6 +319,9 @@ classified, with the ones that stay silent saying why. Re-run it with
 | Battery saver on | Tier 3, "Battery saver — sound may be cut" |
 | No settings activity for a remedy | The notice it was offered from stays on screen |
 | `setStreamVolume` refused (Do Not Disturb) | Tier 3 for the length of the countdown, "Do Not Disturb — cues silent, wrist still buzzing" (#96) |
+| `AudioTrack` write returned `<= 0` (`writeCue`) | Tier 1, "Cue silent — wrist still buzzing" (#161) |
+| `AudioTrack` write threw, track discarded (`writeCue`) | Tier 1, "Cue silent — wrist still buzzing" (#161) — same copy as the row above, because the sailor's consequence is the same |
+| Tail write failed, cue truncated (`writeCue`) | Tier 1, "Cue cut short — wrist still buzzing" (#161) |
 
 ### Silent by decision, with the reason
 
@@ -321,17 +334,50 @@ classified, with the ones that stay silent saying why. Re-run it with
 | ~~`setStreamVolume` refused (Do Not Disturb)~~ | **No longer silent — [#96](https://github.com/SailorDave17/race-timer/issues/96) shipped it**, as the row in the table above. It sat here on the argument that two warnings for one condition would be a second copy of the rule; that still holds, and the one warning is now the measured one. |
 | ~~Haptic dropped under Do Not Disturb~~ | **No longer true — [#144](https://github.com/SailorDave17/race-timer/issues/144) shipped.** The app was not choosing silence, it was failing to declare what the vibrations were for, and the platform classified the long ones `UNKNOWN` and dropped them under DND. Declaring the usage moved **30 of 30 cues to delivered at `zen_mode=2`, the 3000 ms gun included** — which is why #96's copy tells the sailor the wrist still works. |
 
-### The one genuine gap, stated rather than closed
+### The gap that was left open, and how it closed (#161)
 
-**A cue lost or truncated mid-race is silent.** Three paths in `ToneManager.writeCue` — a write
-returning `<= 0` ("cue dropped"), an `IllegalStateException` discarding the track, and a failed tail
-write ("cue truncated") — produce a log line and nothing else. None of them sets `initFailed`, so
-the condition does not resurface as a Tier 2 block before the next race either.
+**A cue lost or truncated mid-race used to be silent** — the three `writeCue` rows in the table
+above. #13 recorded them here rather than fixing them, because the fix needed a Tier 1 banner on the
+*running-race* screen and there was no route from the tone thread to the UI. #161 built both, and
+the three rows moved up.
 
-It is left open rather than closed, for a reason worth stating: the fix is a Tier 1 banner on the
-*running-race* screen, which is the most sensitive surface in the app and the one #102 already had
-to move once. It also needs a route from the tone thread to the UI that does not exist yet. That is
-a piece of work with its own risk, not a line to add to this story.
+**The route.** `ToneManager` records the loss in an `AtomicReference` under the `audioLock` it is
+already holding; `MainActivity`'s 100 ms refresh takes it with `getAndSet(null)` on the main thread.
+An atomic rather than a field under the lock, because the read is the problem, not the write: a main
+thread blocking on the lock the audio path holds while it talks to the audio server is the stall
+this app is built to avoid. Read-and-clear rather than a sampled flag, for the reason
+`TimerService.consumeRestoreNotice` is shaped that way — a lost cue is *news*, and a `@Volatile`
+boolean polled at 100 ms cannot say "announce this once". A loss left uncollected is discarded when
+the next race is armed, so a banner can never describe a race that has already finished.
+
+**Two messages, not one.** A dropped cue is *absent*; a truncated one is *present and wrong* — a
+three-second gun cut short sounds like a short blast, which is a different mark in every sequence
+this app ships. Silence is noticed; a plausible wrong signal is acted on. The copy and the mapping
+live in `shared/StartPreconditions.kt` and are asserted by `StartPreconditionsTest`.
+
+**How it was proven, which was the hard part.** None of the three paths had ever been observed on
+this hardware, so the banner could only have been *reviewed* — which is exactly what #102 cost, a
+Tier 1 banner whose code was correct and which no sailor ever saw. `ToneManager` therefore carries a
+fault switch, armed over adb with no root and no debug build:
+
+```
+adb shell setprop log.tag.RaceTimerCueFault VERBOSE
+```
+
+It stands in for the write rather than wrapping it, so an armed run reaches the failure branch by
+the route a real refusal would, and it is read **once at construction** so the cue deadline pays one
+boolean test. *Measured on an SM-R925U, 2026-08-13*: armed, `write returned -3; cue dropped` and
+`delivered 0 frames = 0ms`, with the banner on screen at 4:59 and again at 2:59 — a second loss two
+minutes after the first, each clearing after its three seconds while ~450 refreshes went by in
+between. Disarmed, the same race at the same mark: **0 losses, `delivered 74400 frames = 1550ms`,
+no banner.** That control is what separates a banner that works from one that is always up.
+
+**What is still unobserved, stated rather than implied.** Only the *dropped* banner has been seen on
+a wrist. The tail-write path needs a cue longer than the track buffer (`MAX_PREFILL_MS`, 4 s) and
+the longest cue this app ships is the three-second gun, so **`TRUNCATED` is unreachable with any
+shipped sequence** — it is defensive coding for the day a cue's length becomes data. Its copy,
+length and mapping are unit-asserted and it renders through the identical `showTransientMessage`
+call; what has not been demonstrated is the tail-write site setting the notice.
 
 ## Resolved questions
 
