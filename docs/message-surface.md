@@ -62,7 +62,7 @@ action (Tier 3).
 
 ## Tier 1 — Transient banner (shipped)
 
-`MessageBanner` in [TimerScreen.kt:661](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L661),
+`MessageBanner` in [TimerScreen.kt](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt) — named, not cited by line, which had drifted by nearly two hundred —
 driven by the `message: String?` parameter and cleared through `onMessageExpired`.
 
 | | |
@@ -184,15 +184,26 @@ screen turning off) has no usable degraded mode and stays hard-blocked.
 
 ## Tier 3 — Persistent status line (shipped)
 
-Two consumers, both `caption2` bold in `#FFC107` directly under the sequence name, and both
+Three rendering sites, all `caption2` bold in `#FFC107` directly under the sequence name, and all
 persisting until the sailor acts because each asks for something a 3 s banner could not:
 
-| Consumer | Line | On screen when | Scrim |
+| Site | Line | On screen when | Scrim |
 |---|---|---|---|
 | Degraded-recovery prompt | "Recovered — tap Sync to confirm" | `RUNNING`, after a `DEGRADED` restore, until Sync is tapped | **Yes** — `#FF3A2A00`, added by #123 |
 | Discard warning (#89) | "Start discards saved *name*" | `IDLE` pre-start only, cleared by `clearResumeOffer` | No — navy is its whole exposure |
+| `StartNotice` warning line (#13, #96) | the three Tier 3 rows of the catalogue below, plus "Do Not Disturb — cues silent, wrist still buzzing" | `IDLE` for #13's three; `RUNNING` for #96's | **Yes** — `#FF3A2A00` |
 
-Both live in [TimerScreen.kt:174-214](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L174-L214).
+They are the `showResyncPrompt`, `discardWarning` and `warningNotice` blocks of `TimerScreen`, in
+that precedence order — named rather than cited by line, because the two line ranges this paragraph
+used to give were both wrong by more than a hundred lines before anyone noticed.
+
+**The third site is the one that reaches a running race with a message that is not a prompt**, and
+#96 is why it needed the scrim. Until then every notice it carried was confined to the pre-start
+screen, where navy is the only background and bare `#FFC107` clears the bar at 10.46 : 1 — the
+discard warning still goes without a scrim for exactly that reason. #96's warning stays up through
+the amber minute, where the same colour lands at 2.93 : 1. The rule that decides which states each
+notice can appear in lives in `shared/StartPreconditions.kt`, and `MessageContrastTest` derives the
+backgrounds by *driving* it rather than by restating them here.
 
 Use this tier for anything mid-sequence that needs a *sustained* action or a standing caveat, and Tier 1
 for anything that is merely news.
@@ -255,6 +266,7 @@ fails rather than wraps.
 | Exact recovery (race resumed) | 1 | "Resumed race in progress" | none — **shipped** |
 | Spent snapshot discarded | 1 | "Old race ended — starting fresh" | none — **shipped** |
 | Degraded recovery | 3 | "Recovered — tap Sync to confirm" | Sync — **shipped**, scrimmed #123 |
+| Cue volume raise refused (Do Not Disturb) | 3 | "Do Not Disturb — cues silent, wrist still buzzing" | none — **shipped** (#96), `RUNNING` only |
 
 ### The notification row moved from Tier 2 to Tier 3, and that was a decision
 
@@ -296,6 +308,7 @@ classified, with the ones that stay silent saying why. Re-run it with
 | Notification permission denied | Tier 3, tappable to Settings |
 | Battery saver on | Tier 3, "Battery saver — sound may be cut" |
 | No settings activity for a remedy | The notice it was offered from stays on screen |
+| `setStreamVolume` refused (Do Not Disturb) | Tier 3 for the length of the countdown, "Do Not Disturb — cues silent, wrist still buzzing" (#96) |
 
 ### Silent by decision, with the reason
 
@@ -305,8 +318,8 @@ classified, with the ones that stay silent saying why. Re-run it with
 | `AudioTrack` stop / release / keep-alive release failed | Teardown, after the race. Nothing left to affect. |
 | Native output rate unavailable | Falls back to a working rate; the cue is unchanged. |
 | Output rate changed with the stream | Handled by re-rendering. Not an error. |
-| `setStreamVolume` refused (Do Not Disturb) | Recorded in `TimerService.cueVolumeRefused`. Deliberately **not** #13's to surface — [#96](https://github.com/SailorDave17/race-timer/issues/96) owns that warning and its design rests on the measured refusal rather than a prediction. Two warnings for one condition would be a second copy of the rule. |
-| Haptic dropped under Do Not Disturb | The app cannot see it — the platform drops the effect and reports nothing. [#144](https://github.com/SailorDave17/race-timer/issues/144). |
+| ~~`setStreamVolume` refused (Do Not Disturb)~~ | **No longer silent — [#96](https://github.com/SailorDave17/race-timer/issues/96) shipped it**, as the row in the table above. It sat here on the argument that two warnings for one condition would be a second copy of the rule; that still holds, and the one warning is now the measured one. |
+| ~~Haptic dropped under Do Not Disturb~~ | **No longer true — [#144](https://github.com/SailorDave17/race-timer/issues/144) shipped.** The app was not choosing silence, it was failing to declare what the vibrations were for, and the platform classified the long ones `UNKNOWN` and dropped them under DND. Declaring the usage moved **30 of 30 cues to delivered at `zen_mode=2`, the 3000 ms gun included** — which is why #96's copy tells the sailor the wrist still works. |
 
 ### The one genuine gap, stated rather than closed
 
@@ -340,7 +353,8 @@ a piece of work with its own risk, not a line to add to this story.
 
 ---
 
-Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123.
+Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144.
 Owner: SailorDave17.
-Last reviewed: 2026-08-11 (#13 — Tier 2 built, the notification row demoted to Tier 3 with its
-reasoning recorded, both open questions answered).
+Last reviewed: 2026-08-13 (#96 — Tier 3 gained its first message that lives on a *running* screen
+rather than a prompt; the two stale `TimerScreen` line citations replaced with symbol names, and the
+two Do Not Disturb rows in the error audit corrected, both having been overtaken by shipped work).

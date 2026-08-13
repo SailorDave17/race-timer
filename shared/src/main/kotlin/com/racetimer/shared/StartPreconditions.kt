@@ -121,6 +121,22 @@ const val NOTICE_VIBRATOR_ABSENT = "No haptics — watch the screen"
 const val NOTICE_BATTERY_SAVER = "Battery saver — sound may be cut"
 
 /**
+ * Tier 3, and the one notice on this list that is **not** about the pre-start screen (#96).
+ *
+ * Names the cause rather than only the consequence, which looks like a departure from rule 5 of
+ * `docs/message-surface.md` and is not: here the cause *is* the remedy. "Cues may be silent" leaves
+ * a sailor with nothing to do; "Do Not Disturb" is the switch they can reach.
+ *
+ * The second clause exists because of #144, and it is the difference between a true message and a
+ * useful one. Before #144 the platform dropped every multi-pulse cue vibration under Do Not Disturb
+ * as well, so both channels were dead. #144 declared the vibrations' usage and *measured* the
+ * result: **30 of 30 cues delivered at `zen_mode=2`, the 3000 ms gun included**. So the wrist is now
+ * the channel that survives exactly this condition, and a warning that stopped at "cues silent"
+ * would send a sailor to watch the screen through a start they could have felt.
+ */
+const val NOTICE_CUE_VOLUME_REFUSED = "Do Not Disturb — cues silent, wrist still buzzing"
+
+/**
  * The longest a notice may be, in characters.
  *
  * `docs/message-surface.md` works this out from the geometry rather than from taste: one line at
@@ -187,3 +203,44 @@ fun startNotice(
 
     else -> null
 }
+
+/**
+ * The one notice worth showing while a race is **armed**, or null when there is nothing (#96).
+ *
+ * ### Why this is not a sixth [DeviceReadiness] field
+ *
+ * Every condition [startNotice] judges is readable, or already latched, *before* a tap on Start.
+ * This one is not: the platform refuses a volume raise **silently** — *measured on an SM-R925U at
+ * `zen_mode=2`*, `setStreamVolume` threw nothing, changed nothing and left the stream muted — so
+ * there is no API that answers "will the cues be audible?" ahead of time. The only honest answer
+ * comes from having tried and read the value back, which `TimerService.ensureCueStreamAudible` does
+ * at the moment the race is armed.
+ *
+ * Folding it into [DeviceReadiness] would therefore have put a *stale* observation on the pre-start
+ * screen: after a refused race the flag is still true, and the next race has not been attempted yet.
+ * A verdict about the last race, displayed as though it were about the next one, is precisely the
+ * prediction this story was rewritten to avoid. Kept separate, the two functions each say only what
+ * their inputs support.
+ *
+ * ### Why the state is an argument
+ *
+ * So that "which screens can this line appear on" is a decision in `shared/`, where it is asserted,
+ * rather than a branch in `MainActivity` that only a wrist can check. It is also what lets
+ * `MessageContrastTest` **derive** the backgrounds this line can be drawn on — by driving this
+ * function — instead of restating them.
+ *
+ * [TimerState.RUNNING] and no other state. Before the gun there are cues left to be silent; after
+ * it there are none, so a warning that outlived the gun would be a line about nothing sitting on
+ * the screen a race committee reads its finish times off.
+ *
+ * @param cueVolumeRefused the **measured** outcome of this race's volume raise — `TimerService`
+ *        tried, read the volume back, and was refused. Never a prediction.
+ */
+fun armedNotice(state: TimerState, cueVolumeRefused: Boolean): StartNotice? =
+    if (state == TimerState.RUNNING && cueVolumeRefused) {
+        // No remedy button: the fix is a system control this app cannot open on the sailor's behalf,
+        // and rule 3 of `docs/message-surface.md` keeps anything tappable off a running race anyway.
+        StartNotice(NoticeTier.WARNING, NOTICE_CUE_VOLUME_REFUSED, StartRemedy.NONE)
+    } else {
+        null
+    }

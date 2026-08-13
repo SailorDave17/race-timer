@@ -39,6 +39,7 @@ class StartPreconditionsTest {
         NOTICE_NOTIFICATIONS_BLOCKED,
         NOTICE_VIBRATOR_ABSENT,
         NOTICE_BATTERY_SAVER,
+        NOTICE_CUE_VOLUME_REFUSED,
     )
 
     // --- The ordinary case ----------------------------------------------------------------------
@@ -268,5 +269,83 @@ class StartPreconditionsTest {
         // against a rule that never blocks anything at all.
         assertTrue(startNotice(ready.copy(foregroundServiceRefused = true))!!.blocksStart)
         assertFalse(startNotice(ready.copy(batterySaverActive = true))!!.blocksStart)
+    }
+
+
+    // --- armedNotice: the warning that only exists once a race is running (#96) ------------------
+
+    @Test fun `a refused volume raise warns for the length of a running race`() {
+        val notice = armedNotice(TimerState.RUNNING, cueVolumeRefused = true)
+        assertNotNull(notice)
+        assertEquals(NoticeTier.WARNING, notice!!.tier)
+        assertEquals(NOTICE_CUE_VOLUME_REFUSED, notice.text)
+        assertEquals(StartRemedy.NONE, notice.remedy)
+        assertFalse("a running race can never be blocked — rule 3", notice.blocksStart)
+    }
+
+    @Test fun `a race whose cues were made audible is told nothing`() {
+        // AC 5: the ordinary race — including the common case where the volume was already high
+        // enough that no raise was attempted at all — is byte-for-byte the screen it always was.
+        for (state in TimerState.values()) {
+            assertNull(
+                "state $state must stay silent when the raise was not refused",
+                armedNotice(state, cueVolumeRefused = false),
+            )
+        }
+    }
+
+    @Test fun `the warning belongs to the countdown and to no other screen`() {
+        // Before the gun there are cues left to be silent; after it there are none. RACE_ENDED
+        // matters most here — a race committee reads finish times off that screen, and a warning
+        // about cues that have already finished sounding would be furniture.
+        for (state in TimerState.values().filter { it != TimerState.RUNNING }) {
+            assertNull(
+                "$state must not carry the cue-volume warning",
+                armedNotice(state, cueVolumeRefused = true),
+            )
+        }
+    }
+
+    // --- Negative controls for the armed warning ------------------------------------------------
+
+    @Test fun `both inputs to the armed rule are load-bearing`() {
+        // Without this, the two tests above would pass just as happily against a rule that ignored
+        // the measurement and warned on every running race, or against one that never warned at
+        // all. Each input is asserted to change the answer on its own.
+        assertNotNull(armedNotice(TimerState.RUNNING, cueVolumeRefused = true))
+        assertNull(armedNotice(TimerState.RUNNING, cueVolumeRefused = false))
+        assertNull(armedNotice(TimerState.IDLE, cueVolumeRefused = true))
+    }
+
+    @Test fun `the pre-start rule can never produce the armed-race copy`() {
+        // The two rules answer disjoint screens, and this is the half of that `shared` can see: no
+        // combination of the five pre-start conditions may emit the Do Not Disturb line. A sailor
+        // reading it before Start would be reading the *previous* race's verdict, which is exactly
+        // the prediction #96 was rewritten to avoid.
+        //
+        // What this cannot see — stated rather than implied — is that `MainActivity` calls the two
+        // rules from mutually exclusive branches of `refreshUiState`. That is `wear/`, and the
+        // hardware criterion is what discharges it.
+        val everyPreStartText = buildList {
+            for (readiness in listOf(
+                ready,
+                ready.copy(foregroundServiceRefused = true),
+                ready.copy(audioUnavailable = true),
+                ready.copy(notificationsBlocked = true),
+                ready.copy(vibratorAbsent = true),
+                ready.copy(batterySaverActive = true),
+            )) {
+                for (silent in listOf(false, true)) {
+                    startNotice(readiness, silent)?.let { add(it.text) }
+                }
+            }
+        }
+        assertFalse(
+            "the pre-start rule must never produce the armed-race copy",
+            everyPreStartText.contains(NOTICE_CUE_VOLUME_REFUSED),
+        )
+        // And the list is non-empty, or the assertion above would hold against a rule that never
+        // produced anything at all.
+        assertTrue("no pre-start copy was collected, so the check proves nothing", everyPreStartText.size >= 5)
     }
 }

@@ -169,13 +169,22 @@ class TimerService : Service() {
     private var gunTeardownPending = false
 
     /**
-     * Whether the platform refused to raise the cue stream for this race (#95).
+     * Whether the platform refused to raise the cue stream for **this** race (#95, read by #96).
      *
-     * True only after a [SecurityException] from `setStreamVolume`, which in practice means Do Not
-     * Disturb without `ACCESS_NOTIFICATION_POLICY`. Kept rather than discarded because it is the one
-     * case where the app knows the cues may be too quiet and cannot fix it — which is exactly what #96
-     * has to tell the sailor *before* the start rather than at it. Nothing reads it yet; it exists so
-     * that the condition is observable instead of being swallowed at the point it is discovered.
+     * Not an exception count. [setStreamVolumeChecked] returns false for a documented
+     * [SecurityException] *and* for the refusal this watch actually performs — returning normally
+     * having changed nothing — so this is false only when the volume was read back at the value it
+     * was asked for. That distinction is the whole reason the flag can be trusted: the exception
+     * path alone left it false through a measurably silent start.
+     *
+     * Rewritten on every arm, including the arms that need no raise at all, so it never carries a
+     * previous race's verdict into this one — see [ensureCueStreamAudible], where the reset sits
+     * above the early exits for exactly that reason.
+     *
+     * Read by `MainActivity` through `armedNotice` in `shared/`, which turns it into the Tier 3 line
+     * a sailor sees for the length of the countdown. Deliberately not shown *before* Start: until an
+     * attempt has been made there is nothing measured, and a warning derived from the last race
+     * would be the prediction #96 was rewritten to avoid.
      */
     @Volatile var cueVolumeRefused = false
         private set
@@ -300,6 +309,18 @@ class TimerService : Service() {
      * a race changes" true rather than merely intended.
      */
     private fun ensureCueStreamAudible(route: CueStream) {
+        // First, and before any early exit, because the flag is a verdict about **this** race (#96).
+        //
+        // It used to be written only on the path that actually attempted a raise, so the two paths
+        // that return early — no audio service, and the ordinary "already loud enough" case — left
+        // the previous race's answer standing. Harmless while nothing read it; a warning about a race
+        // that already finished the moment #96 did. Every arm now overwrites it, so a stale true
+        // cannot survive a race that was never refused.
+        //
+        // Clearing to false rather than to "unknown" is the same default `DeviceReadiness` takes: a
+        // condition nothing established is reported as fine, because a warning nobody can act on is
+        // worse than silence.
+        cueVolumeRefused = false
         val audio = getSystemService(AudioManager::class.java) ?: return
         val stream = WearCueAudioProfile.legacyStreamFor(route)
         val target = raisedCueVolume(
