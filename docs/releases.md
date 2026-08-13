@@ -24,7 +24,7 @@ uploaded rows, that trigger cannot be checked — which is why #81's AC 1 points
 
 | versionCode | versionName | Commit | Track | Uploaded | Notes |
 |---|---|---|---|---|---|
-| 1 | 1.0 | [`f4f7e7d`](https://github.com/SailorDave17/race-timer/commit/f4f7e7de277d8a70aaf4104548bbb9f07885e310) | Internal testing | *(not yet uploaded)* | First build. Prepared 2026-08-12 on `feature/79-first-internal-build`. |
+| 1 | 1.0 | [`cadaea9`](https://github.com/SailorDave17/race-timer/commit/cadaea9) | Internal testing | *(not yet uploaded)* | First build. Prepared 2026-08-12; **re-taken** from `cadaea9` after the artifact was rebuilt — see below. |
 
 ## How each field is established
 
@@ -38,7 +38,9 @@ is that it was taken rather than remembered.
 - **Commit** — `git rev-parse HEAD` on a **clean** tree at build time. A dirty tree makes the SHA a
   lie about what shipped, so check `git status` before trusting it. **If the bundle is rebuilt before
   it is uploaded, re-take this field** — a prepared row's SHA describes the artifact that existed
-  when the row was written, and rebuilding replaces that artifact without touching the table.
+  when the row was written. A rebuild used to replace that artifact silently; since
+  [#184](https://github.com/SailorDave17/race-timer/issues/184) the archive records its own
+  provenance and will not do so, but the row is still yours to keep honest.
 - **Uploaded** — the date Play accepted the bundle, from the Console, not the date it was built.
 - **Signing** — every bundle here is signed with the upload key whose SHA-256 fingerprint is recorded
   in [`release-signing.md`](release-signing.md). Verify with `keytool -printcert -jarfile <bundle>`;
@@ -82,10 +84,12 @@ needs it — but do not upload one without recording what was different.
 Recorded here because the evidence is cheapest to capture at the moment the artifact is produced,
 and some of it cannot be reconstructed afterwards.
 
-- Built from a clean tree at `f4f7e7d`, with all 79 Gradle tasks executed (`--rerun-tasks`), so no
-  step was served from the cache.
+- Built from a clean tree at `cadaea9` (develop, with #179 merged), all Gradle tasks executed
+  (`--rerun-tasks`), so no step was served from the cache.
 - `:shared:test` — **367 tests, 0 failures**, confirmed from `shared/build/test-results/test/*.xml`
-  rather than from Gradle's own summary.
+  rather than from Gradle's own summary, and CI is green on `cadaea9` itself. `cadaea9` differs from
+  the originally-recorded `f4f7e7d` by documentation only — `git diff f4f7e7d cadaea9 -- wear/src
+  shared/src` is empty — so the app binary is the same one those tests ran against.
 - Signature — `CN=Race Timer Upload, O=SailorDave17`, SHA-256 matching the fingerprint in
   `release-signing.md`.
 - Package identity inside the bundle — `io.github.sailordave17.racetimer`, with `com.racetimer.wear`
