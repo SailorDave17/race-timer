@@ -24,14 +24,19 @@ this section closes. The verdict holds while all four of these are true:
 
 | Precondition | Why it matters | If it is false |
 |---|---|---|
-| **Do Not Disturb is off** | Under DND the platform drops every multi-pulse cue on *both* channels — including the gun. Measured, not inferred | **The verdict does not hold.** [#144](https://github.com/SailorDave17/race-timer/issues/144), open |
+| **DND keeps permitting the feedback class** | Under DND the audio channel is silenced either way; the haptics — the gun included — arrive only because cues are declared `USAGE_TOUCH`, the one unprivileged usage total-silence DND lets through. Measured, not inferred ([#144](https://github.com/SailorDave17/race-timer/issues/144) → [#187](https://github.com/SailorDave17/race-timer/pull/187)) | **The verdict does not hold, and nothing would notice** — no test can see it. The re-check is [`dnd-haptics-recheck.md`](dnd-haptics-recheck.md) ([#186](https://github.com/SailorDave17/race-timer/issues/186)) |
 | **The watch has a working vibrator** | `HapticManager.play` returns silently when it does not, and nothing on screen says so | Cues are audio-only; nothing warns |
 | **The app is on screen, or was started with the screen on** | A backgrounded race relies on a timed wake lock; the countdown stays exact but cue *dispatch* can slip while the CPU is suspended | Cues fire late by roughly the sleep. See `docs/timing-accuracy.md` |
 | **The sailor can read the screen** | A countdown nobody can read is a dropped gun with extra steps | [#139](https://github.com/SailorDave17/race-timer/issues/139) / [#147](https://github.com/SailorDave17/race-timer/issues/147), open |
 
-The first is the one that bites today. **While #144 is open, a race run with Do Not Disturb on has no
-gun signal at all** — that is a hard failure the recovery paths below cannot reach, because they all
-assume the sailor eventually notices something.
+The first read "Do Not Disturb is off" until #187: while #144 was open, a race under DND had **no gun
+signal at all** — a hard failure the recovery paths below cannot reach, because they all assume the
+sailor eventually notices something. #187 closed it by declaring `USAGE_TOUCH` on every cue, so a
+race under DND is now haptic-only rather than silent. What survives is the dependency itself: the
+delivery rests on this device's DND policy continuing to permit the feedback class, and if that ever
+moves, the failure returns with no error and no failing test. That fragility is
+[#186](https://github.com/SailorDave17/race-timer/issues/186), and
+[`dnd-haptics-recheck.md`](dnd-haptics-recheck.md) is the check.
 
 The last two are not in #24's enumeration. They were found afterwards, and they are why this list is
 preconditions rather than a restatement of the three modes.
@@ -123,38 +128,42 @@ Two things worth knowing because they are not obvious from the screen:
 
 ## Mode 2 — the cue fires and the wrist never feels it
 
-**Partially recoverable, and it carries the one open defect that voids the verdict.**
+**Partially recoverable.** The open defect that voided the verdict — DND taking both channels — is
+closed ([#144](https://github.com/SailorDave17/race-timer/issues/144) →
+[#187](https://github.com/SailorDave17/race-timer/pull/187)), and the sailor is told when the audio
+half is gone (#96, shipped). What remains is a measured dependency on DND policy (below).
 
 ### Two channels, and what silences each
 
 | Channel | Path | Silenced by |
 |---|---|---|
 | Audio | `ToneManager`, `AudioTrack` on `USAGE_ALARM`; the cue stream is raised to an audible floor for the race and restored after (#95 / PR #132) | Do Not Disturb — `setStreamVolume` is refused **silently** and the app records it in `cueVolumeRefused` |
-| Haptic | `HapticManager`, `VibrationEffect.createWaveform` | Do Not Disturb (below); no vibrator on the device (silent return); screen-off truncation mid-waveform |
+| Haptic | `HapticManager`, `VibrationEffect.createWaveform`, declared `USAGE_TOUCH` via `WearHapticUsagePolicy` | No vibrator on the device (silent return); screen-off truncation mid-waveform. DND took this channel too until #187 (below) |
 
-### Do Not Disturb takes both — #144
+### Do Not Disturb took both — #144, closed by #187
 
-`vibrator.vibrate(effect)` is called with **no `VibrationAttributes`**, so the platform classifies the
-effect for itself, by duration. Measured on an SM-R925U, Wear OS on Android 16, 2026-08-10, one full
-`US Sailing 5-4-1-Go` race at `zen_mode=2`:
+Until #187, `vibrator.vibrate(effect)` was called with **no `VibrationAttributes`**, so the platform
+classified each effect for itself, by duration — the 120 ms sync ticks and 300 ms single pips landed
+as `TOUCH` and were delivered under DND, while the 600–900 ms multi-pulse cues and the 3000 ms gun
+landed as `UNKNOWN` and were dropped, `ignored_app_ops`, never started. The sailor felt the minute
+pips and lost the prep signals, the final five seconds, and the gun — the app's *longest and most
+important* cues, the opposite of any priority intended.
 
-| Effect length | Classified | Under DND |
-|---|---|---|
-| 120 ms sync ticks, 300 ms single pips | `usage: TOUCH` | **Delivered** |
-| 600 ms and 900 ms multi-pulse cues | `usage: UNKNOWN` | **Dropped** — `ignored_app_ops`, never started |
-| 3000 ms sustained — **the gun** | `usage: UNKNOWN` | **Dropped** |
-
-So the sailor feels the minute pips and the sync ticks and gets nothing for the prep signals, the
-final five seconds, or the gun — the app's *longest and most important* cues, which is the opposite of
-any priority intended. Full measurement and the zero-point test are on
+#187 closed it by declaring `USAGE_TOUCH` on every cue: **30 of 30 delivered at `zen_mode=2`, the
+3000 ms gun included**. The honest `USAGE_ALARM` was measured first and is worse than declaring
+nothing — 0 of 30, the alarm class being exactly what total-silence DND restricts. The full arm
+table, the re-check triggers and the baseline live in
+[`dnd-haptics-recheck.md`](dnd-haptics-recheck.md); the reasoning is in `WearHapticUsagePolicy`'s
+KDoc; the original measurement and zero-point test are on
 [#144](https://github.com/SailorDave17/race-timer/issues/144).
 
 ### What the sailor does
 
-- **Before the race: take the watch out of Do Not Disturb.** This is the whole of the mitigation
-  today, and nothing on the watch tells you it is needed —
-  [#96](https://github.com/SailorDave17/race-timer/issues/96) is the story that would surface it, using
-  the refusal the app already observes rather than predicting audibility.
+- **Before the race: come out of Do Not Disturb if you want the tones.** Under DND the race is
+  haptic-only — every cue buzzes (#187), no cue sounds — and the watch now says so during the race:
+  [#96](https://github.com/SailorDave17/race-timer/issues/96) shipped the Tier 3 line *"Do Not
+  Disturb — cues silent, wrist still buzzing"*, built on the refusal the app already observes rather
+  than a prediction of audibility.
 - **During the race: fall back to the screen.** The countdown display cannot drift — it is recomputed
   from the monotonic anchor on every tick, never integrated — so a sailor who missed a signal has an
   exact number in front of them the moment they look. **This is the reason the verdict holds**: losing
@@ -225,8 +234,8 @@ The question this table exists to answer: **is this a designed limitation or a g
 | Sailor loses sequence position | Sync re-anchors to the nearest minute | **Supported** |
 | Sailor is more than 30 s out | Snapped to the wrong minute, silently | **Gap** — [#150](https://github.com/SailorDave17/race-timer/issues/150) |
 | Cue fires while the CPU is suspended | Fires **late**, not dropped — `tick()` drains every overdue cue in order | **Designed limitation** — `docs/timing-accuracy.md` |
-| Haptic dropped under Do Not Disturb | Nothing plays; nothing warns | **Gap** — [#144](https://github.com/SailorDave17/race-timer/issues/144) |
-| Audio refused under Do Not Disturb | Nothing plays; app records the refusal, does not surface it | **Gap** — [#96](https://github.com/SailorDave17/race-timer/issues/96) |
+| Haptics under Do Not Disturb | Every cue delivered as `USAGE_TOUCH` (#187) — resting on DND policy permitting the feedback class | **Supported, fragile** — re-checked per [`dnd-haptics-recheck.md`](dnd-haptics-recheck.md) ([#186](https://github.com/SailorDave17/race-timer/issues/186)) |
+| Audio refused under Do Not Disturb | Tones stay silent; a Tier 3 line — *"Do Not Disturb — cues silent, wrist still buzzing"* — says so during the race (#96) | **Supported, degraded** — the wrist carries every cue |
 | Foreground service blocked / permission denied | Unhandled — `handleStart` assumes it works | **Gap** — [#13](https://github.com/SailorDave17/race-timer/issues/13), Tier 2 unbuilt |
 | Display renders upside down | Countdown unreadable | **Gap** — [#139](https://github.com/SailorDave17/race-timer/issues/139) / [#147](https://github.com/SailorDave17/race-timer/issues/147) |
 | Snapshot lost to an `apply()` race | Unmeasured | **Gap, unquantified** — [#151](https://github.com/SailorDave17/race-timer/issues/151) |
@@ -253,8 +262,8 @@ from what shipped, not recovered from what was decided.
 | App killed, after reboot | **Recoverable in-MVP, degraded — done** | Wall-clock reconstruction plus a re-sync prompt beats discarding a live race |
 | App killed after the gun | **Out of scope, by design** | Nothing left to run. Discarding it is correct, and the sailor is told |
 | Haptic missed — ordinary | **Out of scope** | Undetectable from inside the app; the screen is the fallback and it cannot drift |
-| Haptic missed — under DND | **In scope, not done** | Different from the above: the app *causes* it by not declaring attributes. Tracked as #144 |
-| Cues silent — DND | **In scope, not done** | The refusal is already observed; only the warning is missing. Tracked as #96 |
+| Haptic missed — under DND | **In scope — done** | Different from the above: the app *caused* it by not declaring attributes. #187 declares `USAGE_TOUCH` and the wrist now carries every cue under DND; the residual dependency on DND policy is [#186](https://github.com/SailorDave17/race-timer/issues/186) |
+| Cues silent — DND | **In scope — done** | The refusal was already observed; #96 shipped the warning built on it (*"Do Not Disturb — cues silent, wrist still buzzing"*, Tier 3, running only) |
 | Lost sequence position | **Recoverable in-MVP — done** | Sync is the re-anchor gesture #24 hypothesised, and it shipped |
 | Lost position by more than 30 s | **Proposed: out of scope** | Beyond half a minute the sailor should stop and restart the sequence against the committee rather than nudge a wrong anchor. Now [#150](https://github.com/SailorDave17/race-timer/issues/150), which exists to decide this rather than to implement the proposal |
 | Display unreadable | **In scope, not done** | Not enumerated by #24. Tracked as #139 / #147 |
@@ -293,11 +302,13 @@ and the silent destruction of a recoverable race (#89).
 anchor, flagged `DEGRADED`, with a persistent prompt to re-sync. The behaviour is better than the plan
 and the plan was never updated — this document is the first place the change is written down.
 
-**The verdict's own basis narrowed.** "No backup timer needed" was reasonable on 2026-07-30 given a
-countdown that cannot drift and a restore path that works. #144 introduced a case the spike did not
-consider: not a *missed* cue, but **no cue at all, on both channels, for the gun itself**. The verdict
-still stands — with Do Not Disturb off, which is now written down as a precondition rather than
-assumed.
+**The verdict's own basis narrowed, then partially recovered.** "No backup timer needed" was
+reasonable on 2026-07-30 given a countdown that cannot drift and a restore path that works. #144
+introduced a case the spike did not consider: not a *missed* cue, but **no cue at all, on both
+channels, for the gun itself**. #187 took the haptic half of that back — under DND every cue now
+reaches the wrist — so the verdict rests on a narrower precondition than "DND off": that DND keeps
+permitting the feedback class. That is written down as a precondition, measured, and re-checked per
+[`dnd-haptics-recheck.md`](dnd-haptics-recheck.md).
 
 ### A note on this document's provenance
 
@@ -313,9 +324,11 @@ and off the issues that shipped the behaviour — not recovered from the spike.
   and names the run. The restore outcomes in particular are exercised by the JVM suite
   (`RestorePlanTest`, `TimerEngineTest`) but the *sequence* of relaunch, banner and tap is a hardware
   path, and it is verified by the issues that shipped it rather than re-verified here.
-- **The DND measurements are one device, one race.** SM-R925U, Wear OS on Android 16 (API 36). The
-  duration boundary that decides `TOUCH` vs `UNKNOWN` sits somewhere between 300 ms and 600 ms and was
-  not measured precisely; it may differ elsewhere.
+- **The DND measurements are one device.** SM-R925U, Wear OS on Android 16 (API 36) — one race per
+  arm, across the arms recorded in [`dnd-haptics-recheck.md`](dnd-haptics-recheck.md). The duration
+  boundary that decided `TOUCH` vs `UNKNOWN` for an *undeclared* effect sits somewhere between 300 ms
+  and 600 ms and was not measured precisely; it may differ elsewhere, and since #187 it no longer
+  decides anything for this app's cues.
 - **The disposition table is a proposal.** Until the owner accepts it, it records what a reader would
   reasonably conclude, not what was decided.
 - **The `apply()` write window is unquantified.** It is listed as a gap on the strength of #9 having
@@ -325,7 +338,11 @@ and off the issues that shipped the behaviour — not recovered from the spike.
 ---
 
 Source: this repo's code as of the `develop` branch, plus issues #24, #9, #10, #22, #57, #87, #88,
-#89, #96, #102, #126, #144, and `docs/message-surface.md` / `docs/timing-accuracy.md`.
+#89, #96, #102, #126, #144, #186, PR #187, and `docs/message-surface.md` / `docs/timing-accuracy.md`
+/ `docs/dnd-haptics-recheck.md`.
 Owner: SailorDave17.
-Last reviewed: 2026-08-10 (#120 — first capture of the #24 result; #150 and #151 filed against the
-two untracked gaps the same day).
+Last reviewed: 2026-08-13 (#186 — the DND sections rewritten after #187 reversed the both-channels
+state and #96 shipped its warning; the re-check procedure and baseline split out to
+`docs/dnd-haptics-recheck.md`).
+Previously: 2026-08-10 (#120 — first capture of the #24 result; #150 and #151 filed against the two
+untracked gaps the same day).
