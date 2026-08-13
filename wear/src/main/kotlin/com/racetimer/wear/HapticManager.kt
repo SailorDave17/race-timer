@@ -104,7 +104,12 @@ class HapticManager(context: Context) {
      *
      * Not a boolean, for the reason `play` gives above: a boolean silently absorbs a third case into
      * the else branch. The two values are genuinely different promises — a cue must reach the wrist
-     * even when the watch has been asked for quiet, and a tap confirmation must not.
+     * even when the watch has been asked for quiet, and a tap confirmation need not.
+     *
+     * Both currently resolve to `USAGE_TOUCH`, which looks like the enum earning nothing. It is not:
+     * the values differ in *intent* and only coincide in what the platform will honour today. See
+     * `emit` for why, and keep them separate — collapsing them would delete the record of a decision
+     * that is expected to be revisited.
      */
     private enum class Usage { CUE, FEEDBACK }
 
@@ -122,6 +127,40 @@ class HapticManager(context: Context) {
      *
      * The sailor felt the minute pips and the sync ticks and got nothing for the prep signals, the
      * final five seconds, or the gun.
+     *
+     * ### Why `USAGE_TOUCH` and not `USAGE_ALARM`, which is the honest answer
+     *
+     * Because `USAGE_ALARM` does not work here, and that was **measured rather than assumed** — this
+     * issue and the cairn note both warned it might not. *SM-R925U, API 36, one full race per arm:*
+     *
+     * | declared usage | `zen_mode=2` | `zen_mode=0` |
+     * |---|---|---|
+     * | none (duration-inferred) | 20 of 30 | 30 of 30 |
+     * | `USAGE_ALARM` | **0 of 30**, every one `ignored_app_ops` | 29 of 29 |
+     * | `USAGE_ALARM` + `FLAG_BYPASS_INTERRUPTION_POLICY` | **0 of 30** — the flag is *stripped*, the
+     *   record reads `flags: 0`, and no error is raised. Only platform apps keep it. |  |
+     * | **`USAGE_TOUCH`** | **30 of 30**, gun at 3032 ms | **30 of 30** |
+     *
+     * Total-silence DND restricts the alarm usage class on this device and permits the feedback
+     * class. So the honest declaration is the one that gets the sailor's gun silenced, and the
+     * dishonest one is the only thing that delivers it.
+     *
+     * **This is a known lie, taken deliberately.** A race gun is not touch feedback. It is declared
+     * that way because the platform offers no unprivileged usage that is both accurate and audible
+     * under DND, and a silent gun is a safety failure while a mislabelled one is a taxonomy failure.
+     *
+     * **What would break it, and why nothing here would notice**: if DND policy ever restricts the
+     * feedback class, every cue goes silent under DND again, with no error, no crash and no failing
+     * test — `wear/` has no test source set (#160) and no unit test can reach a `vibrate` call. The
+     * only instrument that has ever detected this class is a race run on the wrist reading
+     * `dumpsys vibrator_manager`. Re-run it after any platform upgrade; the numbers above are the
+     * baseline to compare against. That obligation is tracked as
+     * [#186](https://github.com/SailorDave17/race-timer/issues/186) rather than left to this comment,
+     * because a comment is not a thing anybody is scheduled to read.
+     *
+     * A *declared* usage is honoured on effects that inference would never have classified that way —
+     * the 3000 ms gun goes through as TOUCH, which duration-inference only ever assigned to effects
+     * under ~300 ms. That is the mechanism, and it is why declaring anything at all is still right.
      *
      * ### The API-level split, which is not optional
      *
@@ -172,14 +211,14 @@ class HapticManager(context: Context) {
     // Built once. Constructing these is cheap, but a cue is issued on a deadline and allocation on
     // that path is the kind of thing that ends up in a timing investigation later.
     private val cueVibrationAttributes: VibrationAttributes =
-        VibrationAttributes.Builder().setUsage(VibrationAttributes.USAGE_ALARM).build()
+        VibrationAttributes.Builder().setUsage(VibrationAttributes.USAGE_TOUCH).build()
 
     private val feedbackVibrationAttributes: VibrationAttributes =
         VibrationAttributes.Builder().setUsage(VibrationAttributes.USAGE_TOUCH).build()
 
     private val cueAudioAttributes: AudioAttributes =
         AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
 
