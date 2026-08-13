@@ -24,6 +24,26 @@ class ModuleBoundaryTest {
         .firstOrNull { File(it, "settings.gradle.kts").isFile }
         ?: error("Could not find the repo root from ${File("").absolutePath}")
 
+    /**
+     * Comment lines, skipped by the persistence scan and **only** by it.
+     *
+     * The three scans in this file want different things, and the difference is not an oversight.
+     * The cross-module and colour scans read comments on purpose — their subject is a *textual*
+     * reference, so a copied doc or a stray literal is exactly what they exist to catch. The
+     * persistence scan's subject is a **call**, and nothing is ever accidentally persisted by a
+     * sentence. Reading comments there means the paragraph explaining the rule trips it, which is
+     * the failure cairn `a-guard-that-reads-source-must-survive-its-own-docs` names — and it fired
+     * here, on the docstring of the very class this guard protects, written by someone who had just
+     * finished reading that note.
+     *
+     * Deliberately crude: it will not see a block comment opened on one line and closed on
+     * another. That is acceptable because a false *negative* here costs a missed comment, never a
+     * missed call — the scan still reads every line of actual code.
+     */
+    private fun isComment(line: String): Boolean = line.trimStart().let {
+        it.startsWith("//") || it.startsWith("*") || it.startsWith("/*")
+    }
+
     private fun kotlinSourcesIn(modulePath: String): List<File> =
         File(repoRoot, "$modulePath/src/main/kotlin")
             .walkTopDown()
@@ -115,6 +135,32 @@ class ModuleBoundaryTest {
             "Phone sources naming the watch's shared display rules. The phone's two properties are " +
                 "chosen by the officer once per launch (#225) and applied by PhoneDisplay.kt; " +
                 "shared/ScreenPolicy.kt is the watch's and stays untouched.",
+            emptyList<String>(),
+            offenders,
+        )
+    }
+
+    @Test
+    fun `the display choice is written to no persistent store`() {
+        val sources = kotlinSourcesIn("phone")
+        assertTrue("no phone sources were scanned", sources.size >= 7)
+
+        // #225 AC 7. The choice is held for the process lifetime and no longer, because the right
+        // answer is a property of the day — this sun, this boat, this battery — and not of the
+        // officer, so a remembered value would be confidently wrong on the next race day. A
+        // ViewModel gives that by construction; this is what stops somebody "improving" it later
+        // into a preference that quietly outlives its conditions.
+        val stores = listOf("SharedPreferences", "DataStore", "getPreferences", "getSharedPreferences")
+        val offenders = sources.flatMap { file ->
+            file.readLines().withIndex()
+                .filterNot { (_, line) -> isComment(line) }
+                .filter { (_, line) -> stores.any { line.contains(it) } }
+                .map { (index, line) -> "${file.name}:${index + 1}: ${line.trim()}" }
+        }
+        assertEquals(
+            "Persistence under :phone. The display choice (#225) is deliberately re-asked on every " +
+                "cold launch and stored nowhere. Restoring a race after a process kill is #205, and " +
+                "when it lands this assertion needs narrowing to the choice rather than widening away.",
             emptyList<String>(),
             offenders,
         )
