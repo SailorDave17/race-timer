@@ -98,6 +98,10 @@ MAINTAINER NOTES — remove this block before publishing.
    - No INTERNET permission in wear/src/main/AndroidManifest.xml.
    - A grep across wear/src, shared/src, both build files and the version catalog for
      http/okhttp/retrofit/firebase/analytics/crashlytics/URL(/Socket returned nothing.
+     SCOPE NOTE 2026-08-13: #200 added a third module, so a re-run of this grep must also cover
+     shared-android/src and shared-android/build.gradle.kts. The 2026-08-09 result stands as
+     recorded — the code it covered did not change, it moved — but the module list above is no
+     longer the whole tree and re-running it as written would under-scope the check.
    - CORRECTED 2026-08-12: there are EIGHT persisted keys, not four. This note said four from
      2026-08-01, and the 2026-08-09 re-check restated "the four persisted keys" unchanged while
      four more had landed between 2026-08-02 and 2026-08-05. The table above now lists all eight.

@@ -26,6 +26,8 @@ import androidx.compose.runtime.setValue
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable as wearComposable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+import com.racetimer.android.HapticManager
+import com.racetimer.android.SystemMonotonicClock
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.DeviceReadiness

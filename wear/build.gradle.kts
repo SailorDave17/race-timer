@@ -275,6 +275,11 @@ tasks.matching { it.name == "bundleRelease" }.configureEach { finalizedBy(archiv
 
 dependencies {
     implementation(project(":shared"))
+    // The leaf managers the phone app will consume too (#200, epic #196 D1). It re-exports
+    // :shared via `api`, so the line above is redundant on the classpath and kept anyway: this
+    // module's own code reads :shared types directly, and a dependency that is only reachable
+    // through somebody else's `api` breaks the day that somebody stops needing it.
+    implementation(project(":shared-android"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

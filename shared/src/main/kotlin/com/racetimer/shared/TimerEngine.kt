@@ -115,7 +115,7 @@ interface TimerListener {
 // ---------------------------------------------------------------------------
 
 /**
- * @param clock      Injectable monotonic clock. In production, pass [com.racetimer.wear.SystemMonotonicClock]
+ * @param clock      Injectable monotonic clock. In production, pass `com.racetimer.android.SystemMonotonicClock`
  *                   (or any [MonotonicClock] backed by [android.os.SystemClock.elapsedRealtime]).
  *                   In unit tests, inject a fake clock via a lambda: `MonotonicClock { fakeNow }`.
  * @param wallClock  Injectable wall clock, used only for persistence/restore across process death.
