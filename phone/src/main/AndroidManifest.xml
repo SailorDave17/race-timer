@@ -2,8 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- No permissions, deliberately. A silent, foreground-only countdown needs none: the cues
-         (#202), the screen-off foreground service (#203) and the wake lock (#199/#203) each bring
-         their own, and each belongs to the story that adds the behaviour. Anything declared here
+         (#202) and the screen-off foreground service and its wake lock (#203) each bring their
+         own, and each belongs to the story that adds the behaviour. #199's display properties are
+         not among them: `FLAG_KEEP_SCREEN_ON` and a window brightness override are both window
+         state and need no permission at all — which is most of why they are the window's route
+         rather than a wake lock's or a `Settings.System` write. Anything declared here
          ahead of its use would show up in the Play declarations (#212) describing a capability the
          app does not have — and it is the MERGED manifest Play reads, not this file. -->
 
