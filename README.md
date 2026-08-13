@@ -267,7 +267,9 @@ automatically a CI failure.
 Deploying to a real watch — pairing over adb-over-Wi-Fi, and confirming which APK actually landed —
 is in [`docs/watch-setup.md`](docs/watch-setup.md). Proving that a race killed mid-sequence comes back
 — the force-stop procedure, the four scenarios it splits into, and what each run measured — is in
-[`docs/process-kill-test.md`](docs/process-kill-test.md).
+[`docs/process-kill-test.md`](docs/process-kill-test.md). Proving cues still reach the wrist under Do
+Not Disturb — the two-arm race procedure, its triggers, the measured baseline, and why that check is
+permanently manual — is in [`docs/dnd-haptics-recheck.md`](docs/dnd-haptics-recheck.md).
 
 ## Tech stack
 

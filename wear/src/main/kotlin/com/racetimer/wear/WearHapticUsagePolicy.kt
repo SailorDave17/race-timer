@@ -31,10 +31,10 @@ import com.racetimer.android.HapticUsagePolicy
  * **What would break it, and why nothing here would notice**: if DND policy ever restricts the
  * feedback class, every cue goes silent under DND again, with no error, no crash and no failing test.
  * The only instrument that has ever detected this class is a race run on the wrist reading
- * `dumpsys vibrator_manager`. Re-run it after any platform upgrade; the numbers above are the
- * baseline to compare against. That obligation is tracked as
- * [#186](https://github.com/SailorDave17/race-timer/issues/186) rather than left to this comment,
- * because a comment is not a thing anybody is scheduled to read.
+ * `dumpsys vibrator_manager`. The re-check procedure, its triggers and the live baseline are in
+ * `docs/dnd-haptics-recheck.md` (#186) — a comment is not a thing anybody is scheduled to read, so
+ * the schedule lives there. The table above records the measurement that made this decision and
+ * stays as written; a re-run updates the doc's baseline, not this comment.
  *
  * ### Why it is in `:wear` and not beside the class that uses it
  *
