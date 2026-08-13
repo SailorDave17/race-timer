@@ -1,4 +1,4 @@
-package com.racetimer.wear
+package com.racetimer.android
 
 import android.os.SystemClock
 import com.racetimer.shared.MonotonicClock

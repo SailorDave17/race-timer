@@ -154,14 +154,20 @@ race-timer/
 │       │   ├── CountdownFormat.kt— MM:SS and H:MM:SS rendering
 │       │   └── BannerLayout.kt   — notice geometry inside a round screen
 │       └── test/                 — JVM unit tests, no device needed
+├── shared-android/   # Android leaf managers — no app identity, no UI, no service
+│   └── src/main/kotlin/com/racetimer/android/
+│       ├── HapticManager.kt        — cue → VibrationEffect waveform
+│       ├── ToneManager.kt          — cue → rendered AudioTrack buffer
+│       ├── SystemMonotonicClock.kt — the engine's clock, on Android
+│       ├── CueAudioProfile.kt      — seam: what a CueStream means on THIS device
+│       └── HapticUsagePolicy.kt    — seam: what a vibration is declared as here
 └── wear/             # Wear OS standalone app
     └── src/main/
         ├── kotlin/com/racetimer/wear/
         │   ├── MainActivity.kt         — Compose UI, service binding, screen policy
         │   ├── TimerService.kt         — foreground service, cue scheduling, feedback
-        │   ├── HapticManager.kt        — cue → VibrationEffect waveform
-        │   ├── ToneManager.kt          — cue → rendered AudioTrack buffer
-        │   ├── SystemMonotonicClock.kt — the engine's clock, on Android
+        │   ├── WearCueAudioProfile.kt  — the watch's measured audio answers (#95)
+        │   ├── WearHapticUsagePolicy.kt— the watch's measured DND answer (#144/#187)
         │   ├── RaceTimerApplication.kt — notification channel creation
         │   └── ui/
         │       ├── Theme.kt
@@ -173,10 +179,19 @@ race-timer/
         └── res/
 ```
 
-The dependency direction is one-way and worth preserving: `wear` depends on `shared`, never the
-reverse. Keeping `shared` free of Android types is what lets the whole timing core run on the JVM in
-seconds with no emulator — and it is where the rules that would otherwise get written twice, and
-drift, are made assertable.
+The dependency direction is one-way and worth preserving: `wear` depends on `shared-android` depends
+on `shared`, never the reverse. Keeping `shared` free of Android types is what lets the whole timing
+core run on the JVM in seconds with no emulator — and it is where the rules that would otherwise get
+written twice, and drift, are made assertable.
+
+`shared-android` (#200, epic #196 decision D1) holds the leaf managers that touch the platform's
+audio, haptic and clock APIs, so the highest-drift-risk code in the app exists once rather than once
+per form factor. It holds **leaf managers only** — `TimerService` stays in the app module, and each
+app keeps its own service shell, because a service shell drags notification channels,
+foreground-service types and two different lifecycle stories with it. What it deliberately does *not*
+hold is any answer that was measured on one device: `USAGE_TOUCH` and the `CueStream` → stream
+mapping are supplied by the app module through `HapticUsagePolicy` and `CueAudioProfile`, with no
+default, so a second form factor is made to measure its own rather than inherit the watch's.
 
 ## Build
 

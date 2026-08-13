@@ -240,6 +240,12 @@ Other checks run the same day:
 - No text-input composable or view anywhere in `wear/src/main`.
 - The eight `race_timer_state` keys, at the lines cited in the table above.
 
+**The module set drifts too, and a sweep that names it goes silently under-scoped.** The sweep above
+covered `wear/src` and `shared/src` because those were the only source trees on 2026-08-11. Since
+#200 there is a third, `shared-android/src`, and a third build file — include both when this is
+re-run. The record above is left as written because it was true; what would not be true is treating
+its scope as the current one.
+
 **Line numbers drift.** Every citation here was correct on the date above and will not stay correct;
 re-cite them when this document is re-checked rather than trusting them. `docs/privacy-policy.md`
 records the same hazard, from having been bitten by it.

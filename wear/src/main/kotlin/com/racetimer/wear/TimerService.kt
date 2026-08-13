@@ -19,6 +19,9 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
+import com.racetimer.android.HapticManager
+import com.racetimer.android.SystemMonotonicClock
+import com.racetimer.android.ToneManager
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.CueStream
 import com.racetimer.shared.CueTiming
@@ -222,7 +225,7 @@ class TimerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        haptic = HapticManager(this)
+        haptic = HapticManager(this, WearHapticUsagePolicy)
         // Pay back a volume a previous process raised and never got to restore (#95). This is the
         // recovery half of the persist-before-writing ordering in [ensureCueStreamAudible], and it is
         // what makes raising a device volume mid-race a keepable promise rather than the unkeepable
@@ -240,7 +243,7 @@ class TimerService : Service() {
         // warm-up rather than a wrong race, but there is no reason to accept even that when the fix is
         // two lines higher up.
         restoreRaisedCueVolume()
-        tone = ToneManager(this).also { it.prepare(currentCueStream()) }
+        tone = ToneManager(this, WearCueAudioProfile).also { it.prepare(currentCueStream()) }
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         engine.addListener(engineListener)
         warmUpPickedSequence()
@@ -298,7 +301,7 @@ class TimerService : Service() {
      */
     private fun ensureCueStreamAudible(route: CueStream) {
         val audio = getSystemService(AudioManager::class.java) ?: return
-        val stream = legacyStreamFor(route)
+        val stream = WearCueAudioProfile.legacyStreamFor(route)
         val target = raisedCueVolume(
             currentVolume = audio.getStreamVolume(stream),
             maxVolume = audio.getStreamMaxVolume(stream),
