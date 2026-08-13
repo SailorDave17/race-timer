@@ -42,6 +42,7 @@ import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.armedNotice
+import com.racetimer.shared.cueLossNotice
 import com.racetimer.shared.discardedOnStartRemainingMs
 import com.racetimer.shared.forcesMaxBrightness
 import com.racetimer.shared.formatCountdown
@@ -927,6 +928,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Say out loud that a cue the sailor was timing off did not sound, or did not sound in full (#161).
+     *
+     * The last leg of the route from the tone thread. `ToneManager` records the loss under the lock
+     * it already holds, this collects it lock-free on the next refresh, and `cueLossNotice` in
+     * `shared/` decides the words — so the only thing here is *when* to ask.
+     *
+     * Read-and-clear, so a loss is announced exactly once however many refreshes see it. Called from
+     * the race-under-way branch of [refreshUiState] alongside [announceRestoreOutcome], which is the
+     * only branch that can be reached while cues are firing.
+     *
+     * Tier 1 rather than Tier 3, unlike #96's Do Not Disturb line: that describes a condition
+     * standing over the whole countdown, and this is a single event that has already happened. A
+     * persistent line would still be on screen at the gun, saying nothing about the gun.
+     */
+    private fun announceCueLoss() {
+        cueLossNotice(timerService?.consumeCueLoss())?.let { showTransientMessage(it) }
+    }
+
     private fun refreshUiState() {
         // Binding uses BIND_AUTO_CREATE, so the service exists well before anything is started -
         // with an engine holding no sequence, whose remainingMs is 0. Showing that made a fresh
@@ -1005,6 +1025,7 @@ class MainActivity : ComponentActivity() {
             uiRemainingMs = displayedRemainingMs(engine.remainingMs)
         }
         announceRestoreOutcome()
+        announceCueLoss()
         // Prompt a re-sync only while a degraded recovery is still running and unconfirmed.
         uiShowResyncPrompt = timerService?.lastRestoreOutcome == RestoreOutcome.DEGRADED &&
             engine.currentState == TimerState.RUNNING &&

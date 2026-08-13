@@ -13,6 +13,8 @@ import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
+import com.racetimer.shared.CueLoss
 import com.racetimer.shared.CueStream
 import com.racetimer.shared.CueTiming
 import com.racetimer.shared.CueTrackPacing
@@ -239,6 +241,79 @@ class ToneManager(
      * first cue instead of ahead of it, which is the pre-#13 behaviour rather than a regression.
      */
     val audioUnavailable: Boolean get() = initFailed
+
+    /**
+     * A cue this race has lost, waiting to be told to the sailor, or null when there is nothing owed
+     * (#161).
+     *
+     * ### Why an atomic and not a field under [audioLock]
+     *
+     * The three writes all happen inside [writeCue], which already holds [audioLock] on the tone
+     * thread. The **read** is the problem: it comes from `MainActivity`'s 100 ms refresh on the main
+     * thread, and a main thread blocking on the lock that the audio path holds while it talks to the
+     * audio server is exactly the stall this class is built to avoid. An [AtomicReference] is
+     * lock-free on both sides, so the tone thread is never made to wait for the UI and the UI is
+     * never made to wait for the tone thread.
+     *
+     * ### Why read-and-clear rather than a flag the UI samples
+     *
+     * The same reason `TimerService.consumeRestoreNotice` is shaped that way, and the issue named it
+     * as the precedent: a lost cue is *news*, and it has to be announced exactly once. A `@Volatile
+     * Boolean` sampled at 100 ms — the shape [initFailed] and `cueVolumeRefused` correctly use for
+     * *standing conditions* — cannot express that. It would either re-announce on every refresh for
+     * as long as it stayed true, or need a second field remembering whether it had been said.
+     *
+     * [getAndSet] is that read-and-clear, and it is atomic, so two refreshes racing each other can
+     * never both collect the same loss.
+     *
+     * A second loss arriving before the first has been collected overwrites it rather than queueing.
+     * That is rule 6 of `docs/message-surface.md` — one message at a time — and it is unreachable in
+     * practice besides: [writeCue] can lose at most one cue per call, and no sequence this app ships
+     * puts two cues within the 100 ms the activity takes to come back.
+     */
+    private val pendingCueLoss = AtomicReference<CueLoss?>(null)
+
+    /**
+     * Take the cue loss owed a message, clearing it — null when nothing is owed.
+     *
+     * Called from the main thread every refresh while a race is under way, and from the arm path to
+     * discard a loss left over from a race that has already finished. Takes no lock; see
+     * [pendingCueLoss].
+     */
+    fun consumeCueLoss(): CueLoss? = pendingCueLoss.getAndSet(null)
+
+    /**
+     * Whether to fail the next cue write on purpose, read once at construction (#161).
+     *
+     * ### This exists because the alternative was shipping a banner nobody had seen
+     *
+     * None of the three loss paths has ever been observed on this hardware, so without a way to
+     * force one, #161's banner could only be *reviewed*. #102 is what that costs: a Tier 1 banner
+     * whose code was correct, that no sailor ever saw, for two reasons neither review had caught.
+     * Armed over adb with no root and no debug build:
+     *
+     * ```
+     * adb shell setprop log.tag.RaceTimerCueFault VERBOSE
+     * ```
+     *
+     * [Log.isLoggable] against a `log.tag.*` property is this class's own idiom for a debug switch —
+     * [timedRender], [logDispatch] and [logDelivered] are all gated the same way — so this adds a
+     * mechanism the file already depends on rather than a new one.
+     *
+     * ### Read once, deliberately
+     *
+     * [writeCue] is the most timing-sensitive method in the app and it runs under [audioLock] on the
+     * deadline. Reading the property per write would put a property lookup on that path to buy a
+     * convenience nobody needs; a switch you arm before launching the app is no harder to use. What
+     * the hot path pays is one boolean test.
+     *
+     * ### It ships, and that is the point
+     *
+     * Not gated on a debug build, so the artifact a sailor installs is the artifact the banner was
+     * proven on. Arming it needs adb access and a deliberate `setprop`, and the worst it can do to
+     * somebody who does both is silence cues on a watch they are holding a debugger against.
+     */
+    private val cueFaultArmed: Boolean = Log.isLoggable(FAULT_TAG, Log.VERBOSE)
 
     /** The cue-audio thread and its handler, or null before first use and after [release] runs. */
     @Volatile private var toneThread: HandlerThread? = null
@@ -690,9 +765,15 @@ class ToneManager(
             // buffer holds MAX_PREFILL_MS - but a sustained cue's length is data, and a silently
             // truncated gun would be the worst possible way to find that out.
             val prefill = minOf(samples.size, trackCapacitySamples)
-            val written = audioTrack.write(samples, 0, prefill)
+            // The fault switch stands in for the write rather than wrapping it, so an armed run
+            // reaches the failure branch by the same route a real refusal would. See [cueFaultArmed].
+            val written =
+                if (cueFaultArmed) AudioTrack.ERROR_INVALID_OPERATION
+                else audioTrack.write(samples, 0, prefill)
             if (written <= 0) {
                 Log.w(TAG, "AudioTrack write returned $written; cue dropped")
+                // The cue does not sound. Tell the sailor rather than only the log (#161).
+                pendingCueLoss.set(CueLoss.DROPPED)
                 return
             }
             framesWritten += written
@@ -708,6 +789,9 @@ class ToneManager(
             writtenAtMs = SystemClock.uptimeMillis()
         } catch (e: IllegalStateException) {
             Log.e(TAG, "AudioTrack write failed, discarding track", e)
+            // Same consequence as the branch above from where the sailor is standing — the cue does
+            // not sound — so the same notice, per [CueLoss] (#161).
+            pendingCueLoss.set(CueLoss.DROPPED)
             releaseTrackLocked()
             return
         }
@@ -724,6 +808,9 @@ class ToneManager(
             framesWritten += audioTrack.write(remainder, pendingFrom, remainder.size - pendingFrom)
         } catch (e: IllegalStateException) {
             Log.w(TAG, "Tail write failed; cue truncated", e)
+            // The cue is already sounding and will stop early. A different notice from the two
+            // above, because a blast cut short is a blast the sailor can misread (#161).
+            pendingCueLoss.set(CueLoss.TRUNCATED)
         }
         return
     }
@@ -1142,6 +1229,15 @@ class ToneManager(
 
     private companion object {
         const val TAG = "ToneManager"
+
+        /**
+         * Log tag that exists only to be a switch, never to be logged against (#161).
+         *
+         * Separate from [TAG] so that arming the fault does not also turn on this class's debug
+         * logging, and — the direction that matters — so that turning debug logging on to watch cue
+         * timing does not silently start dropping cues. See `cueFaultArmed`.
+         */
+        const val FAULT_TAG = "RaceTimerCueFault"
 
         const val THREAD_NAME = "RaceTimerTone"
 
