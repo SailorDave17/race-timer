@@ -24,7 +24,7 @@ uploaded rows, that trigger cannot be checked — which is why #81's AC 1 points
 
 | versionCode | versionName | Commit | Track | Uploaded | Notes |
 |---|---|---|---|---|---|
-| 1 | 1.0 | [`cadaea9`](https://github.com/SailorDave17/race-timer/commit/cadaea9) | Internal testing | *(not yet uploaded)* | First build. Prepared 2026-08-12; **re-taken** from `cadaea9` after the artifact was rebuilt — see below. |
+| 1 | 1.0 | [`089f216`](https://github.com/SailorDave17/race-timer/commit/089f216) | Internal testing | 2026-08-13 | First build. Commit **re-taken a second time**: prepared from `cadaea9` on `develop`, then rebuilt from `release` at `089f216`, which is the artifact Play accepted. Sitting as a **draft** on the track — no tester has it yet. |
 
 ## How each field is established
 
@@ -42,6 +42,10 @@ is that it was taken rather than remembered.
   [#184](https://github.com/SailorDave17/race-timer/issues/184) the archive records its own
   provenance and will not do so, but the row is still yours to keep honest.
 - **Uploaded** — the date Play accepted the bundle, from the Console, not the date it was built.
+  **The Console renders this in UTC**, so an evening upload from a US timezone is stamped the *next*
+  day: versionCode 1 was uploaded at 21:25 EDT on 2026-08-12 and the Console reads
+  `Aug 13, 2026, 1:25 AM`. Take the Console's date, not your local one — otherwise this column and
+  Play disagree by a day and the log stops being the tiebreak it exists to be.
 - **Signing** — every bundle here is signed with the upload key whose SHA-256 fingerprint is recorded
   in [`release-signing.md`](release-signing.md). Verify with `keytool -printcert -jarfile <bundle>`;
   that command is correct for an `.aab` and **wrong for an APK**, where it prints
