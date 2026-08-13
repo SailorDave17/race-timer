@@ -50,12 +50,12 @@ data class DeviceReadiness(
  * file is news — every condition below is a standing fact about the watch that stays true until
  * the sailor changes something.
  */
-enum class NoticeTier {
+enum class NoticeTier(val surface: MessageSurface) {
     /** Tier 2 — takes the Start button's place. The race cannot be armed while this is on screen. */
-    BLOCKING,
+    BLOCKING(MessageSurface.BLOCKING_PANEL),
 
     /** Tier 3 — a persistent line under the sequence name. Start stays exactly where it was. */
-    WARNING,
+    WARNING(MessageSurface.STATUS_LINE),
 }
 
 /**
@@ -102,8 +102,12 @@ data class StartNotice(
 
 // --- The copy ---------------------------------------------------------------
 // Held as constants so the tests assert the strings a sailor actually reads. Every one obeys the
-// two copy rules: say the consequence rather than the cause, and stay inside the ~60 characters
-// two lines of `caption1` hold on a round screen.
+// two copy rules: say the consequence rather than the cause, and stay inside [NOTICE_MAX_CHARS].
+//
+// *This comment said "the ~60 characters two lines of `caption1` hold" until #231, and named the
+// wrong type on the wrong surface — `caption1` is the Tier 2 panel's, and the 60 is worked out from
+// the Tier 1 banner's 11 sp. Two lines is what it buys there and nowhere else.* Which surface each
+// string lands on, and what it holds, is [NoticeTier.surface] and [MessageSurface].
 
 /** Tier 2. The countdown would not survive the screen turning off, which is the whole product. */
 const val NOTICE_FOREGROUND_SERVICE_REFUSED = "Can't run in background — open Settings"
@@ -137,12 +141,22 @@ const val NOTICE_BATTERY_SAVER = "Battery saver — sound may be cut"
 const val NOTICE_CUE_VOLUME_REFUSED = "Do Not Disturb — cues silent, wrist still buzzing"
 
 /**
- * The longest a notice may be, in characters.
+ * The longest a notice may be, in characters — a **shared ceiling over every surface**.
  *
- * `docs/message-surface.md` works this out from the geometry rather than from taste: one line at
- * 11 sp inside the width cap is roughly 34 characters, and two lines is all the gap above the Start
- * button holds. Asserted rather than described, because a copy change is exactly the kind of edit
- * nobody re-measures.
+ * `docs/message-surface.md` works this out from the geometry rather than from taste, and the
+ * geometry it uses is the **Tier 1 banner's**: one line at 11 sp inside that surface's width cap is
+ * roughly 34 characters, and two lines is all the gap above the Start button holds.
+ *
+ * That is a ceiling, not a fit, for the two surfaces it was not derived for — which is #231. A
+ * string can sit well inside 60 and still take three lines on the Tier 3 status line, whose cap is
+ * a third narrower, and [NOTICE_CUE_VOLUME_REFUSED] does exactly that. The per-surface budget is
+ * [MessageSurface], and `StartPreconditionsTest` asserts every notice against **both**: this
+ * ceiling, which is coarse and holds for all of them, and its own surface's line budget, which is
+ * the one that can actually catch a copy edit spilling off a plate.
+ *
+ * Kept rather than replaced. It is a cheap house rule that has never been wrong, and a sentence
+ * this short is worth more to whoever writes the next notice than an arithmetic model they would
+ * have to run.
  */
 const val NOTICE_MAX_CHARS = 60
 

@@ -118,6 +118,11 @@ what it means for the countdown, in that order — "Clock changed — countdown 
 sailor the fact *and* that they need do nothing. Never end in an instruction the banner will vanish
 before they can follow; that is Tier 3.
 
+**That 60 is this tier's arithmetic, and it is applied to all three.** See
+[the copy budget](#the-copy-budget-and-which-surface-it-was-derived-for) — every clause of the
+sentence above is about *this* surface, and a notice on the Tier 3 plate gets about **20**
+characters to a line, not 34.
+
 ---
 
 ## Tier 2 — Blocking notice (shipped, #13)
@@ -235,6 +240,51 @@ than trusting this paragraph.
 
 ---
 
+## The copy budget, and which surface it was derived for
+
+`NOTICE_MAX_CHARS = 60` in `shared/StartPreconditions.kt` is **one ceiling over all three surfaces**,
+and `StartPreconditionsTest` holds every notice to it. It is derived from the arithmetic in the Tier 1
+section above — 11 sp inside that surface's 0.85 width cap is about 34 characters a line, and two
+lines is what the gap above Start holds.
+
+Every clause of that derivation is about the transient banner. The other two surfaces are a different
+width and a different type size, so **the same 60 characters buys a different number of lines on
+each** — and until #231 the doc said only the number.
+
+| Surface | Width cap | Type | Characters a line | Lines it may take |
+|---|---|---|---|---|
+| Tier 1 banner | `BANNER_MAX_WIDTH_FRACTION` 0.85 | 11 sp | ~34 | 2 |
+| Tier 2 blocking panel | `BLOCKING_PANEL_WIDTH_FRACTION` 0.86 | 12 sp (`caption1`) | ~31 | 3 — and a fourth is **clipped**, not crowded |
+| Tier 3 status line | `STATUS_LINE_MAX_WIDTH_FRACTION` 0.55 | 12 sp (`caption2`) | ~20 | 3 |
+
+**Those numbers are computed, not typed here.** `MessageSurface` in `shared/BannerLayout.kt` holds
+the three inputs per surface and `BannerLayoutTest` asserts them, the same move #123 made when it
+took the contrast ratios out of this document. Read them there; this table is a copy and copies age.
+
+### How #96 found it
+
+`NOTICE_CUE_VOLUME_REFUSED` is 49 characters — comfortably inside the 60, and it renders on **three**
+lines, *measured on an SM-R925U*. Nothing is wrong with the result: there is no Start button on a
+running race, the readout is not covered, and the plate clears the bezel. But 60 was a ceiling that
+happened not to bite, described as a fit that had been measured, and the next person to write a
+running-race notice would have had no way to tell those apart.
+
+Two assertions now stop that drifting again, and they fail for different reasons:
+
+- `BannerLayoutTest` pins the model to reproduce the **34** this document publishes for Tier 1. Move
+  either without the other and the suite goes red.
+- It also pins #96's notice to **three** lines on Tier 3 — the render the watch actually drew. That
+  check is independent of the calibration, which is what makes it more than circular.
+
+### What is still a measurement rather than arithmetic
+
+`STATUS_LINE_HEIGHT_BUDGET_FRACTION` is a **two-line** figure and has not been re-measured. The Tier 3
+plate sits inside a vertically centred `Column`, so a third line does not simply extend it downwards —
+it lifts the top edge onto a narrower chord, by an amount nothing in `shared/` can compute. The
+evidence that the three-line plate clears the bezel is #96's check on the wrist, not the geometry
+test. Scaling the constant by 3/2 would produce a number that *looked* derived and was not, which is
+the defect this section exists to record.
+
 ## Rules any new message must follow
 
 1. **Scrim or nothing.** Text drawn directly on the background is only safe if it has been checked
@@ -248,12 +298,18 @@ than trusting this paragraph.
 5. **Say the consequence, not the cause.** "The gun will be silent" beats "AudioTrack init failed".
 6. **One message at a time.** `uiMessage` is a single nullable — a second message replaces the first.
    That is correct; two stacked banners on a 45 mm screen is worse than losing one.
+7. **Budget against the tier, not against the number.** 60 characters is the shared ceiling and it
+   is two lines on Tier 1 and three on Tier 3 — see [the copy budget](#the-copy-budget-and-which-surface-it-was-derived-for).
+   Add the string to `StartPreconditionsTest` and let it derive the surface from the tier the rule
+   returns; a notice that later changes tier is then re-checked against the plate it moved to.
 
 ## Message catalogue
 
 Every row below is **shipped**. The copy is held as constants in `shared/StartPreconditions.kt` and
-`StartPreconditionsTest` asserts each one fits the panel, so a copy edit that outgrows the screen
-fails rather than wraps.
+`StartPreconditionsTest` asserts each one twice — against the shared 60-character ceiling, and
+against the line budget of the surface its own tier puts it on — so a copy edit that outgrows the
+screen fails rather than wraps. *It asserted only the first of those until #231, which is how a
+49-character notice reached the watch on three lines with every check green.*
 
 | Condition | Tier | Copy | Action |
 |---|---|---|---|
@@ -401,6 +457,10 @@ call; what has not been demonstrated is the tail-write site setting the notice.
 
 Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144.
 Owner: SailorDave17.
-Last reviewed: 2026-08-13 (#96 — Tier 3 gained its first message that lives on a *running* screen
-rather than a prompt; the two stale `TimerScreen` line citations replaced with symbol names, and the
-two Do Not Disturb rows in the error audit corrected, both having been overtaken by shipped work).
+Last reviewed: 2026-08-13 (#231 — the copy budget gained the surface it was derived for. The
+~60-character rule was Tier 1's arithmetic applied to all three surfaces; the per-surface figures now
+live in `shared/BannerLayout.kt` as `MessageSurface` and are asserted, and this document's own "34
+characters" is one of the two assertions pinning them. Previously #96 — Tier 3 gained its first
+message that lives on a *running* screen rather than a prompt; the two stale `TimerScreen` line
+citations replaced with symbol names, and the two Do Not Disturb rows in the error audit corrected,
+both having been overtaken by shipped work).
