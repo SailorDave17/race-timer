@@ -6,7 +6,9 @@
 //
 // What this module deliberately does NOT hold yet, so a reader does not go looking:
 //   - audio cues (#202) and screen-off cueing (#203) — this countdown is silent and foreground-only
-//   - keep-screen-on and full brightness (#199 owns the mechanism, #225 who chooses it)
+//   - a screen that stays on or runs bright during a race: #199 delivered the mechanism
+//     (`PhoneDisplay.kt`) but nothing calls it, because what to ask for is the officer's choice
+//     and #225 is the surface that asks
 //   - release signing, versioning and archiving (#211 hoists wear's out of `wear/build.gradle.kts`;
 //     until then this module has no release signingConfig and `versionCode` is not an upload
 //     candidate — epic decision D3 gives both form factors one monotonic counter, and allocating

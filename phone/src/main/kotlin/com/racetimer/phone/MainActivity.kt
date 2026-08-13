@@ -38,7 +38,9 @@ private const val UI_REFRESH_MS = 50L
  *
  * What it deliberately does not do yet, each with the story that brings it:
  *  - sound anything (#202) or survive the screen going off (#203)
- *  - hold the screen on or drive the panel bright (#199 the mechanism, #225 who chooses)
+ *  - hold the screen on or drive the panel bright — the mechanism is here (`PhoneDisplay.kt`, #199)
+ *    and nothing calls it yet, because what the two booleans should be is the officer's choice and
+ *    #225 is where they are asked
  *  - sync to the flag (#204), restore after a kill (#205), count up after the gun (#206)
  */
 class MainActivity : ComponentActivity() {

@@ -6,16 +6,17 @@ import org.junit.Test
 import java.io.File
 
 /**
- * The structural criteria of #197, asserted rather than greped by hand.
+ * The structural criteria of #197 and #199, asserted rather than greped by hand.
  *
- * AC 3 and AC 5 both say "grep-verified", and a grep somebody remembers to run is the shape of rule
- * this repo has already watched decay — the same argument `MessageContrast` makes for moving a
- * contrast table out of prose. So they run in CI, on every push, as tests.
+ * #197's AC 3 and AC 5 and #199's AC 4 all say "grep-verified", and a grep somebody remembers to run
+ * is the shape of rule this repo has already watched decay — the same argument `MessageContrast`
+ * makes for moving a contrast table out of prose. So they run in CI, on every push, as tests.
  *
  * The scan is deliberately confined to `src/main/kotlin`. A guard whose subject is source text
  * otherwise fires on the file explaining it (cairn
- * `a-guard-that-reads-source-must-survive-its-own-docs`): this file names both the colour form and
- * the forbidden package, and lives in `src/test/kotlin`, outside every directory it reads.
+ * `a-guard-that-reads-source-must-survive-its-own-docs`): this file names the colour form, the
+ * forbidden package and the shared display table, and lives in `src/test/kotlin`, outside every
+ * directory it reads.
  */
 class ModuleBoundaryTest {
 
@@ -67,6 +68,56 @@ class ModuleBoundaryTest {
             .filter { it.readText().contains(phonePackage) }
             .map { it.name }
         assertEquals("wear sources referencing the phone", emptyList<String>(), wearOffenders)
+    }
+
+    @Test
+    fun `the display path takes two booleans and no timer state`() {
+        val displayPath = File(repoRoot, "phone/src/main/kotlin/com/racetimer/phone/PhoneDisplay.kt")
+        // A scan of a file that is not there passes silently — the absent-result-reads-as-clean
+        // shape. Locating it is the precondition, not a courtesy check.
+        assertTrue("the display path is at ${displayPath.path}", displayPath.isFile)
+        val source = displayPath.readText()
+
+        assertEquals(
+            "TimerState reaching the phone display path (#199 AC 4). The two window properties are " +
+                "the officer's choice (#225), not a function of where the countdown is — the whole " +
+                "reason this file is separate from the watch's state-driven table.",
+            emptyList<String>(),
+            source.lines().withIndex()
+                .filter { (_, line) -> line.contains("TimerState") }
+                .map { (index, line) -> "${index + 1}: ${line.trim()}" },
+        )
+
+        // The signature itself, so "two booleans and nothing else" is asserted rather than described.
+        assertTrue(
+            "the display path's entry point takes exactly the two booleans; found:\n$source",
+            source.contains(
+                "fun Window.applyDisplayProperties(keepScreenOn: Boolean, fullBrightness: Boolean)",
+            ),
+        )
+    }
+
+    @Test
+    fun `the phone never reaches for the watch's shared display table`() {
+        val sources = kotlinSourcesIn("phone")
+        assertTrue("no phone sources were scanned", sources.size >= 5)
+
+        // The compiler would allow every one of these — `:shared` is on the classpath and the table
+        // is public. Nothing but this assertion stops the phone re-inheriting a policy that is right
+        // for a wrist and wrong for a console (#199 AC 4).
+        val forbidden = listOf("ScreenPolicy", "keepsScreenOn", "forcesMaxBrightness")
+        val offenders = sources.flatMap { file ->
+            file.readLines().withIndex()
+                .filter { (_, line) -> forbidden.any { line.contains(it) } }
+                .map { (index, line) -> "${file.name}:${index + 1}: ${line.trim()}" }
+        }
+        assertEquals(
+            "Phone sources naming the watch's shared display rules. The phone's two properties are " +
+                "chosen by the officer once per launch (#225) and applied by PhoneDisplay.kt; " +
+                "shared/ScreenPolicy.kt is the watch's and stays untouched.",
+            emptyList<String>(),
+            offenders,
+        )
     }
 
     @Test
