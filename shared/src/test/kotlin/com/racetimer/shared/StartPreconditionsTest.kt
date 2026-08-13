@@ -58,6 +58,42 @@ class StartPreconditionsTest {
     /** Every string a sailor can read, for the guards that are about the copy rather than the rule. */
     private val everyCopy = allConstants + cueLossConstants
 
+    /**
+     * Every string paired with the surface it is drawn on, **derived by driving the rules** (#231).
+     *
+     * The pairing is the point. `everyCopy` is a flat list, and a flat list is exactly what let one
+     * character ceiling stand in for three plates of different widths — the defect #231 is. Here the
+     * surface comes off `NoticeTier` as the rule returned it, so a notice that changes tier is
+     * automatically re-checked against the plate it moved to, and a fourth surface cannot be added
+     * without `MessageSurface` gaining a member.
+     *
+     * The Tier 1 cue-loss copy has no [NoticeTier] to read — `cueLossNotice` returns a bare string,
+     * because a banner is news rather than a standing condition — so it is the one surface named
+     * here rather than derived. That asymmetry is real and stated instead of smoothed over.
+     */
+    private fun everySurfacedCopy(): List<Pair<MessageSurface, String>> = buildList {
+        for (mask in 0 until 32) {
+            val readiness = DeviceReadiness(
+                foregroundServiceRefused = mask and 1 != 0,
+                audioUnavailable = mask and 2 != 0,
+                notificationsBlocked = mask and 4 != 0,
+                vibratorAbsent = mask and 8 != 0,
+                batterySaverActive = mask and 16 != 0,
+            )
+            for (accepted in listOf(false, true)) {
+                startNotice(readiness, accepted)?.let { add(it.tier.surface to it.text) }
+            }
+        }
+        for (state in TimerState.values()) {
+            for (refused in listOf(false, true)) {
+                armedNotice(state, refused)?.let { add(it.tier.surface to it.text) }
+            }
+        }
+        for (loss in CueLoss.values()) {
+            cueLossNotice(loss)?.let { add(MessageSurface.BANNER to it) }
+        }
+    }.distinct()
+
     // --- The ordinary case ----------------------------------------------------------------------
 
     @Test fun `a watch with nothing wrong is told nothing`() {
@@ -263,13 +299,55 @@ class StartPreconditionsTest {
 
     @Test fun `every notice fits the screen it has to render on`() {
         // The geometry is docs/message-surface.md's, and a copy edit is exactly the change nobody
-        // re-measures. Two lines of caption1 inside the width cap is the budget.
+        // re-measures. The shared ceiling, which holds for every surface and is coarse for all of
+        // them; the sharp, per-surface check is the test below.
         for (copy in everyCopy) {
             assertTrue(
                 "\"$copy\" is ${copy.length} characters, over the $NOTICE_MAX_CHARS the panel holds",
                 copy.length <= NOTICE_MAX_CHARS,
             )
         }
+    }
+
+    @Test fun `every notice fits the surface it actually renders on`() {
+        // #231. The ceiling above was derived from the Tier 1 banner's geometry and applied to all
+        // three surfaces, so it is a ceiling that happens to hold rather than a fit — which is how
+        // #96's 49-character notice landed comfortably under 60 and drew on three lines.
+        //
+        // Driven rather than restated, the way MessageContrastTest derives its backgrounds: the
+        // surface comes off the tier the rule itself returned, so a notice that changes tier is
+        // re-checked against the plate it moved to. A hand-written map would have gone on asserting
+        // the old one.
+        for ((surface, copy) in everySurfacedCopy()) {
+            assertTrue(
+                "\"$copy\" takes ${surface.linesFor(copy)} lines on $surface, " +
+                    "which holds ${surface.maxLines} at ${surface.charsPerLine} characters a line",
+                surface.holds(copy),
+            )
+        }
+    }
+
+    @Test fun `the surface check reaches all three surfaces`() {
+        // Anti-vacuity for the test above, and it is not a formality: the pairs are collected by
+        // driving the rules, so a rule that stopped returning anything would empty the loop and the
+        // assertion would pass having checked nothing. That is the failure this workspace has
+        // measured more than once — an absent result reading exactly like a clean one.
+        val reached = everySurfacedCopy().map { it.first }.toSet()
+        assertEquals(MessageSurface.values().toSet(), reached)
+        assertTrue(everySurfacedCopy().size >= everyCopy.size)
+    }
+
+    @Test fun `the surface check would fail a notice that overran its plate`() {
+        // The negative control. Without it the two tests above pass just as happily against a
+        // `holds` that returned true unconditionally — and they would have passed against the state
+        // of the world #231 was filed to describe, because the copy that exposed the gap does fit.
+        // So the proof has to come from a string that does not.
+        val overlong = "Do Not Disturb — every cue on this leg will be silent from here to the gun"
+        assertFalse("a four-line notice must not pass a three-line plate", MessageSurface.STATUS_LINE.holds(overlong))
+        assertTrue(
+            "the same surface must still hold the notice it ships, or this refuses everything",
+            MessageSurface.STATUS_LINE.holds(NOTICE_CUE_VOLUME_REFUSED),
+        )
     }
 
     @Test fun `no two conditions share a message`() {

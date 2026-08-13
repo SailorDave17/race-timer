@@ -41,8 +41,13 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.racetimer.shared.BANNER_MAX_WIDTH_FRACTION
+import com.racetimer.shared.BANNER_TEXT_SP
 import com.racetimer.shared.BANNER_TOP_FRACTION
+import com.racetimer.shared.BLOCKING_PANEL_TEXT_SP
+import com.racetimer.shared.BLOCKING_PANEL_WIDTH_FRACTION
+import com.racetimer.shared.MessageSurface
 import com.racetimer.shared.STATUS_LINE_MAX_WIDTH_FRACTION
+import com.racetimer.shared.STATUS_LINE_TEXT_SP
 import com.racetimer.shared.BG_FINAL_TEN_ARGB
 import com.racetimer.shared.NoticeTier
 import com.racetimer.shared.StartNotice
@@ -74,15 +79,6 @@ private const val MESSAGE_DURATION_MS = 3_000L
  * that have a bar to clear.
  */
 private const val BLOCKED_READOUT_ALPHA = 0.4f
-
-/**
- * How much of the screen's width the Tier 2 panel and its remedy button take.
- *
- * Wider than [StartButton]'s 0.68 because this surface carries up to three lines of copy rather
- * than one word, and narrower than full width so the round bezel never clips a corner of the
- * scrim — the mistake #102 made with the Tier 1 banner and had to move the whole surface to fix.
- */
-private const val BLOCKING_PANEL_WIDTH_FRACTION = 0.86f
 
 // ---------------------------------------------------------------------------
 // Background colour states
@@ -283,6 +279,10 @@ fun TimerScreen(
                 Text(
                     text = warningNotice.text,
                     style = MaterialTheme.typography.caption2,
+                    // Explicit rather than inherited (#231). `caption2` is a Wear Compose library
+                    // default this app's theme does not override, so a version bump could have
+                    // moved the size the copy budget is computed from with nothing here to notice.
+                    fontSize = STATUS_LINE_TEXT_SP.sp,
                     color = Color(TIER3_TEXT_ARGB),
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
@@ -544,9 +544,12 @@ private fun BlockingNotice(
         Text(
             text = text,
             style = MaterialTheme.typography.caption1,
+            fontSize = BLOCKING_PANEL_TEXT_SP.sp,
             color = Color(TIER2_TEXT_ARGB),
             textAlign = TextAlign.Center,
-            maxLines = 3,
+            // A clip, not a wrap: a fourth line is not crowded, it is gone. `StartPreconditionsTest`
+            // asserts every Tier 2 string wraps inside this, which nothing did before #231.
+            maxLines = MessageSurface.BLOCKING_PANEL.maxLines,
             modifier = Modifier
                 .fillMaxWidth(BLOCKING_PANEL_WIDTH_FRACTION)
                 .background(Color(TIER2_SCRIM_ARGB), shape = RoundedCornerShape(8.dp))
@@ -862,7 +865,7 @@ private fun MessageBanner(message: String, modifier: Modifier = Modifier) {
     ) {
         Text(
             text = message,
-            fontSize = 11.sp,
+            fontSize = BANNER_TEXT_SP.sp,
             color = Color(TIER1_TEXT_ARGB),
             textAlign = TextAlign.Center,
             modifier = Modifier
