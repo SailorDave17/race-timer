@@ -44,6 +44,46 @@ data class DeviceReadiness(
 )
 
 /**
+ * The activity-side memory of a refused `startForegroundService` dispatch, and — the part that is
+ * a decision rather than an observation — when that memory expires (#165).
+ *
+ * [DeviceReadiness.foregroundServiceRefused] is latched by construction: there is no API that
+ * answers "would a foreground service be allowed right now?", so the flag can only record an
+ * attempt that already failed. A latched fact needs an expiry rule, and the two sides of the
+ * process boundary get theirs differently. The service-side twin
+ * (`TimerService.foregroundStartRefused`) expires by lifecycle for free — its refusal path stops
+ * the service, and the rebind on the next `onStart` constructs a fresh one. The activity-side flag
+ * has no such lifecycle, and before #165 it expired only on a successful dispatch — but the
+ * blocking panel it puts up removes the Start button, the one control that dispatches. The panel
+ * could outlive its own fix, and the documented remedy (a Settings round trip, returning through
+ * `onStart`) could never clear it.
+ *
+ * So the expiry rule, held here where the JVM suite asserts it: **a return to the foreground
+ * forgets the refusal.** The return leg of the Settings trip is exactly that, and a panel that
+ * survived the remedy working would be indistinguishable from one it had not touched. If the
+ * condition still holds, the next dispatch re-latches and the panel comes back — one optimistic
+ * Start button against a dead end is the whole trade.
+ */
+class ForegroundRefusalLatch {
+    /** True while a refused dispatch is the most recent thing known. Feeds [DeviceReadiness]. */
+    var refused: Boolean = false
+        private set
+
+    /** `startForegroundService` returned: whatever was wrong is demonstrably not wrong now. */
+    fun dispatchSucceeded() { refused = false }
+
+    /** `startForegroundService` threw: latch, and let [startNotice] put the Tier 2 panel up. */
+    fun dispatchRefused() { refused = true }
+
+    /**
+     * The activity came back to the foreground — for a blocked screen, the return leg of the
+     * Settings trip [StartRemedy.APP_SETTINGS] started. Forget the refusal so Start is there to
+     * try again.
+     */
+    fun returnedToForeground() { refused = false }
+}
+
+/**
  * Which surface of `docs/message-surface.md` a notice belongs on.
  *
  * Only two of the three appear here. Tier 1 is for news that clears itself, and nothing in this

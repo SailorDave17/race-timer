@@ -31,6 +31,7 @@ import com.racetimer.android.SystemMonotonicClock
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.DeviceReadiness
+import com.racetimer.shared.ForegroundRefusalLatch
 import com.racetimer.shared.LaunchNotice
 import com.racetimer.shared.NoticeTier
 import com.racetimer.shared.RaceSequence
@@ -418,6 +419,11 @@ class MainActivity : ComponentActivity() {
         // service that never arrived would otherwise leave the pre-start screen with no controls at
         // all. Leaving and returning is the one recovery a sailor would think to try, so make it work.
         resumeAnswered = false
+        // Same recovery, other latch (#165): this is the return leg of the Settings trip the Tier 2
+        // remedy started, so forget the refusal before the refresh below recomputes the notice.
+        // Until #165 nothing here touched it, and the only clearing path was behind the Start
+        // button the blocking panel removes — the remedy could not lift the block it explained.
+        foregroundRefusal.returnedToForeground()
         // Bind to the service (start it if already running)
         val serviceIntent = Intent(this, TimerService::class.java)
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -600,7 +606,7 @@ class MainActivity : ComponentActivity() {
     // --- Device readiness (#13) -----------------------------------------------
 
     /**
-     * True once `startForegroundService` itself threw, as opposed to the service being refused
+     * Latched once `startForegroundService` itself threw, as opposed to the service being refused
      * after it started.
      *
      * There are two distinct ways this fails and both have to be caught, because they happen on
@@ -610,8 +616,13 @@ class MainActivity : ComponentActivity() {
      * [TimerService.foregroundStartRefused]. Only catching the second would leave the first
      * throwing out of a tap handler and crashing the app, which is the loudest possible way to fail
      * silently: a crash tells the sailor nothing about why their race would not start.
+     *
+     * *(This was a bare boolean until #165, which is how its clearing ended up reachable only
+     * through the Start button the blocking panel removes. When the latch is forgotten — and why
+     * that is a decision, not plumbing — lives with [ForegroundRefusalLatch] in `shared/`, where
+     * `StartPreconditionsTest` asserts it.)*
      */
-    private var foregroundStartRefusedHere = false
+    private val foregroundRefusal = ForegroundRefusalLatch()
 
     /** Monotonic reading of the last [readDeviceReadiness], for [refreshStartNoticeThrottled]. */
     private var lastReadinessReadMs = Long.MIN_VALUE
@@ -669,7 +680,7 @@ class MainActivity : ComponentActivity() {
         val service = timerService
         return DeviceReadiness(
             foregroundServiceRefused =
-                foregroundStartRefusedHere || service?.foregroundStartRefused == true,
+                foregroundRefusal.refused || service?.foregroundStartRefused == true,
             audioUnavailable = service?.audioUnavailable == true,
             notificationsBlocked = !notificationsGranted(),
             vibratorAbsent = !HapticManager.hasVibrator(this),
@@ -771,18 +782,26 @@ class MainActivity : ComponentActivity() {
      *
      * On success the latch is cleared. That matters more than it looks: the refusal condition is
      * usually something the sailor has just gone and fixed in Settings, and a panel that stayed up
-     * after the remedy worked would be indistinguishable from one that had not.
+     * after the remedy worked would be indistinguishable from one that had not. This arm alone
+     * cannot deliver that, though — the blocking panel removes every button that reaches this
+     * method — so the Settings round trip clears the latch on the way back in, in [onStart].
+     * The rule itself is [ForegroundRefusalLatch] (#165).
      */
     private fun armRace(intent: Intent) {
         try {
             startForegroundService(intent)
-            foregroundStartRefusedHere = false
+            foregroundRefusal.dispatchSucceeded()
         } catch (e: RuntimeException) {
-            // ForegroundServiceStartNotAllowedException (Android 12+) and the SecurityException an
-            // Android 14+ watch raises for a disallowed FGS type. Same response either way, so they
-            // are caught by the supertype they share — the idiom ToneManager already uses.
+            // ForegroundServiceStartNotAllowedException, the Android 12+ background-start
+            // restriction — the one refusal the platform throws at *dispatch*. The Android 14
+            // FGS-type SecurityException never lands here: that check fires inside
+            // Service.startForeground(), which is TimerService.startForegroundWithNotification(),
+            // and latches the service-side flag instead. (This comment blamed it here until #165.)
+            // RuntimeException stays as the caught type all the same — the exact class an OEM
+            // build throws is not worth betting the tap handler on, and it is the idiom
+            // ToneManager already uses.
             Log.e(TAG, "Foreground service refused at dispatch; blocking the start", e)
-            foregroundStartRefusedHere = true
+            foregroundRefusal.dispatchRefused()
             // The tap is spent and no race is coming, so give the pre-start screen its controls
             // back rather than leaving the resume offer answered and the screen with neither.
             resumeAnswered = false

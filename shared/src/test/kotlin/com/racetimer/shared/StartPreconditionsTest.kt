@@ -512,4 +512,39 @@ class StartPreconditionsTest {
             assertNotEquals(NOTICE_CUE_VOLUME_REFUSED, copy)
         }
     }
+
+    // --- ForegroundRefusalLatch: the refusal's expiry rule (#165) --------------------------------
+
+    @Test fun `the Settings round trip clears a latched refusal and re-offers Start`() {
+        val latch = ForegroundRefusalLatch()
+        latch.dispatchRefused()
+        // Asserted mid-test rather than assumed: the clearing below proves nothing unless the
+        // latch demonstrably latched first — an expected "no notice" is exactly the answer a latch
+        // that never worked would also give.
+        assertTrue(startNotice(DeviceReadiness(foregroundServiceRefused = latch.refused))!!.blocksStart)
+        latch.returnedToForeground()
+        assertNull(startNotice(DeviceReadiness(foregroundServiceRefused = latch.refused)))
+    }
+
+    @Test fun `a successful dispatch clears the latch`() {
+        val latch = ForegroundRefusalLatch()
+        latch.dispatchRefused()
+        assertTrue(latch.refused)
+        latch.dispatchSucceeded()
+        assertFalse(latch.refused)
+    }
+
+    @Test fun `a refusal that survives the round trip re-latches on the next dispatch`() {
+        // The expiry rule is optimism, not amnesia about the condition: clearing the latch is only
+        // safe because a dispatch that still fails puts the panel straight back.
+        val latch = ForegroundRefusalLatch()
+        latch.dispatchRefused()
+        latch.returnedToForeground()
+        latch.dispatchRefused()
+        assertTrue(startNotice(DeviceReadiness(foregroundServiceRefused = latch.refused))!!.blocksStart)
+    }
+
+    @Test fun `a fresh latch reports nothing wrong`() {
+        assertFalse(ForegroundRefusalLatch().refused)
+    }
 }
