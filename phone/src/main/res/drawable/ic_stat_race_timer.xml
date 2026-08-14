@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Notification / ongoing-activity icon: the same sail-plan-in-a-bezel mark at 24dp.
+<!-- Copied byte-for-byte from wear/src/main/res/drawable/ic_stat_race_timer.xml (#203): two
+     application modules cannot share a resource directory, so this is a sibling copy of one
+     geometry, bound to the original by this comment alone — the same arrangement as the launcher
+     mark (#197). Edit the wear copy and re-copy; do not let the two drift.
 
-     This file is the original; phone/src/main/res/drawable/ic_stat_race_timer.xml is a
-     byte-for-byte copy (#203) bound to it by comment alone, the same arrangement as the launcher
-     mark's four copies. Edit here first, then re-copy.
+     Notification / ongoing-activity icon: the same sail-plan-in-a-bezel mark at 24dp.
 
      Deliberately NOT the launcher foreground layer. Android renders a small icon from its alpha
      channel alone and tints the result, so only the silhouette survives — the launcher layer's

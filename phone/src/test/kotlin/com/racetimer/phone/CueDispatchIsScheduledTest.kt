@@ -18,7 +18,7 @@ private class SteppedClock(var nowMs: Long = 0L) : MonotonicClock {
 }
 
 /**
- * Records what the ViewModel asked of the audio path, in order, so ordering claims — prepared
+ * Records what the runner asked of the audio path, in order, so ordering claims — prepared
  * before the first cue, warmed up on selection — are asserted as positive evidence rather than
  * inferred from silence.
  */
@@ -74,7 +74,7 @@ private class RecordingScheduler : CueScheduler {
 /**
  * The cue path is scheduled against the engine's anchor, never polled (#202 AC 1).
  *
- * The deliberate absence in every test here: `viewModel.tick()` — the display poll — is never
+ * The deliberate absence in every test here: `runner.tick()` — the display poll — is never
  * called unless the test is *about* the poll. A cue path that only works when the display loop
  * happens to run is the defect, and these tests cannot pass on one.
  */
@@ -83,7 +83,7 @@ class CueDispatchIsScheduledTest {
     private val clock = SteppedClock()
     private val sounder = RecordingSounder()
     private val scheduler = RecordingScheduler()
-    private val viewModel = PhoneTimerViewModel(clock, sounder, scheduler)
+    private val runner = PhoneRaceRunner(clock, sounder, scheduler)
 
     /** Advance the clock to the armed boundary and let the dispatch fire, returning what played. */
     private fun fireNextBoundary() {
@@ -94,8 +94,8 @@ class CueDispatchIsScheduledTest {
 
     @Test
     fun `every cue of a race lands through the scheduler with the display poll never running`() {
-        viewModel.select(BuiltInSequences.scholastic)
-        viewModel.start()
+        runner.select(BuiltInSequences.scholastic)
+        runner.start()
 
         // The cue due at the anchor instant fired synchronously inside start() itself — the #62
         // lesson: leaving it to any later pass measurably delays it.
@@ -120,8 +120,8 @@ class CueDispatchIsScheduledTest {
 
     @Test
     fun `each dispatch is armed at the next cue's own boundary, not at a poll interval`() {
-        viewModel.select(BuiltInSequences.scholastic)
-        viewModel.start()
+        runner.select(BuiltInSequences.scholastic)
+        runner.start()
 
         // scholastic opens 3:00 (fires at start), then 2:00 — the first armed dispatch must sit
         // exactly on that boundary, 60 s out, not on any rounding of it.
@@ -140,7 +140,7 @@ class CueDispatchIsScheduledTest {
         assertTrue(sounder.events.indexOf("prepare") >= 0)
         assertTrue(firstPlay == -1)
 
-        viewModel.start()
+        runner.start()
         // start() re-prepares (the twice-called pattern) and only then fires the due cue.
         val events = sounder.events
         val lastPrepare = events.lastIndexOf("prepare")
@@ -151,7 +151,7 @@ class CueDispatchIsScheduledTest {
     @Test
     fun `selecting a sequence warms its cues ahead of the race`() {
         sounder.events.clear()
-        viewModel.select(BuiltInSequences.club)
+        runner.select(BuiltInSequences.club)
         assertEquals(
             listOf("warmUp:${BuiltInSequences.club.cues.size}"),
             sounder.events,
@@ -160,13 +160,13 @@ class CueDispatchIsScheduledTest {
 
     @Test
     fun `the display poll is a backstop that cannot double-fire a cue`() {
-        viewModel.select(BuiltInSequences.scholastic)
-        viewModel.start()
+        runner.select(BuiltInSequences.scholastic)
+        runner.start()
 
         // Let a boundary slip past unserviced — the scheduler wake-up never runs — and have the
         // display poll find it, which is the backstop's whole job.
         clock.nowMs += 60_000L
-        viewModel.tick()
+        runner.tick()
         assertEquals(2, sounder.played.size)
 
         // The poll re-armed the dispatch for the *next* cue. Firing it must not replay anything.
@@ -178,11 +178,11 @@ class CueDispatchIsScheduledTest {
 
     @Test
     fun `stop disarms the pending dispatch and no cue fires out of an ended race`() {
-        viewModel.select(BuiltInSequences.scholastic)
-        viewModel.start()
+        runner.select(BuiltInSequences.scholastic)
+        runner.start()
         assertNotNull(scheduler.armedAction)
 
-        viewModel.stop()
+        runner.stop()
         assertNull(scheduler.armedAction)
 
         // Time passing after the stop changes nothing — there is nothing armed to fire, and the
@@ -192,21 +192,14 @@ class CueDispatchIsScheduledTest {
     }
 
     @Test
-    fun `clearing the ViewModel releases the audio path`() {
-        // onCleared is protected; ViewModelStore teardown is what calls it in production. Reaching
-        // through the store keeps the test on the public surface.
-        val store = androidx.lifecycle.ViewModelStore()
-        val provider = androidx.lifecycle.ViewModelProvider(
-            store,
-            object : androidx.lifecycle.ViewModelProvider.Factory {
-                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                    @Suppress("UNCHECKED_CAST")
-                    return PhoneTimerViewModel(clock, sounder, scheduler) as T
-                }
-            },
-        )
-        provider[PhoneTimerViewModel::class.java]
-        store.clear()
+    fun `releasing the runner releases the audio path and disarms the dispatch`() {
+        runner.select(BuiltInSequences.scholastic)
+        runner.start()
+        assertNotNull(scheduler.armedAction)
+
+        runner.release()
+        // The service calls this from onDestroy; after it, nothing may play and nothing may fire.
         assertTrue(sounder.events.contains("release"))
+        assertNull(scheduler.armedAction)
     }
 }
