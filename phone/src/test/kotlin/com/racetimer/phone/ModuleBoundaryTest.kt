@@ -151,16 +151,22 @@ class ModuleBoundaryTest {
         // ViewModel gives that by construction; this is what stops somebody "improving" it later
         // into a preference that quietly outlives its conditions.
         val stores = listOf("SharedPreferences", "DataStore", "getPreferences", "getSharedPreferences")
-        val offenders = sources.flatMap { file ->
-            file.readLines().withIndex()
-                .filterNot { (_, line) -> isComment(line) }
-                .filter { (_, line) -> stores.any { line.contains(it) } }
-                .map { (index, line) -> "${file.name}:${index + 1}: ${line.trim()}" }
-        }
+        val offenders = sources
+            // #205 landed, and this is the narrowing its message promised: the race snapshot's IO
+            // lives in exactly one sanctioned file, so the guard now reads "no store outside it"
+            // rather than "no store at all". The display choice's own rule is unchanged — a store
+            // reached from DisplayChoice* or MainActivity still fails here.
+            .filterNot { it.name == "PhoneRacePersistence.kt" }
+            .flatMap { file ->
+                file.readLines().withIndex()
+                    .filterNot { (_, line) -> isComment(line) }
+                    .filter { (_, line) -> stores.any { line.contains(it) } }
+                    .map { (index, line) -> "${file.name}:${index + 1}: ${line.trim()}" }
+            }
         assertEquals(
-            "Persistence under :phone. The display choice (#225) is deliberately re-asked on every " +
-                "cold launch and stored nowhere. Restoring a race after a process kill is #205, and " +
-                "when it lands this assertion needs narrowing to the choice rather than widening away.",
+            "Persistence under :phone outside PhoneRacePersistence. The display choice (#225) is " +
+                "deliberately re-asked on every cold launch and stored nowhere; the race snapshot " +
+                "(#205) is the one sanctioned store and has exactly one home.",
             emptyList<String>(),
             offenders,
         )

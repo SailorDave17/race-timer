@@ -12,10 +12,16 @@ import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import android.os.SystemClock
 import com.racetimer.shared.CueTiming
+import com.racetimer.shared.LaunchPlan
+import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
+import com.racetimer.shared.StartPlan
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.launchPlan
+import com.racetimer.shared.startPlan
 
 /**
  * Foreground service that keeps a running race cueing while the app is backgrounded or the screen
@@ -82,6 +88,34 @@ class PhoneTimerService : Service() {
     @Volatile var foregroundStartRefused = false
         private set
 
+    private lateinit var persistence: PhoneRacePersistence
+
+    /**
+     * The restore outcome not yet shown to the officer, or null (#205).
+     *
+     * Read-and-clear (the watch's `consumeRestoreNotice` shape): a "we resumed a race you did not
+     * start just now" notice must fire exactly once per start, and a value the UI polls at 50 ms
+     * cannot express that - it would re-announce forever or miss the window.
+     */
+    private var pendingRestoreNotice: RestoreOutcome? = null
+
+    /** Take the notice owed a message, clearing it. Called from the activity's poll. */
+    fun consumeRestoreNotice(): RestoreOutcome? =
+        pendingRestoreNotice.also { pendingRestoreNotice = null }
+
+    /**
+     * What a launch should open on, decided by the shared plan from persistence alone (#205).
+     *
+     * The phone passes no remembered pick - the picker's memory is its own story - so the plan
+     * either offers the saved race on its own sequence or reports nothing to offer.
+     */
+    fun launchPlan(): LaunchPlan = launchPlan(
+        snapshot = persistence.saved(),
+        pickedSequenceId = null,
+        nowElapsedMs = SystemClock.elapsedRealtime(),
+        nowWallMs = System.currentTimeMillis(),
+    )
+
     private val handler = Handler(Looper.getMainLooper())
 
     /** How long the cue that fired most recently occupies the speaker — sizes the gun teardown. */
@@ -147,11 +181,22 @@ class PhoneTimerService : Service() {
 
         override fun onTick(remainingMs: Long) {}
 
-        override fun onSync(snappedToMs: Long) {}
+        override fun onSync(snappedToMs: Long) {
+            // The snap moved the gun; a snapshot describing the old anchor would restore the race
+            // the officer just corrected away (#205).
+            persistSnapshot()
+        }
+
+        override fun onClockAdjusted(remainingMs: Long) {
+            // The monotonic countdown is unaffected; the persisted wall-clock anchor is what a
+            // reboot restore reconstructs from, so it follows the corrected wall clock.
+            persistSnapshot()
+        }
     }
 
     override fun onCreate() {
         super.onCreate()
+        persistence = PhoneRacePersistence(this)
         runner = PhoneRaceRunner(
             cueSounder = PhoneCueSounder(this),
             cueScheduler = HandlerCueScheduler(),
@@ -162,14 +207,41 @@ class PhoneTimerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                // The #62 ordering, phone edition. The runner fires the cue that is due at the
-                // anchor instant synchronously inside start(); everything below it is startup work
-                // that must not delay that cue.
-                runner.start()
-                // persistSnapshot slot — reserved for #205, which writes the race snapshot here so
-                // a process death between the anchor and the first poll still restores. The watch's
-                // ordering (engine tick → persist → wake lock → startForeground) is asserted in
-                // full once persistence lands; until then this comment is the slot.
+                val freshStart = intent.getBooleanExtra(EXTRA_FRESH_START, false)
+                // Start over, explicitly asked for: the officer saw the offer and declined it, so
+                // the saved race is discarded rather than offered again on the next launch. The
+                // decision below takes freshStart as an input of its own - nothing rests on this
+                // clear having happened first (the watch's #64 ordering lesson).
+                if (freshStart) persistence.clear()
+
+                // Resume or run from the top - decided in shared/, from the same persisted reading
+                // the launch offer was built on, so the offer and what the tap does cannot disagree.
+                when (val plan = startPlan(
+                    freshStart = freshStart,
+                    saved = persistence.saved(),
+                    requestedSequenceId = runner.selected.id,
+                    engineState = runner.engine.currentState,
+                )) {
+                    is StartPlan.Resume -> {
+                        val outcome = runner.restore(runner.selected, plan.snapshot)
+                        pendingRestoreNotice = outcome
+                        if (outcome == RestoreOutcome.EXPIRED) {
+                            // The gun fired while the process was dead: there is no race to
+                            // resume, and the officer tapped for a race - so give them one from
+                            // the top, saying so, rather than a dead screen (the watch's choice).
+                            persistence.clear()
+                            runner.start()
+                        }
+                    }
+                    StartPlan.FromTheTop -> {
+                        // The #62 ordering, phone edition: the cue due at the anchor instant fires
+                        // synchronously inside start(); everything below must not delay it.
+                        runner.start()
+                    }
+                }
+                // The persist slot between the first cue's dispatch and the wake lock (#205,
+                // completing the slot #203 reserved): a process death from here on restores.
+                persistSnapshot()
                 acquireWakeLock()
                 startForegroundWithNotification()
                 if (!foregroundStartRefused) scheduleTickLoop()
@@ -282,6 +354,9 @@ class PhoneTimerService : Service() {
     private fun stopForegroundAndCleanup() {
         handler.removeCallbacks(tickRunnable)
         releaseWakeLock()
+        // Every way a race ends comes through here - the gun, Stop, an abort - and a race that
+        // ended is not a race to restore (#205). By key, never clear(): see PhoneRacePersistence.
+        persistence.clear()
         postedNotificationText = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -292,6 +367,12 @@ class PhoneTimerService : Service() {
         handler.post(tickRunnable)
     }
 
+    /** Write the race in flight to disk, or nothing when the engine holds no snapshot. */
+    private fun persistSnapshot() {
+        val snap = runner.engine.snapshot() ?: return
+        persistence.persist(snap)
+    }
+
     companion object {
         private const val TAG = "PhoneTimerService"
 
@@ -299,16 +380,24 @@ class PhoneTimerService : Service() {
         const val ACTION_SYNC = "com.racetimer.phone.ACTION_SYNC"
         const val ACTION_STOP = "com.racetimer.phone.ACTION_STOP"
 
+        /** Set on [ACTION_START] to discard the saved race and run from the top (#205). */
+        const val EXTRA_FRESH_START = "fresh_start"
+
         const val TICK_INTERVAL_MS = 50L
 
         const val GUN_LINGER_MS = 3_000L
 
         const val WAKE_LOCK_TAG = "RaceTimer:PhoneTimerWakeLock"
 
-        /** Start a race in the service, from the officer's tap. */
-        fun start(context: Context) {
+        /**
+         * Start a race in the service, from the officer's tap. Resumes a saved one when the
+         * shared plan says so; [freshStart] declines the saved race explicitly (#205).
+         */
+        fun start(context: Context, freshStart: Boolean = false) {
             context.startForegroundService(
-                Intent(context, PhoneTimerService::class.java).setAction(ACTION_START),
+                Intent(context, PhoneTimerService::class.java)
+                    .setAction(ACTION_START)
+                    .putExtra(EXTRA_FRESH_START, freshStart),
             )
         }
 
