@@ -624,6 +624,33 @@ class MainActivity : ComponentActivity() {
      */
     private val foregroundRefusal = ForegroundRefusalLatch()
 
+    /**
+     * Whether to refuse the next foreground-service dispatch on purpose, read once at construction
+     * (#165 AC 4).
+     *
+     * The real refusal has never been observed on this hardware and cannot be provoked from here —
+     * a tap is processed while the activity is visible, which exempts the app from the
+     * background-start restriction — so without this switch the Settings-remedy round trip could
+     * only be *reviewed*, which is what #102 cost. Armed over adb, no root and no debug build,
+     * before launching the app:
+     *
+     * ```
+     * adb shell setprop log.tag.RaceTimerStartFault VERBOSE
+     * ```
+     *
+     * Disarm with `ASSERT`, never an empty string — `setprop log.tag.X ""` is rejected with a
+     * `usage:` line and leaves the old value in place, so a run "disarmed" that way runs armed.
+     * Read the property back with `getprop` either way; a state-setting command's success is a
+     * claim, not an outcome.
+     *
+     * Same idiom, same three decisions as `ToneManager.cueFaultArmed`: read once at construction
+     * so the tap path pays one boolean test, its own tag so the switch and this class's debug
+     * logging can never trip each other, and it ships — the artifact a sailor installs is the
+     * artifact the remedy was proven on. Armed, [armRace] throws before dispatching, so nothing
+     * starts — which is exactly what a real refusal delivers.
+     */
+    private val startFaultArmed: Boolean = Log.isLoggable(START_FAULT_TAG, Log.VERBOSE)
+
     /** Monotonic reading of the last [readDeviceReadiness], for [refreshStartNoticeThrottled]. */
     private var lastReadinessReadMs = Long.MIN_VALUE
 
@@ -789,6 +816,14 @@ class MainActivity : ComponentActivity() {
      */
     private fun armRace(intent: Intent) {
         try {
+            // The fault switch stands in for the dispatch rather than wrapping it, so an armed run
+            // reaches the catch by the route a real refusal takes — thrown from this try, nothing
+            // started. IllegalStateException because that is ForegroundServiceStartNotAllowedException's
+            // supertype, and the real class's constructor is API 31+ against a minSdk of 30. See
+            // [startFaultArmed].
+            if (startFaultArmed) {
+                throw IllegalStateException("Injected foreground-start refusal ($START_FAULT_TAG armed)")
+            }
             startForegroundService(intent)
             foregroundRefusal.dispatchSucceeded()
         } catch (e: RuntimeException) {
@@ -1057,6 +1092,15 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+
+        /**
+         * Log tag that exists only to be a switch, never to be logged against (#165 AC 4).
+         *
+         * Separate from [TAG] for `ToneManager.FAULT_TAG`'s reason, both directions: arming the
+         * fault must not turn on this class's logging, and turning on logging to watch a start
+         * must not silently start refusing races.
+         */
+        private const val START_FAULT_TAG = "RaceTimerStartFault"
         private const val NAV_TIMER = "timer"
         private const val NAV_PICKER = "picker"
         private const val NAV_CUSTOM = "custom"
