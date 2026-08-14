@@ -214,6 +214,26 @@ class CueDispatchIsScheduledTest {
     }
 
     @Test
+    fun `a restored race fires the cue sitting on its boundary at once and arms the next`() {
+        // Scholastic snapshot with exactly 2:00 remaining: the engine keeps a cue sitting on the
+        // restored remaining, so it is due the instant the race comes back - and leaving it to a
+        // poll is the #62 lateness, restore edition (#205).
+        clock.nowMs = 100_000L
+        val outcome = runner.restore(
+            com.racetimer.shared.BuiltInSequences.scholastic,
+            com.racetimer.shared.TimerEngine.Snapshot(
+                sequenceId = BuiltInSequences.scholastic.id,
+                gunElapsedMs = clock.nowMs + 120_000L,
+                gunWallMs = 1_000_000L,
+                capturedElapsedMs = 90_000L,
+            ),
+        )
+        assertEquals(com.racetimer.shared.RestoreOutcome.EXACT, outcome)
+        assertEquals(listOf("2 long"), sounder.played)
+        assertEquals(30_000L, scheduler.armedDelayMs)
+    }
+
+    @Test
     fun `releasing the runner releases the audio path and disarms the dispatch`() {
         runner.select(BuiltInSequences.scholastic)
         runner.start()

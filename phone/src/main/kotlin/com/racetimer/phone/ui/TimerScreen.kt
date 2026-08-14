@@ -58,6 +58,14 @@ private const val GLYPH_WIDTH_FRACTION = 0.68f
  *                      missed the exact flag bringing the phone back into step with it. Only
  *                      offered while running: before the start there is nothing to correct, and
  *                      the engine refuses everywhere else anyway.
+ * @param notice        A line the officer is owed under the sequence name — a degraded restore's
+ *                      re-sync advice (#205) — or null for the ordinary nothing.
+ * @param resumeOffer   The saved race's remaining time as display text, when a killed race is
+ *                      waiting to be taken back (#205); null when there is nothing to offer. While
+ *                      non-null and the race is not running, the controls become Resume and
+ *                      Start over.
+ * @param onResume      Tapped to take the saved race back exactly where it was.
+ * @param onStartOver   Tapped to decline it and run the sequence from the top.
  */
 @Composable
 fun TimerScreen(
@@ -67,6 +75,10 @@ fun TimerScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onSync: () -> Unit,
+    notice: String? = null,
+    resumeOffer: String? = null,
+    onResume: () -> Unit = {},
+    onStartOver: () -> Unit = {},
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -95,6 +107,17 @@ fun TimerScreen(
                 textAlign = TextAlign.Center,
             )
 
+            if (notice != null) {
+                // One line, quiet, under the name: advice, not alarm. The phone has no tiered
+                // message surface yet; when one arrives this is the line it absorbs.
+                Text(
+                    text = notice,
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 16.sp,
+                    textAlign = TextAlign.Center,
+                )
+            }
+
             Text(
                 text = readout.text,
                 color = Color.White,
@@ -107,7 +130,38 @@ fun TimerScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            if (running) {
+            if (!running && resumeOffer != null) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    // The number is what resuming will actually put on the clock, so the officer
+                    // decides against the truth — the watch learned that an offer showing the full
+                    // duration resumed to a different number the instant it was tapped.
+                    Text(
+                        text = "Race under way — $resumeOffer left",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(0.9f).padding(top = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                    ) {
+                        Button(
+                            onClick = onResume,
+                            colors = ButtonDefaults.buttonColors(),
+                            modifier = Modifier.weight(1f).padding(end = 8.dp),
+                        ) {
+                            Text(text = "Resume", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Button(
+                            onClick = onStartOver,
+                            colors = ButtonDefaults.buttonColors(),
+                            modifier = Modifier.weight(1f).padding(start = 8.dp),
+                        ) {
+                            Text(text = "Start over", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            } else if (running) {
                 // Sync first, Stop second: sync is the control an officer reaches for mid-race at
                 // a flag, stop is the one that ends everything — the destructive control goes
                 // furthest from where an urgent thumb lands.

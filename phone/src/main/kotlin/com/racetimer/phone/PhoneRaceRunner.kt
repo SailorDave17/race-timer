@@ -131,6 +131,24 @@ class PhoneRaceRunner(
     }
 
     /**
+     * Resume [snapshot] on [sequence], reporting how faithfully it came back (#205).
+     *
+     * The same shape as [start] — prepare, anchor, fire what is due synchronously, arm the next
+     * boundary — because a restored race *is* a start, just anchored to a gun that already exists.
+     * The engine keeps a cue sitting exactly on the restored remaining, so the synchronous tick
+     * sounds it at once rather than a poll later (the #62 ordering, restore edition).
+     */
+    fun restore(sequence: RaceSequence, snapshot: TimerEngine.Snapshot): com.racetimer.shared.RestoreOutcome {
+        selected = sequence
+        cueSounder.prepare()
+        cueSounder.warmUp(sequence.cues.map { it.signal })
+        val outcome = engine.restore(sequence, snapshot)
+        engine.tick()
+        armCueDispatch()
+        return outcome
+    }
+
+    /**
      * Snap the countdown to the nearest minute (#204's control; the mechanism lands with #203).
      *
      * The engine refuses on its own terms — outside RUNNING, in a lead-in, under the double-tap

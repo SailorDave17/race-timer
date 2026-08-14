@@ -22,8 +22,12 @@ import com.racetimer.phone.ui.PhoneReadout
 import com.racetimer.phone.ui.PhoneTheme
 import com.racetimer.phone.ui.SequencePickerScreen
 import com.racetimer.phone.ui.TimerScreen
+import android.os.SystemClock
 import com.racetimer.shared.BG_NORMAL_ARGB
+import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.formatCountdown
+import com.racetimer.shared.resumeOfferRemainingMs
 import kotlinx.coroutines.delay
 
 /**
@@ -65,17 +69,44 @@ class MainActivity : ComponentActivity() {
     /** The service's race, or null before the binding lands. Compose state so the UI follows it. */
     private val runnerState = mutableStateOf<PhoneRaceRunner?>(null)
 
+    /** The saved race's remaining time as display text, when a launch found one to offer (#205). */
+    private val resumeOfferState = mutableStateOf<String?>(null)
+
+    private var boundService: PhoneTimerService? = null
+
     private var serviceBound = false
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val lb = binder as? PhoneTimerService.LocalBinder ?: return
+            boundService = lb.service
+            offerSavedRace(lb.service)
             runnerState.value = lb.service.runner
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            boundService = null
             runnerState.value = null
         }
+    }
+
+    /**
+     * Put the saved race in front of the officer, when the shared plan found one (#205).
+     *
+     * Only onto an idle engine: a bind that lands mid-race — a rotation, a return from the
+     * background — must not re-offer the race that is already running. The offer's number is what
+     * resuming will actually show, from the same shared arithmetic the watch's offer uses.
+     */
+    private fun offerSavedRace(service: PhoneTimerService) {
+        if (service.runner.engine.currentState != TimerState.IDLE) return
+        val resumable = service.launchPlan().resumable ?: return
+        val (snapshot, sequence) = resumable
+        service.runner.select(sequence)
+        val remainingMs = resumeOfferRemainingMs(
+            snapshot, sequence, sequence.id,
+            SystemClock.elapsedRealtime(), System.currentTimeMillis(),
+        ) ?: return
+        resumeOfferState.value = formatCountdown(remainingMs)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -97,6 +128,9 @@ class MainActivity : ComponentActivity() {
                     onStartRace = { PhoneTimerService.start(this) },
                     onStopRace = { PhoneTimerService.stop(this) },
                     onSyncRace = { PhoneTimerService.sync(this) },
+                    resumeOffer = resumeOfferState.value,
+                    onStartOverRace = { PhoneTimerService.start(this, freshStart = true) },
+                    collectRestoreNotice = { boundService?.consumeRestoreNotice() },
                 )
             }
         }
@@ -119,6 +153,7 @@ class MainActivity : ComponentActivity() {
             unbindService(serviceConnection)
             serviceBound = false
         }
+        boundService = null
         runnerState.value = null
         super.onStop()
     }
@@ -143,6 +178,9 @@ internal fun RaceTimerApp(
     onStartRace: (() -> Unit)? = null,
     onStopRace: (() -> Unit)? = null,
     onSyncRace: (() -> Unit)? = null,
+    resumeOffer: String? = null,
+    onStartOverRace: (() -> Unit)? = null,
+    collectRestoreNotice: (() -> RestoreOutcome?)? = null,
     displayChoice: DisplayChoiceViewModel = viewModel(),
 ) {
     var onTimerScreen by remember { mutableStateOf(false) }
@@ -156,6 +194,12 @@ internal fun RaceTimerApp(
     val startRace = onStartRace ?: { runner?.start() }
     val stopRace = onStopRace ?: { runner?.stop() }
     val syncRace = onSyncRace ?: { runner?.sync() }
+    val startOverRace = onStartOverRace ?: { runner?.start() }
+
+    // Consumed once either offer control is tapped (or Back declines it); the snapshot on disk
+    // outlives a decline, so the next launch offers again — discarding is Start over's job alone.
+    var offerConsumed by remember { mutableStateOf(false) }
+    var restoreNotice by remember { mutableStateOf<String?>(null) }
 
     fun refresh() {
         runner ?: return
@@ -173,6 +217,17 @@ internal fun RaceTimerApp(
         }
     }
 
+    // A saved race walks the officer straight to it: the offer lands on the timer screen, not
+    // behind a picker tap they have no reason to make (#205). The activity already selected the
+    // saved sequence in the runner before handing the offer over.
+    LaunchedEffect(resumeOffer, runner) {
+        if (resumeOffer != null && !offerConsumed && runner != null) {
+            readout = runner.readout()
+            state = runner.engine.currentState
+            onTimerScreen = true
+        }
+    }
+
     // The one loop that drives everything on screen. It runs only while the timer screen is in
     // composition, which is also the only time anything it produces is visible; the engine keeps
     // its own monotonic anchor in the service regardless, so a loop that stops and restarts reads
@@ -181,6 +236,16 @@ internal fun RaceTimerApp(
         while (onTimerScreen && runner != null) {
             readout = runner.tick()
             state = runner.engine.currentState
+            collectRestoreNotice?.invoke()?.let { outcome ->
+                restoreNotice = when (outcome) {
+                    RestoreOutcome.EXACT -> null
+                    RestoreOutcome.DEGRADED ->
+                        "Restored after a reboot — re-sync at the next flag"
+                    RestoreOutcome.EXPIRED ->
+                        "The saved race had already finished — started fresh"
+                }
+            }
+            if (state != TimerState.RUNNING && state != TimerState.FINISHED) restoreNotice = null
             delay(UI_REFRESH_MS)
         }
     }
@@ -191,6 +256,9 @@ internal fun RaceTimerApp(
     // looking, and it must not be able to end a start sequence. While running it falls through to
     // the system, which backgrounds the app with the race still in the service.
     BackHandler(enabled = onTimerScreen && !running) {
+        // Backing out of the offer declines it for this sitting without discarding the snapshot;
+        // stopping an idle engine is a no-op beyond returning the screen to the top.
+        offerConsumed = true
         stopRace()
         refresh()
         onTimerScreen = false
@@ -225,6 +293,18 @@ internal fun RaceTimerApp(
                 // whole minute is visible in a way a wrist needed a beep for. The engine's own
                 // double-tap guard makes a nervous second tap harmless.
                 syncRace()
+                refresh()
+            },
+            notice = restoreNotice,
+            resumeOffer = if (offerConsumed) null else resumeOffer,
+            onResume = {
+                offerConsumed = true
+                startRace()
+                refresh()
+            },
+            onStartOver = {
+                offerConsumed = true
+                startOverRace()
                 refresh()
             },
         )
