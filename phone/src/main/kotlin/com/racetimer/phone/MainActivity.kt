@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -26,8 +27,9 @@ import kotlinx.coroutines.delay
  * This is a *display* refresh, not a cue schedule. The readout is second-granular and the engine is
  * anchored to `elapsedRealtime`, so a poll that arrives late reads the correct remaining time rather
  * than a drifted one — the error a poll introduces is in *when the screen changes*, bounded by this
- * interval, and never in what it says. A cue cannot be driven this way and is not: scheduling the
- * audio against the anchor is #202, and it does not go through here.
+ * interval, and never in what it says. A cue cannot be driven this way and is not: the audio is
+ * scheduled against the anchor in [PhoneTimerViewModel]'s cue path (#202), and it does not go
+ * through here.
  */
 private const val UI_REFRESH_MS = 50L
 
@@ -43,7 +45,7 @@ private const val UI_REFRESH_MS = 50L
  * would otherwise have done.
  *
  * What it deliberately does not do yet, each with the story that brings it:
- *  - sound anything (#202) or survive the screen going off (#203)
+ *  - survive the screen going off (#203) — cueing is foreground-only until the service story
  *  - sync to the flag (#204), restore after a kill (#205), count up after the gun (#206)
  *
  * One known gap, pre-dating this story and deliberately not fixed here: which *screen* is showing is
@@ -52,6 +54,17 @@ private const val UI_REFRESH_MS = 50L
  * is lost but the position — but it is a real defect and belongs to a story of its own.
  */
 class MainActivity : ComponentActivity() {
+
+    /**
+     * Built through the factory so the cue path is the real one (#202). The composable's own
+     * `viewModel()` default resolves the same instance from this activity's store — but only
+     * because this creation ran first, which is why the instance is passed down explicitly rather
+     * than left for the composition to resolve: a render that created its own would get the silent
+     * defaults, and a silent race timer is this app's worst failure class.
+     */
+    private val timerViewModel: PhoneTimerViewModel by viewModels {
+        PhoneTimerViewModel.factory(applicationContext)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,9 +77,12 @@ class MainActivity : ComponentActivity() {
                 // The window is handed in as a lambda rather than looked up from the composition.
                 // It keeps `RaceTimerApp` free of an activity cast, and it keeps the one call to
                 // #199's mechanism at the edge of the app where the window actually lives.
-                RaceTimerApp(applyDisplay = { choice ->
-                    window.applyDisplayProperties(choice.keepScreenOn, choice.fullBrightness)
-                })
+                RaceTimerApp(
+                    applyDisplay = { choice ->
+                        window.applyDisplayProperties(choice.keepScreenOn, choice.fullBrightness)
+                    },
+                    viewModel = timerViewModel,
+                )
             }
         }
     }

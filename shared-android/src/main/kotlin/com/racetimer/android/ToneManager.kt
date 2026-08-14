@@ -438,7 +438,15 @@ class ToneManager(
      */
     private fun nativeRateFor(route: CueStream): Int =
         try {
+            // A platform can answer 0 rather than throw — measured under the phone module's
+            // Robolectric harness, and nothing rules a broken real device out. A zero rate is not
+            // usable and must not be rendered against: it reached CueWaveform's own guard and
+            // killed the tone thread, after which every later post lands on a dead looper (#202).
             AudioTrack.getNativeOutputSampleRate(audioProfile.legacyStreamFor(route))
+                .takeIf { it > 0 }
+                ?: FALLBACK_SAMPLE_RATE_HZ.also {
+                    Log.w(TAG, "Native output rate not positive; falling back to $it")
+                }
         } catch (e: RuntimeException) {
             Log.w(TAG, "Native output rate unavailable; falling back to $FALLBACK_SAMPLE_RATE_HZ", e)
             FALLBACK_SAMPLE_RATE_HZ
