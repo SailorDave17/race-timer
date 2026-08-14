@@ -37,6 +37,12 @@ Start, via the `ACTION_START` restore path.
   classpath and is scoped to the non-audio surfaces per #160: a real `Context` and `PackageManager`
   only. The audio and haptic path stays a firm no — a shadow `AudioTrack` is a fourth instrument of
   the class that reported success through #61 while the watch was silent.
+- `./gradlew :wear:testDebugUnitTest` — the watch module's unit tests (#160), under the same scoped
+  Robolectric and the same refusal. What is covered is orchestration extraction cannot reach: the #62
+  start ordering, the four-key race snapshot's IO, the foreground notification and FGS declaration,
+  and the #95 volume borrow. **`TimerService` having tests is not `TimerService` being covered** — a
+  green run here says nothing about #114, #144 or #126, and `AudioHapticBoundaryTest` fails the build
+  if a test starts reaching that way.
 - `./gradlew :wear:installDebug` — deploy to the watch.
 - To confirm what actually landed, compare hashes rather than trusting the build log:
   `adb shell pm path io.github.sailordave17.racetimer`, pull it, sha256 against

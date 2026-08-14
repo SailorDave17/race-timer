@@ -43,6 +43,25 @@ jobs:
       - name: Run shared unit tests
         run: ./gradlew :shared:test -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
 
+      # Robolectric fetches an `android-all` jar per SDK level into ~/.m2 on first use, outside the
+      # Gradle caches setup-gradle restores. Two modules now depend on it, so an uncached runner
+      # downloads ~100 MB before either test step can start. Keyed on the version catalog, which is
+      # where the Robolectric version lives.
+      - name: Cache Robolectric android-all jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: robolectric-${{ runner.os }}-
+
+      # #160. The watch module had no test source set for four months, so its orchestration - the
+      # #62 start ordering, the four-key race snapshot, the foreground notification, the #95 volume
+      # borrow - was hardware-verified or nothing. Robolectric here is scoped to those non-audio
+      # surfaces by owner decision; `AudioHapticBoundaryTest` fails this step if a test ever reaches
+      # for the cue path, which stays a wrist question (#61, #114, #144).
+      - name: Run wear unit tests
+        run: ./gradlew :wear:testDebugUnitTest -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
+
       - name: Assemble wear debug APK
         run: ./gradlew :wear:assembleDebug -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
 
@@ -76,6 +95,7 @@ jobs:
           name: test-reports
           path: |
             shared/build/reports/tests/test/
+            wear/build/reports/tests/testDebugUnitTest/
             phone/build/reports/tests/testDebugUnitTest/
           retention-days: 14
 

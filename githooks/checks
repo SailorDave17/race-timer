@@ -9,6 +9,13 @@
 # See memory/global/windows-shell-hazards-2026-08-01.md.
 ./gradlew :shared:test --no-watch-fs --rerun-tasks
 #
+# #160 put the watch module's orchestration under test, and the step goes in BOTH
+# places on purpose: a local gate that runs a different graph from CI is green on
+# one machine and red on the other for reasons outside the tracked tree. Measured
+# at ~10 s warm, which is the whole argument for it being here and
+# :wear:assembleDebug not.
+./gradlew :wear:testDebugUnitTest --no-watch-fs --rerun-tasks
+#
 # :wear:assembleDebug is deliberately NOT here. CI runs it and it costs minutes;
 # a pre-push slow enough to be worth skipping gets skipped, and a gate that is
 # routinely bypassed protects nothing.
