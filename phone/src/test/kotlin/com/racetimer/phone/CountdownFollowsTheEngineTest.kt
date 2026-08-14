@@ -30,11 +30,11 @@ private class FakeClock(var nowMs: Long = 0L) : MonotonicClock {
 class CountdownFollowsTheEngineTest {
 
     private val clock = FakeClock()
-    private val viewModel = PhoneTimerViewModel(clock)
+    private val runner = PhoneRaceRunner(clock)
 
     private fun advanceTo(elapsedMs: Long) {
         clock.nowMs = elapsedMs
-        viewModel.tick()
+        runner.tick()
     }
 
     @Test
@@ -43,74 +43,74 @@ class CountdownFollowsTheEngineTest {
         // design: their defining behaviour is the count-up after the gun, which is #206.
         assertEquals(
             listOf("US Sailing 5-4-1-Go", "Scholastic (ICSA)", "Club 3-2-1-Go"),
-            viewModel.sequences.map { it.name },
+            runner.sequences.map { it.name },
         )
-        assertTrue(viewModel.sequences.none { it.countUpAfterFinish })
+        assertTrue(runner.sequences.none { it.countUpAfterFinish })
     }
 
     @Test
     fun `an unstarted race shows the selected sequence's full duration`() {
-        assertEquals("5:00", viewModel.readout().text)
+        assertEquals("5:00", runner.readout().text)
 
-        viewModel.select(BuiltInSequences.club)
-        assertEquals("3:00", viewModel.readout().text)
-        assertEquals(TimerState.IDLE, viewModel.engine.currentState)
+        runner.select(BuiltInSequences.club)
+        assertEquals("3:00", runner.readout().text)
+        assertEquals(TimerState.IDLE, runner.engine.currentState)
     }
 
     @Test
     fun `the readout tracks the engine's anchor through a whole race`() {
-        viewModel.start()
-        assertEquals("5:00", viewModel.readout().text)
+        runner.start()
+        assertEquals("5:00", runner.readout().text)
 
         advanceTo(30_000L)
-        assertEquals("4:30", viewModel.readout().text)
-        assertEquals(BG_NORMAL_ARGB, viewModel.readout().backgroundArgb)
+        assertEquals("4:30", runner.readout().text)
+        assertEquals(BG_NORMAL_ARGB, runner.readout().backgroundArgb)
 
         // A two-and-a-half-minute leap between polls. A screen doing its own arithmetic reads 4:29.
         advanceTo(180_000L)
-        assertEquals("2:00", viewModel.readout().text)
+        assertEquals("2:00", runner.readout().text)
 
         advanceTo(250_000L)
-        assertEquals("0:50", viewModel.readout().text)
-        assertEquals(BG_ONE_MINUTE_ARGB, viewModel.readout().backgroundArgb)
+        assertEquals("0:50", runner.readout().text)
+        assertEquals(BG_ONE_MINUTE_ARGB, runner.readout().backgroundArgb)
 
         advanceTo(291_000L)
-        assertEquals("0:09", viewModel.readout().text)
-        assertEquals(BG_FINAL_TEN_ARGB, viewModel.readout().backgroundArgb)
+        assertEquals("0:09", runner.readout().text)
+        assertEquals(BG_FINAL_TEN_ARGB, runner.readout().backgroundArgb)
 
         advanceTo(300_000L)
-        assertEquals(TimerState.FINISHED, viewModel.engine.currentState)
-        assertEquals("GO!", viewModel.readout().text)
-        assertEquals(BG_FINISHED_ARGB, viewModel.readout().backgroundArgb)
+        assertEquals(TimerState.FINISHED, runner.engine.currentState)
+        assertEquals("GO!", runner.readout().text)
+        assertEquals(BG_FINISHED_ARGB, runner.readout().backgroundArgb)
     }
 
     @Test
     fun `a sub-second poll never claims a second the sailor still has`() {
-        viewModel.start()
+        runner.start()
         // 20 ms into the race: 4:59.98 remains, and a sailor who has not yet lost a whole second
         // must not be shown 4:59. The countdown rounds up; this is the rule cue timing rests on.
         advanceTo(20L)
-        assertEquals("5:00", viewModel.readout().text)
+        assertEquals("5:00", runner.readout().text)
 
         advanceTo(999L)
-        assertEquals("5:00", viewModel.readout().text)
+        assertEquals("5:00", runner.readout().text)
 
         // The whole second is gone now, and only now.
         advanceTo(1_000L)
-        assertEquals("4:59", viewModel.readout().text)
+        assertEquals("4:59", runner.readout().text)
     }
 
     @Test
     fun `stop returns the screen to the top of the same sequence`() {
-        viewModel.select(BuiltInSequences.scholastic)
-        viewModel.start()
+        runner.select(BuiltInSequences.scholastic)
+        runner.start()
         advanceTo(60_000L)
-        assertEquals("2:00", viewModel.readout().text)
+        assertEquals("2:00", runner.readout().text)
 
-        viewModel.stop()
-        assertEquals(TimerState.IDLE, viewModel.engine.currentState)
-        assertEquals("3:00", viewModel.readout().text)
-        assertEquals(BG_NORMAL_ARGB, viewModel.readout().backgroundArgb)
+        runner.stop()
+        assertEquals(TimerState.IDLE, runner.engine.currentState)
+        assertEquals("3:00", runner.readout().text)
+        assertEquals(BG_NORMAL_ARGB, runner.readout().backgroundArgb)
     }
 
     @Test
@@ -120,24 +120,24 @@ class CountdownFollowsTheEngineTest {
         // its own remaining time on the way out of RUNNING. From FINISHED it does not — `stop` is a
         // no-op there — so this is the only fixture on which the reload is load-bearing. Found by
         // mutation: dropping the reload reddened nothing at all with only the mid-race case here.
-        viewModel.start()
+        runner.start()
         advanceTo(300_000L)
-        assertEquals(TimerState.FINISHED, viewModel.engine.currentState)
-        assertEquals("GO!", viewModel.readout().text)
+        assertEquals(TimerState.FINISHED, runner.engine.currentState)
+        assertEquals("GO!", runner.readout().text)
 
-        viewModel.stop()
-        assertEquals(TimerState.IDLE, viewModel.engine.currentState)
-        assertEquals("5:00", viewModel.readout().text)
-        assertEquals(BG_NORMAL_ARGB, viewModel.readout().backgroundArgb)
+        runner.stop()
+        assertEquals(TimerState.IDLE, runner.engine.currentState)
+        assertEquals("5:00", runner.readout().text)
+        assertEquals(BG_NORMAL_ARGB, runner.readout().backgroundArgb)
     }
 
     @Test
     fun `the engine is anchored to the injected clock and not to wall time`() {
-        viewModel.start()
+        runner.start()
         // The clock never moves, so neither does the race — however long the test takes to run.
         Thread.sleep(30L)
-        viewModel.tick()
-        assertEquals("5:00", viewModel.readout().text)
-        assertEquals(TimerState.RUNNING, viewModel.engine.currentState)
+        runner.tick()
+        assertEquals("5:00", runner.readout().text)
+        assertEquals(TimerState.RUNNING, runner.engine.currentState)
     }
 }

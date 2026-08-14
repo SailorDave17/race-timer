@@ -1,16 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- No permissions, deliberately. A silent, foreground-only countdown needs none: the cues
-         (#202) and the screen-off foreground service and its wake lock (#203) each bring their
-         own, and each belongs to the story that adds the behaviour. #199's display properties are
-         not among them: `FLAG_KEEP_SCREEN_ON` and a window brightness override are both window
-         state and need no permission at all — which is most of why they are the window's route
-         rather than a wake lock's or a `Settings.System` write. Anything declared here
-         ahead of its use would show up in the Play declarations (#212) describing a capability the
-         app does not have — and it is the MERGED manifest Play reads, not this file. -->
+    <!-- Each permission belongs to the story that added the behaviour needing it, because it is the
+         MERGED manifest Play's declarations read (#212), and a row declared ahead of its use would
+         describe a capability the app does not have. #199's display properties are deliberately
+         absent: `FLAG_KEEP_SCREEN_ON` and a window brightness override are window state and need no
+         permission at all. -->
+
+    <!-- #203: the race keeps cueing while backgrounded or screen-off. The service is the runner,
+         the wake lock is the whole doze story (watch #126 finding), and the notification is what a
+         foreground service must post. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
+        android:name=".RaceTimerPhoneApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -39,6 +45,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Keeps the countdown cueing while the app is backgrounded or the screen is off (#203).
+             specialUse with a subtype, the same type and for the same reason as the watch's
+             TimerService: a race-start countdown is none of the enumerated FGS types, and the
+             subtype property is what a Play reviewer reads. -->
+        <service
+            android:name=".PhoneTimerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Racing timer — keeps the start-sequence cueing while the screen is off" />
+        </service>
 
     </application>
 
