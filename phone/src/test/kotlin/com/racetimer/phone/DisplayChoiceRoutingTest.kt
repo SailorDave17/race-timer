@@ -43,7 +43,13 @@ class DisplayChoiceRoutingTest {
     private val applied = mutableListOf<DisplayChoice>()
 
     private fun answer(keepScreenOn: Boolean, fullBrightness: Boolean) {
-        compose.setContent { RaceTimerApp(applyDisplay = { applied += it }) }
+        compose.setContent {
+            // This class composes the full app, so it is exposed to the dead-flusher hang the same
+            // way the timer-screen tests were — #239 measured its last case at 48 s once, two-thirds
+            // of the way to the timeout. See GlobalSnapshotFlushLoop for the mechanism.
+            GlobalSnapshotFlushLoop()
+            RaceTimerApp(applyDisplay = { applied += it })
+        }
 
         if (keepScreenOn != DisplayChoice.INITIAL.keepScreenOn) {
             compose.onNodeWithTag(TAG_KEEP_SCREEN_ON).performClick()
