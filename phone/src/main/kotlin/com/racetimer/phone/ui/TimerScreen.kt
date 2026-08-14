@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -53,6 +54,10 @@ private const val GLYPH_WIDTH_FRACTION = 0.68f
  * @param running       True while the engine is in a state Stop applies to.
  * @param onStart       Tapped to start the sequence.
  * @param onStop        Tapped to abandon the run and return to the top of the same sequence.
+ * @param onSync        Tapped to snap the countdown to the nearest minute (#204) — the officer who
+ *                      missed the exact flag bringing the phone back into step with it. Only
+ *                      offered while running: before the start there is nothing to correct, and
+ *                      the engine refuses everywhere else anyway.
  */
 @Composable
 fun TimerScreen(
@@ -61,6 +66,7 @@ fun TimerScreen(
     running: Boolean,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onSync: () -> Unit,
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -101,16 +107,37 @@ fun TimerScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            Button(
-                onClick = if (running) onStop else onStart,
-                colors = ButtonDefaults.buttonColors(),
-                modifier = Modifier.fillMaxWidth(0.6f),
-            ) {
-                Text(
-                    text = if (running) "Stop" else "Start",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                )
+            if (running) {
+                // Sync first, Stop second: sync is the control an officer reaches for mid-race at
+                // a flag, stop is the one that ends everything — the destructive control goes
+                // furthest from where an urgent thumb lands.
+                Row(
+                    modifier = Modifier.fillMaxWidth(0.9f),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    Button(
+                        onClick = onSync,
+                        colors = ButtonDefaults.buttonColors(),
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    ) {
+                        Text(text = "Sync", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = onStop,
+                        colors = ButtonDefaults.buttonColors(),
+                        modifier = Modifier.weight(1f).padding(start = 8.dp),
+                    ) {
+                        Text(text = "Stop", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
+                Button(
+                    onClick = onStart,
+                    colors = ButtonDefaults.buttonColors(),
+                    modifier = Modifier.fillMaxWidth(0.6f),
+                ) {
+                    Text(text = "Start", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
     }

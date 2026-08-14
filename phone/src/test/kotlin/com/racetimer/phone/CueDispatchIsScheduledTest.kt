@@ -192,6 +192,28 @@ class CueDispatchIsScheduledTest {
     }
 
     @Test
+    fun `a sync re-anchors the pending dispatch and no stale-schedule cue fires`() {
+        runner.select(BuiltInSequences.scholastic)
+        runner.start()
+        assertEquals(60_000L, scheduler.armedDelayMs)
+
+        // 55 s in, the officer syncs: 2:05 remaining snaps to 2:00, the gun moves 5 s earlier,
+        // and the dispatch armed for t=60 is aimed at a boundary that no longer exists (#204 AC 2).
+        clock.nowMs = 55_000L
+        runner.sync()
+
+        // The snap reached the engine: 2:05 became exactly 2:00.
+        assertEquals(120_000L, runner.engine.remainingMs)
+        // The stale arm was replaced, not left to fire: the snapped 2:00 boundary is exactly now.
+        assertEquals(0L, scheduler.armedDelayMs)
+        fireNextBoundary()
+        assertEquals(listOf("3 long", "2 long"), sounder.played)
+
+        // And the schedule beyond it re-anchored to the snapped gun: 1:30 sits 30 s out.
+        assertEquals(30_000L, scheduler.armedDelayMs)
+    }
+
+    @Test
     fun `releasing the runner releases the audio path and disarms the dispatch`() {
         runner.select(BuiltInSequences.scholastic)
         runner.start()

@@ -52,7 +52,7 @@ private const val UI_REFRESH_MS = 50L
  * cannot clear it (#165), and the phone declines to inherit the pattern.
  *
  * What it deliberately does not do yet, each with the story that brings it:
- *  - sync to the flag (#204), restore after a kill (#205), count up after the gun (#206)
+ *  - restore after a kill (#205), count up after the gun (#206)
  *
  * One known gap, pre-dating this story and deliberately not fixed here: which *screen* is showing
  * is `remember`ed rather than saved, so rotating mid-race returns to the picker — and now that the
@@ -96,6 +96,7 @@ class MainActivity : ComponentActivity() {
                     runner = runnerState.value,
                     onStartRace = { PhoneTimerService.start(this) },
                     onStopRace = { PhoneTimerService.stop(this) },
+                    onSyncRace = { PhoneTimerService.sync(this) },
                 )
             }
         }
@@ -141,6 +142,7 @@ internal fun RaceTimerApp(
     runner: PhoneRaceRunner? = remember { PhoneRaceRunner() },
     onStartRace: (() -> Unit)? = null,
     onStopRace: (() -> Unit)? = null,
+    onSyncRace: (() -> Unit)? = null,
     displayChoice: DisplayChoiceViewModel = viewModel(),
 ) {
     var onTimerScreen by remember { mutableStateOf(false) }
@@ -153,6 +155,7 @@ internal fun RaceTimerApp(
 
     val startRace = onStartRace ?: { runner?.start() }
     val stopRace = onStopRace ?: { runner?.stop() }
+    val syncRace = onSyncRace ?: { runner?.sync() }
 
     fun refresh() {
         runner ?: return
@@ -215,6 +218,13 @@ internal fun RaceTimerApp(
             },
             onStop = {
                 stopRace()
+                refresh()
+            },
+            onSync = {
+                // The snap is the feedback: on a console-sized readout the display jumping to the
+                // whole minute is visible in a way a wrist needed a beep for. The engine's own
+                // double-tap guard makes a nervous second tap harmless.
+                syncRace()
                 refresh()
             },
         )
