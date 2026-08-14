@@ -5,7 +5,7 @@
 // one listing.
 //
 // What this module deliberately does NOT hold yet, so a reader does not go looking:
-//   - audio cues (#202) and screen-off cueing (#203) — this countdown is silent and foreground-only
+//   - screen-off cueing (#203) — the cue path (#202) runs foreground-only until the service story
 //   - a screen that stays on or runs bright during a race: #199 delivered the mechanism
 //     (`PhoneDisplay.kt`) but nothing calls it, because what to ask for is the officer's choice
 //     and #225 is the surface that asks
