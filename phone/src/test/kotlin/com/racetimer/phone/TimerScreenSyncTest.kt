@@ -19,13 +19,15 @@ import org.robolectric.RobolectricTestRunner
  * The Sync control exists exactly while running, and a tap reaches the sync callback — not a
  * neighbouring one (#204 AC 1's control half).
  *
- * Deliberately renders [TimerScreen] alone rather than the whole app. The full composition's
- * display poll loop can hang the Compose-Robolectric idling strategy nondeterministically — the
- * same test passed and then hung on identical code — and a flaky proof is worse than a narrower
- * solid one. What this costs is the two-line `RaceTimerApp` glue (`onSync = { syncRace() }`)
- * going untested; that hop is disclosed in the story rather than papered over, and the engine
- * half of the chain is `CueDispatchIsScheduledTest`'s sync re-anchor test, at the runner seam.
- * The harness flake itself is filed as its own issue.
+ * Deliberately renders [TimerScreen] alone rather than the whole app — the screen's own contract
+ * (which controls exist in which state, which callback a tap reaches) is answerable without the
+ * app around it, and a narrower test names a failure more precisely. The `RaceTimerApp` glue this
+ * cannot see is covered by [RaceTimerAppTimerScreenTest], full-app, since #239.
+ *
+ * *(Until #239 this comment blamed the full composition's display poll loop for hanging the
+ * idling strategy. Measured, the poll was innocent: the hang was compose's global-snapshot
+ * flusher being dead in every Robolectric class but the JVM's first — see
+ * [GlobalSnapshotFlushLoop] — and it would have hit any full-app composition, dwell or no dwell.)*
  */
 @RunWith(RobolectricTestRunner::class)
 class TimerScreenSyncTest {

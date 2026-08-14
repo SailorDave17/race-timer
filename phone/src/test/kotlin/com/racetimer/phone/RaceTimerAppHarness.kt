@@ -1,0 +1,122 @@
+package com.racetimer.phone
+
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.ComposeContentTestRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import com.racetimer.phone.ui.PhoneReadout
+import com.racetimer.phone.ui.TAG_CONTINUE
+import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.MonotonicClock
+import com.racetimer.shared.RaceSequence
+import org.junit.Assert.assertEquals
+
+/**
+ * Drives the **whole app** — [RaceTimerApp], not one screen — through a running race, so a test can
+ * assert what an officer actually sees while the countdown moves (#239).
+ *
+ * ## The two clocks, and why a dwell that moves one of them is vacuous
+ *
+ * The running timer screen depends on two clocks that are entirely independent of each other:
+ *
+ *  - the **engine's** [MonotonicClock] — `SystemClock.elapsedRealtime` in production, which
+ *    Robolectric holds frozen for the whole test unless something advances the looper;
+ *  - **Compose's virtual test clock**, which is what the composition's display-poll `delay` sleeps
+ *    on, and which only moves when a test advances it or the idling strategy pumps a frame.
+ *
+ * Neither drives the other. *Measured 2026-08-14, both arms run:* advancing Compose's clock alone
+ * re-polls a frozen engine — `elapsedRealtime` held at 110 ms across five virtual seconds, so the
+ * screen redraws the same second every pass — and advancing Robolectric's clock alone moves the
+ * engine while the poll never wakes, virtual time held at 112 ms across 11 s of `idleFor`. Either
+ * way the countdown never changes, the test dwells on a still screen, and it passes having asserted
+ * nothing.
+ *
+ * That is the trap this class exists to close: [advance] moves **both**, and every test using it
+ * asserts the readout before and after, so a dwell that stopped exercising the poll fails instead of
+ * going quietly green.
+ */
+internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) {
+
+    private val clock = AdvanceableClock()
+
+    /** The runner the app is driven through, so a test can assert engine state as well as screen. */
+    val runner = PhoneRaceRunner(clock)
+
+    /** Compose the whole app and answer the display surface, leaving the sequence picker up. */
+    fun launch() {
+        compose.setContent {
+            // The #239 flush loop rides the same frame pump that would otherwise spin forever —
+            // see GlobalSnapshotFlushLoop for the measured mechanism. Composed before the app so
+            // it exists from the first composition, which is where the hang bites.
+            GlobalSnapshotFlushLoop()
+            RaceTimerApp(applyDisplay = {}, runner = runner)
+        }
+        compose.onNodeWithTag(TAG_CONTINUE).performClick()
+    }
+
+    /**
+     * Pick [sequence] and tap Start, then confirm the race is really on before returning.
+     *
+     * The Stop assertion is a positive control, not decoration: the controls are a function of
+     * engine state, so "Stop" being on screen is the app itself reporting that it left IDLE. Without
+     * it every assertion downstream would hold just as well on a countdown that never started.
+     */
+    fun startRace(sequence: RaceSequence = BuiltInSequences.usSailing) {
+        compose.onNodeWithText(sequence.name).performClick()
+        compose.onNodeWithText("Start").performClick()
+        compose.onNodeWithText("Stop").assertIsDisplayed()
+    }
+
+    /**
+     * Move both clocks forward by [totalMs], in [STEP_MS] slices, and let the screen settle.
+     *
+     * The slice is a *sampling* choice and deliberately not the composition's refresh interval: the
+     * readout is derived from the clock rather than accumulated, so any slice reads the correct time,
+     * and a slice well under one second guarantees the display poll runs several times per displayed
+     * second rather than once per assertion.
+     */
+    fun advance(totalMs: Long) {
+        require(totalMs > 0 && totalMs % STEP_MS == 0L) {
+            "advance() takes a positive whole multiple of $STEP_MS ms, got $totalMs"
+        }
+        repeat((totalMs / STEP_MS).toInt()) {
+            clock.nowMs += STEP_MS
+            compose.mainClock.advanceTimeBy(STEP_MS)
+        }
+        compose.waitForIdle()
+    }
+
+    /**
+     * What the big readout currently says.
+     *
+     * Found by shape rather than by test tag — a countdown is the only text on this screen that
+     * looks like a clock, and the alternative is a tag on production code that exists only for this.
+     * The `single` is load-bearing: two matches would mean the screen gained a second clock-shaped
+     * line and the assertion below had quietly started reading the wrong one.
+     */
+    fun readout(): String {
+        val texts = compose
+            .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text))
+            .fetchSemanticsNodes()
+            .flatMap { node -> node.config[SemanticsProperties.Text].map { it.text } }
+        val clockShaped = texts.filter { it.matches(READOUT_SHAPE) || it == PhoneReadout.GUN_LABEL }
+        return clockShaped.singleOrNull()
+            ?: error("expected exactly one clock-shaped text on screen, found $clockShaped in $texts")
+    }
+
+    /** Assert the readout, naming both sides — a bare node lookup reports only what it failed to find. */
+    fun assertReadout(expected: String) =
+        assertEquals("the countdown on screen", expected, readout())
+
+    private class AdvanceableClock(var nowMs: Long = 0L) : MonotonicClock {
+        override fun elapsedMs(): Long = nowMs
+    }
+
+    private companion object {
+        const val STEP_MS = 250L
+        val READOUT_SHAPE = Regex("""\d+:\d{2}""")
+    }
+}
