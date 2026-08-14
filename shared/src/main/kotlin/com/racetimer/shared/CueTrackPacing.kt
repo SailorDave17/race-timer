@@ -24,8 +24,13 @@ package com.racetimer.shared
  * Both halves of that are arithmetic on frame counters, and both are the kind of arithmetic that fails
  * *quietly*: an off-by-a-buffer here shows up as a cue that is slightly late or a `delivered` figure
  * that is slightly wrong, never as an exception. They live here, in `shared`, for the same reason
- * [CueTiming.resetAtMs] does — `wear/` has no test source set, and the last timing rule left inline
- * there was wrong for two weeks while every call reported success (#98).
+ * [CueTiming.resetAtMs] does — the last timing rule left inline there was wrong for two weeks while
+ * every call reported success (#98).
+ *
+ * That reason used to read "`wear/` has no test source set", which #160 made false. The conclusion
+ * is unchanged and in fact stronger: the source set that module now has is scoped *away* from
+ * exactly this arithmetic, and its `AudioHapticBoundaryTest` fails the build on any assertion
+ * reaching the cue path. So this is still guarded here or nowhere.
  */
 object CueTrackPacing {
 

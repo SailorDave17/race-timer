@@ -3,8 +3,6 @@ package com.racetimer.wear
 import android.app.Service
 import android.content.Intent
 import com.racetimer.shared.BuiltInSequences
-import com.racetimer.shared.SequenceCue
-import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,13 +14,14 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowPowerManager
 
 /**
  * The #62 ordering, pinned: the first cue is dispatched **before** the startup work, not after it.
  *
  * This is #160's highest-value target and the reason that issue chose Robolectric over an eighth
- * extraction pass. The fix is not a value or a rule — it is *an ordering of four calls inside
+ * extraction pass. The fix is not a value or a rule -- it is *an ordering of four calls inside
  * `onStartCommand`* (`engine.tick()` ahead of `persistSnapshot()`, `acquireWakeLock()` and
  * `startForegroundWithNotification()`), which no seam refactor can protect without first rewriting
  * the very ordering under protection.
@@ -30,7 +29,7 @@ import org.robolectric.shadows.ShadowPowerManager
  * ### Why a shadow is a sufficient instrument here, when it is not for audio
  *
  * The property is an **ordering**, and an ordering is the framework's own bookkeeping rather than
- * physics. "Records that the call happened" is the whole subject, not a weak proxy for it — the
+ * physics. "Records that the call happened" is the whole subject, not a weak proxy for it -- the
  * distinction cairn `race-timer-testing-strategy` draws when it grants Robolectric for this and
  * refuses it for the audio path. Nothing here asserts that a cue was *heard*: the cue's audio and
  * haptic delivery is #114 / #144 / #126 and stays a hardware question, guarded from creeping in
@@ -38,40 +37,13 @@ import org.robolectric.shadows.ShadowPowerManager
  *
  * ### The observation is behavioural, not a spy
  *
- * A `TimerListener` added to the engine sees the first cue fire, and reads the **world** at that
+ * A [FirstCueProbe] added to the engine sees the first cue fire, and reads the **world** at that
  * instant: no wake lock taken, no foreground notification posted, no race written to disk. Move
  * `engine.tick()` below those three lines and all three readings invert. That is what makes this a
  * pin rather than a restatement of the source in another file.
  */
 @RunWith(RobolectricTestRunner::class)
 class StartOrderingTest {
-
-    /**
-     * What the world looked like at the instant the first cue was dispatched.
-     *
-     * [fired] is not a formality. Every assertion below is of the form "X had not happened yet", and
-     * a probe that never ran satisfies all of them — an absent result reading as a clean one (cairn
-     * `an-absent-result-reads-as-a-clean-one`). It is asserted first, every time.
-     */
-    private class FirstCueProbe(private val service: TimerService) : TimerListener {
-        var fired = false
-            private set
-        var wakeLockHeldAtFirstCue = true
-        var foregroundEnteredAtFirstCue = true
-        var racePersistedAtFirstCue = true
-
-        override fun onCue(cue: SequenceCue) {
-            if (fired) return
-            fired = true
-            wakeLockHeldAtFirstCue = ShadowPowerManager.getLatestWakeLock()?.isHeld == true
-            foregroundEnteredAtFirstCue = shadowOf(service).lastForegroundNotification != null
-            racePersistedAtFirstCue = TimerService.savedSnapshot(service) != null
-        }
-
-        override fun onGun() = Unit
-        override fun onTick(remainingMs: Long) = Unit
-        override fun onSync(snappedToMs: Long) = Unit
-    }
 
     private fun createdService(): TimerService =
         Robolectric.buildService(TimerService::class.java).create().get()
@@ -86,7 +58,14 @@ class StartOrderingTest {
     @Test
     fun `the first cue is dispatched ahead of persist, the wake lock and the foreground`() {
         val svc = createdService()
-        val probe = FirstCueProbe(svc)
+        var wakeLockHeld = true
+        var foregroundEntered = true
+        var racePersisted = true
+        val probe = FirstCueProbe {
+            wakeLockHeld = ShadowPowerManager.getLatestWakeLock()?.isHeld == true
+            foregroundEntered = shadowOf(svc).lastForegroundNotification != null
+            racePersisted = TimerService.savedSnapshot(svc) != null
+        }
         svc.engine.addListener(probe)
 
         svc.arm()
@@ -97,12 +76,9 @@ class StartOrderingTest {
         // checked rather than assumed.
         assertTrue("the first cue never fired, so nothing below was measured", probe.fired)
 
-        assertFalse("the wake lock was taken before the first cue", probe.wakeLockHeldAtFirstCue)
-        assertFalse(
-            "the service entered the foreground before the first cue",
-            probe.foregroundEnteredAtFirstCue,
-        )
-        assertFalse("the race was persisted before the first cue", probe.racePersistedAtFirstCue)
+        assertFalse("the wake lock was taken before the first cue", wakeLockHeld)
+        assertFalse("the service entered the foreground before the first cue", foregroundEntered)
+        assertFalse("the race was persisted before the first cue", racePersisted)
     }
 
     @Test
@@ -122,7 +98,38 @@ class StartOrderingTest {
         )
         assertNotNull("the race was never persisted", TimerService.savedSnapshot(svc))
         assertEquals(TimerState.RUNNING, svc.engine.currentState)
+        // Meaningful only as one half of a pair. `foregroundStartRefused` is initialised to false,
+        // so on its own this reddens for no plausible mutation -- an expected-value-of-false
+        // assertion with nothing establishing that false was ever in question. The refusal test
+        // below is its positive control: same code, same assertion target, opposite answer, and the
+        // two differ only by the shadow.
         assertFalse(svc.foregroundStartRefused)
+    }
+
+    @Test
+    @Config(shadows = [ForegroundRefusingService::class])
+    fun `a refused foreground aborts the race rather than running one that cannot survive`() {
+        // #13. Before that story the call was bare, and a refusal threw out of `onStartCommand`
+        // leaving the sailor looking at a countdown that had **already started** -- `engine.tick()`
+        // runs several lines above -- on a screen the platform would kill without notice. The
+        // criterion was that the sequence "does not silently start", and the silence was structural.
+        //
+        // Unreachable without the shadow: Robolectric's stock ShadowService grants the foreground
+        // unconditionally, so this arm is not merely untested by default, it cannot be entered.
+        val svc = createdService()
+        svc.arm()
+
+        assertTrue("the refusal was not latched", svc.foregroundStartRefused)
+        // Put back exactly where Stop would leave it, which is the whole point of aborting rather
+        // than annotating: the sailor is returned to a pre-start screen, not left holding a race
+        // with no service under it.
+        assertEquals("the engine was left anchored", TimerState.IDLE, svc.engine.currentState)
+        assertNull("the aborted race stayed on disk", TimerService.savedSnapshot(svc))
+        assertFalse(
+            "the wake lock outlived the aborted race",
+            ShadowPowerManager.getLatestWakeLock().isHeld,
+        )
+        assertTrue("the service did not stop itself", shadowOf(svc).isStoppedBySelf)
     }
 
     @Test

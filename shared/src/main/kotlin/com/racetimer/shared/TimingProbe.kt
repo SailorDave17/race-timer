@@ -5,9 +5,10 @@ package com.racetimer.shared
  *
  * Both are arithmetic over values the caller already holds, and both are here rather than at their
  * one call site in `TimerService` for the reason [CueTiming.resetAtMs] is: a timing rule written out
- * inline is a rule with no test behind it, and `wear/` still has no test source set. The last rule
- * that lived at its call site was wrong there for two weeks and reported success the whole time
- * (#98).
+ * inline is a rule with no test behind it. The last rule that lived at its call site was wrong there
+ * for two weeks and reported success the whole time (#98). (`wear/` had no test source set at all
+ * until #160; the one it has now is scoped away from the cue path, so a timing rule left inline
+ * there is still a rule with nothing behind it.)
  *
  * These are *measurement*, not behaviour. Nothing in the countdown reads them; they exist so that a
  * claim about screen-off timing can be checked against logs instead of asserted. That distinction is

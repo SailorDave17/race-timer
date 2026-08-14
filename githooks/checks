@@ -1,5 +1,23 @@
-# One shell command per line, run from the repo root. Non-zero exit refuses the
-# push to develop/main. Lines starting with # are ignored.
+# One shell command per line, run from the repo root. Lines starting with # are
+# ignored.
+#
+# WHEN THIS LIST ACTUALLY RUNS, because the header used to say "non-zero exit
+# refuses the push to develop/main" and that was never true in this repo:
+# develop/main/master are refused OUTRIGHT by githooks/pre-push, before any check
+# runs, precisely so that no check can earn the push. And a feature branch falls
+# through the direct-push allowance, which this repo deliberately does not have.
+#
+# So the one thing that runs this list is a HAND RUN - `sh githooks/pre-push` -
+# which is what AGENTS.md and complete-story tell a session to do before
+# committing. That is the gate, and it is a real one.
+#
+# It was NOT real until 2026-08-14. race-timer was carrying a copy of the driver
+# from before cairn added hand-run support on 2026-08-07, and a hand run against
+# that copy fell straight through and exited 0 having printed nothing and run
+# nothing - the documented gate reporting success without checking. Found by a
+# review of #160 and fixed by porting the canonical driver back. Both halves of
+# the lesson are in cairn `documented-is-not-installed`: the file was present,
+# correct-looking, and every symptom was an absence.
 #
 # --no-watch-fs --rerun-tasks is not optional here. Gradle's file-watcher goes
 # stale on this machine and reports BUILD SUCCESSFUL on a suite it never
@@ -14,6 +32,11 @@
 # one machine and red on the other for reasons outside the tracked tree. Measured
 # at ~10 s warm, which is the whole argument for it being here and
 # :wear:assembleDebug not.
+#
+# :phone:testDebugUnitTest is NOT here, and that is a gap rather than a decision -
+# it costs about the same and CI runs it. Left alone because #160 is not the issue
+# in which to change what the phone module's gate is; noted so the absence reads
+# as unfinished rather than considered.
 ./gradlew :wear:testDebugUnitTest --no-watch-fs --rerun-tasks
 #
 # :wear:assembleDebug is deliberately NOT here. CI runs it and it costs minutes;

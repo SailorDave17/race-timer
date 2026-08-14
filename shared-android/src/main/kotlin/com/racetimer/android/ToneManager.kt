@@ -1295,8 +1295,10 @@ class ToneManager(
          * The three numbers that pace the shared track live in [CueTrackPacing], not here.
          *
          * They are only meaningful against each other and against [CueTiming] — the heartbeat must
-         * stay under the flush budget and the budget must stay under the shortest cue — and `wear/`
-         * has no test source set to say so. Deliberately re-exported as aliases rather than inlined at
+         * stay under the flush budget and the budget must stay under the shortest cue — and nothing
+         * on this side of the module boundary can say so. `:shared-android` has no test source set by
+         * decision, and `wear/`'s (#160) is scoped away from the cue path, so `shared` is still the
+         * only place these can be asserted. Deliberately re-exported as aliases rather than inlined at
          * the call sites, so that a reader of this class can still see what the cue path depends on.
          */
         const val KEEP_MIXED_INTERVAL_MS = CueTrackPacing.KEEP_MIXED_INTERVAL_MS

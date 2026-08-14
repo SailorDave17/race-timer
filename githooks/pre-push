@@ -57,12 +57,27 @@ CHECKS_FILE="$REPO_ROOT/githooks/checks"
 DIRECT_OK_FILE="$REPO_ROOT/githooks/direct-push-ok"
 OWNER_ONLY_EXTRA="$REPO_ROOT/githooks/owner-only"
 
+# Every line read from those three files is stripped of a trailing CR before it
+# is compared or run. core.autocrlf=true is set on this machine and a repo
+# without a .gitattributes rule checks these files out CRLF, at which point
+# `rebuild/v1\r` does not equal `rebuild/v1` and the branch falls through as an
+# ordinary feature branch. Measured 2026-08-05 on Taskr: `rebuild/v1` - its real
+# integration branch - exited 0 and would have been pushed, with the file
+# present, correct in the repo, and reported unmodified by every git command.
+#
+# The .gitattributes rule is the other half and is not a substitute: it governs
+# checkout, so it fixes the files in repos that carry it, while this fixes the
+# hook in any repo and any clone that does not. A guard that fails open on a
+# whitespace difference is absent, not weak.
+CR=$(printf '\r')
+
 # A repo whose integration branch is not one of the three default names says so
 # here (Taskr's is `rebuild/v1`). Appended, never replacing: a config file that
 # could REMOVE develop from the refused list would be a way to reintroduce the
 # gap this change closes.
 if [ -f "$OWNER_ONLY_EXTRA" ]; then
     while IFS= read -r extra || [ -n "$extra" ]; do
+        extra=${extra%$CR}
         case "$extra" in ''|'#'*) continue ;; esac
         OWNER_ONLY="$OWNER_ONLY $extra"
     done < "$OWNER_ONLY_EXTRA"
@@ -71,6 +86,7 @@ fi
 branch_listed_in_file() {  # $1 = branch, $2 = file
     [ -f "$2" ] || return 1
     while IFS= read -r line || [ -n "$line" ]; do
+        line=${line%$CR}
         case "$line" in ''|'#'*) continue ;; esac
         [ "$line" = "$1" ] && return 0
     done < "$2"
@@ -92,9 +108,30 @@ branch_listed_in_file() {  # $1 = branch, $2 = file
 # Note what that bug now costs: with the refusal branch below, failing open no
 # longer merely skips some checks, it permits a push to `develop`. The mutation
 # test at the bottom of this change covers exactly that line.
+#
+# A HAND RUN supplies no refs at all, and that used to exit 0 having run nothing.
+# AGENTS.md and CLAUDE.md both say "run the whole check list locally with
+# `sh githooks/pre-push`" - and run that way it fell straight through the
+# `|| exit 0` below, printing NOTHING and returning success. Found 2026-08-07 by
+# running it exactly as documented and reading the silence as a pass. Same family
+# as the fail-open above and as Windows hazard 7: the instruction that tells you
+# when you are finished was not the thing doing the checking.
+#
+# Two shapes, because a hand run arrives two ways:
+#   - stdin is a terminal -> `read` would BLOCK on the keyboard, so skip the loop.
+#   - stdin is empty/redirected (a script, or a tool whose stdin is /dev/null)
+#     -> the loop runs zero times and `saw_ref` stays 0.
+# Both mean "the owner asked for the checks", so both run them. Failing toward
+# RUNNING is the safe direction: a real push always carries refs, and the worst
+# case of a false positive is that a no-op push runs the list.
 pushing_owner_only=""
 pushing_direct_ok=0
-while read -r _local_ref _local_sha remote_ref _remote_sha || [ -n "$remote_ref" ]; do
+saw_ref=0
+hand_run=0
+if [ -t 0 ]; then
+    hand_run=1
+fi
+while [ "$hand_run" -eq 0 ] &&       read -r _local_ref _local_sha remote_ref _remote_sha || [ -n "$remote_ref" ]; do
     [ -n "$remote_ref" ] || continue
     case "$remote_ref" in
         refs/heads/*) pushed_branch=${remote_ref#refs/heads/} ;;
@@ -108,8 +145,13 @@ while read -r _local_ref _local_sha remote_ref _remote_sha || [ -n "$remote_ref"
     if branch_listed_in_file "$pushed_branch" "$DIRECT_OK_FILE"; then
         pushing_direct_ok=1
     fi
+    saw_ref=1
     remote_ref=""
 done
+
+if [ "$saw_ref" -eq 0 ]; then
+    hand_run=1
+fi
 
 # Refusal comes first and is unconditional: a ref in both lists is a
 # misconfiguration, and the safe reading of an ambiguous config is no.
@@ -132,7 +174,12 @@ MSG
     exit 1
 fi
 
-[ "$pushing_direct_ok" -eq 1 ] || exit 0
+# A hand run runs the checks in ANY repo - that is the whole point of invoking it
+# by hand, and the direct-push allowance is about which branch may be PUSHED, not
+# about which repo may be checked.
+if [ "$pushing_direct_ok" -ne 1 ] && [ "$hand_run" -ne 1 ]; then
+    exit 0
+fi
 
 if [ ! -f "$CHECKS_FILE" ]; then
     echo "pre-push: no githooks/checks in this repo - nothing to run."
@@ -141,7 +188,11 @@ if [ ! -f "$CHECKS_FILE" ]; then
     exit 0
 fi
 
-echo "pre-push: direct-push branch - running local checks first"
+if [ "$hand_run" -eq 1 ]; then
+    echo "pre-push: hand run (no refs on stdin) - running local checks"
+else
+    echo "pre-push: direct-push branch - running local checks first"
+fi
 
 status=0
 while IFS= read -r check || [ -n "$check" ]; do

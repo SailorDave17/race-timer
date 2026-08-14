@@ -1,12 +1,14 @@
 package com.racetimer.wear
 
-import android.app.Application
+import android.app.Notification
 import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.os.Looper
 import com.racetimer.shared.BuiltInSequences
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,6 +19,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.w3c.dom.Element
 import java.io.File
+import java.time.Duration
 import java.util.Properties
 import javax.xml.parsers.DocumentBuilderFactory
 
@@ -81,18 +84,52 @@ class ForegroundNotificationTest {
     }
 
     @Test
-    fun `the notification carries the countdown, and follows it`() {
+    fun `the notification carries the countdown`() {
         val svc = armedService()
         val app = RuntimeEnvironment.getApplication()
         val posted = shadowOf(svc).lastForegroundNotification
 
         // M:SS, the format `formatCountdown` produces -- asserted as a shape rather than a value,
         // because the exact digit depends on where in its first second the test caught the race.
-        val text = posted.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString()
+        val text = posted.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
         assertTrue("countdown text was '$text'", Regex("""^\d+:\d\d$""").matches(text))
-        assertEquals(app.getString(R.string.notification_content_title), posted.extras
-            .getCharSequence(android.app.Notification.EXTRA_TITLE).toString())
+        assertEquals(
+            app.getString(R.string.notification_content_title),
+            posted.extras.getCharSequence(Notification.EXTRA_TITLE).toString(),
+        )
     }
+
+    @Test
+    fun `the notification follows the countdown down`() {
+        // Deliberately a second test, and it has to read a different object.
+        // `ShadowService.lastForegroundNotification` is bound only by `startForeground`, while
+        // `updateOngoingNotification` posts through `NotificationManager.notify` -- so the field the
+        // test above reads is structurally blind to every refresh, whatever the looper is doing.
+        // The two halves used to be one test whose name claimed both and whose assertions covered
+        // the first.
+        val svc = armedService()
+        val app = RuntimeEnvironment.getApplication()
+        val nm = app.getSystemService(NotificationManager::class.java)
+        val started = postedCountdown(nm)
+
+        // The tick loop runs at 50 ms and re-posts only when the rendered M:SS actually changes, so
+        // one second is the smallest advance guaranteed to produce a new value. Robolectric's looper
+        // is paused by default; idling it is what runs the posted `tickRunnable` and moves the clock.
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1_500))
+
+        val later = postedCountdown(nm)
+        assertNotNull("nothing was ever posted through the notification manager", later)
+        assertNotEquals(
+            "the notification still reads $started after a second and a half of countdown",
+            started,
+            later,
+        )
+        assertTrue("countdown text was '$later'", Regex("""^\d+:\d\d$""").matches(later!!))
+    }
+
+    private fun postedCountdown(nm: NotificationManager): String? =
+        shadowOf(nm).getNotification(RaceTimerApplication.TIMER_NOTIFICATION_ID)
+            ?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()
 
     @Test
     fun `the merged manifest declares the service specialUse`() {

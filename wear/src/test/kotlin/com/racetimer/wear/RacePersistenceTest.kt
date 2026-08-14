@@ -123,13 +123,52 @@ class RacePersistenceTest {
             svc.engine.remainingMs.toDouble(),
             TOLERANCE_MS.toDouble(),
         )
-        // And the discarded race is gone from disk, not merely ignored -- otherwise the next launch
-        // offers to resume a race the sailor has already declined.
+        // The disk describes the race now running, not the one that was declined. 180 s apart, so
+        // the two are not confusable -- but see the test below for why this assertion, on its own,
+        // says nothing about whether the declined race was ever cleared.
         val persisted = TimerService.savedSnapshot(svc)
         assertNotNull(persisted)
-        assertTrue(
-            "the declined race is still on disk",
-            persisted!!.gunElapsedMs >= SystemClock.elapsedRealtime() + SEEDED_REMAINING_MS,
+        assertEquals(
+            "the disk describes the wrong race",
+            (SystemClock.elapsedRealtime() + BuiltInSequences.usSailing.totalMs).toDouble(),
+            persisted!!.gunElapsedMs.toDouble(),
+            TOLERANCE_MS.toDouble(),
+        )
+    }
+
+    @Test
+    fun `the declined race is cleared before the new one is anchored`() {
+        // `if (freshStart) clearPersistedState()` is observable for exactly two lines.
+        //
+        // It runs at the top of the ACTION_START branch; `persistSnapshot()` runs unconditionally at
+        // the bottom of the same branch and rewrites all four keys with the fresh race. So by the
+        // time `onStartCommand` returns, the disk holds the new race whether the clear ran or not --
+        // every assertion taken afterwards is blind to it, however the values are compared. The
+        // assertion in the test above was written that way first and could not fail.
+        //
+        // The window is real and so is what it protects: a process killed between the clear and the
+        // rewrite must not come back offering to resume a race the sailor explicitly declined.
+        // `engine.tick()` dispatches the first cue two lines before `persistSnapshot()`, which is
+        // the one moment inside that window a test can reach.
+        val svc = createdService()
+        seedRaceInFlight(svc, BuiltInSequences.usSailing.id)
+        var snapshotInsideWindow: Long? = -1L
+        val probe = FirstCueProbe {
+            snapshotInsideWindow = TimerService.savedSnapshot(svc)?.gunElapsedMs
+        }
+        svc.engine.addListener(probe)
+
+        svc.onStartCommand(
+            TimerService.startIntent(svc, BuiltInSequences.usSailing.id, freshStart = true),
+            0,
+            1,
+        )
+
+        assertTrue("the first cue never fired, so nothing below was measured", probe.fired)
+        assertNull(
+            "the declined race was still on disk when the countdown started; a process death in " +
+                "this window would offer to resume a race the sailor said no to",
+            snapshotInsideWindow,
         )
     }
 

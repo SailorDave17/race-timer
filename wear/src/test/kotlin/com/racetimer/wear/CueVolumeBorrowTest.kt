@@ -3,6 +3,7 @@ package com.racetimer.wear
 import android.content.Context
 import android.media.AudioManager
 import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.CueStream
 import com.racetimer.shared.raisedCueVolume
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,6 +15,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
 /**
  * The #95 volume the service borrows for a race, and the promise that it gives it back.
@@ -157,6 +159,45 @@ class CueVolumeBorrowTest {
         assertNull(
             "a refused raise left a record claiming a change it never made -- the next launch " +
                 "would restore a volume the sailor has since set themselves",
+            TimerService.raisedCueVolumeRecord(svc),
+        )
+    }
+
+    @Test
+    @Config(shadows = [IndexIgnoringAudioManager::class])
+    fun `a stream that pins its index without reporting itself muted is also a refusal`() {
+        // The other conjunct of the read-back, and the one no other test reaches.
+        //
+        // `setStreamVolumeChecked` requires BOTH `getStreamVolume(stream) == volume` and
+        // `!isStreamMute(stream)`. Under the stock shadow only the second can ever fire: the
+        // requested index is written straight into the stream, and the target `raisedCueVolume`
+        // computes comes from that same stream's maximum, so the read-back always equals the
+        // request. The value comparison is not merely untested, it is unreachable through the
+        // service -- so deleting it left all of these tests green.
+        //
+        // It is not hypothetical on this watch. `WearCueAudioProfile` records `STREAM_ALARM`
+        // reporting `Muted: false` while aliased to a muted `STREAM_NOTIFICATION`; a stream that
+        // holds an index while calling itself unmuted is that shape.
+        val svc = createdService()
+        val audio = audio(svc)
+        audio.ringerMode = AudioManager.RINGER_MODE_NORMAL
+
+        svc.onStartCommand(TimerService.startIntent(svc, BuiltInSequences.usSailing.id), 0, 1)
+
+        assertTrue(
+            "a stream that ignored the write was reported as raised",
+            svc.cueVolumeRefused,
+        )
+        // Which conjunct refused, asserted rather than assumed. Without this the test would pass
+        // just as well if the mute check were the one that fired, and it would be measuring the
+        // clause the other tests already cover (cairn `prove-a-guard-test-can-fail`, tenth outcome:
+        // a refusal was asserted, a refusal occurred, it was not the one under test).
+        assertFalse(
+            "the mute flag fired, so this is not exercising the value comparison",
+            audio.isStreamMute(WearCueAudioProfile.legacyStreamFor(CueStream.MEDIA)),
+        )
+        assertNull(
+            "a refused raise left a record claiming a change it never made",
             TimerService.raisedCueVolumeRecord(svc),
         )
     }
