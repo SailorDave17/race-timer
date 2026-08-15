@@ -152,24 +152,45 @@ Assessed for #186's automation criterion, against the module layout as of #200:
 So the delivery half of this check is **permanently manual** — that is a property of what is being
 measured, not a gap a future harness closes.
 
-### The declaration half is now startable — trigger fired 2026-08-14
+### The declaration half is automated — landed 2026-08-15 ([#245])
 
-[#160] gave `wear/` a test source set, which is the event the paragraph above was waiting on. The
-deferred fragment is a **change-detector on the declaration**: a test pinning
-`WearHapticUsagePolicy.vibrationUsageFor` to `USAGE_TOUCH` for both usages, turning an accidental
-edit into a red build — trigger 3 above, automated. It asserts what is *declared* and says nothing
-about what the platform does with it, so it replaces none of the arms.
+[#160] gave `wear/` a test source set, which is the event the paragraph above was waiting on, and the
+deferred fragment is now built: `HapticUsageDeclarationTest` under `wear/src/test/`, pinning
+`WearHapticUsagePolicy.vibrationUsageFor` to `USAGE_TOUCH` for **both** usages. An accidental edit
+is a red build — trigger 3 above, automated. `HapticManager`'s KDoc sentence *"a later edit that
+drops the attributes will go green"* is now narrower than it was: it still holds for the `vibrate`
+call itself, and no longer holds for the constant that call declares.
 
-It was **not** written as part of #160, which is scoped to the watch's orchestration, and it is
-tracked as its own story rather than left as a sentence here — a deferred remedy whose trigger has
-fired and which nothing tracks is the state this document was trying to avoid.
+**It asserts what is *declared* and nothing about what the platform does with it, so it replaces
+none of the arms.** The delivery half stays permanently manual, for the reason given above — the
+subject is this watch's zen policy, and no harness in this repo executes that policy.
 
-**The scope condition it has to satisfy, which #160 created:** `wear/src/test/` is governed by
+Three limits, stated because a change-detector reads as broader cover than it is:
+
+- **A collapse of the two branches is invisible to it.** `CUE` and `FEEDBACK` resolve to the same
+  constant today, so rewriting the `when` as one unconditional return produces exactly the values
+  the test expects. *Measured* as part of the story's mutation pass: that mutation reddened **0 of
+  32** tests, as predicted. What such a change would delete is the record of a decision, and no
+  value assertion can see a record.
+- **A third `HapticUsage` value is caught by the compiler, not by this test** — the exhaustive `when`
+  in `HapticManager` fails to compile first. *Measured*: that mutation produced a compile error and
+  wrote no test results at all.
+- **The pre-33 route is out of scope by construction.** Below API 33 the attribution travels as
+  `AudioAttributes`, which is a single shared constant in `:shared-android` and is *not* supplied
+  through `HapticUsagePolicy`. It has never been measured on any device this app runs on, and the
+  only watch available is API 36 and cannot execute that branch. The test asserts the policy's
+  surface is `vibrationUsageFor` alone, so the day a pre-33 answer is added to the seam, that
+  assertion reddens and the question gets asked rather than inherited.
+
+**The scope condition it satisfies, which #160 created:** `wear/src/test/` is governed by
 `AudioHapticBoundaryTest`, which fails the build on any test naming `HapticManager`,
-`VibrationEffect` or `Vibrator`. That is not an obstacle to this test and the distinction is the
-point — `WearHapticUsagePolicy.vibrationUsageFor` returns a `VibrationAttributes.USAGE_*` constant
-and calls nothing, so pinning it is bookkeeping of exactly the kind the boundary permits, in the
-same class as the foreground-service-type assertion that shipped with #160. A test that went on to
-assert the vibration was *delivered* would be refused, correctly.
+`VibrationEffect` or `Vibrator` — in its prose as well as its code, since that scan reads comments
+deliberately. `WearHapticUsagePolicy.vibrationUsageFor` returns a `VibrationAttributes.USAGE_*`
+constant and calls nothing, so pinning it is bookkeeping of exactly the kind the boundary permits,
+in the same class as the foreground-service-type assertion that shipped with #160. The test was
+written inside that boundary rather than by widening it, and `AudioHapticBoundaryTest` still passes.
+A test that went on to assert the vibration was *delivered* would be refused, correctly.
+
+[#245]: https://github.com/SailorDave17/race-timer/issues/245
 
 [#160]: https://github.com/SailorDave17/race-timer/issues/160

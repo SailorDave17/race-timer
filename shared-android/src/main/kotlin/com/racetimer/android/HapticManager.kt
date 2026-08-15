@@ -151,7 +151,9 @@ class HapticManager(
      * build file, and no unit test can reach a `vibrate` call regardless. The only assertions
      * available are a bytecode read and the on-watch `dumpsys vibrator_manager` table in #144 —
      * neither of which is a regression test. **A later edit that drops the attributes will go
-     * green.**
+     * green** — still true of the `vibrate` call itself, and **no longer true of the constant it
+     * declares**, which [#245](https://github.com/SailorDave17/race-timer/issues/245) pinned on
+     * 2026-08-15 (`HapticUsageDeclarationTest`, under `wear/src/test/`).
      *
      * *Narrowed by [#160](https://github.com/SailorDave17/race-timer/issues/160), 2026-08-14.* That
      * issue gave `:wear` a test source set, so the sentence above used to name two modules and now
@@ -160,7 +162,10 @@ class HapticManager(
      * at all — so the route is now closed by an assertion rather than merely absent. What #160 *does*
      * make possible is the narrower change-detector `docs/dnd-haptics-recheck.md` defers: pinning
      * `WearHapticUsagePolicy.vibrationUsageFor`, which is a declaration and not a `vibrate` call.
-     * That is tracked as its own story; it is not this paragraph becoming false.
+     * *Built by [#245](https://github.com/SailorDave17/race-timer/issues/245), 2026-08-15* — so the
+     * deferral above is discharged rather than outstanding, and the doc records the three things the
+     * pin deliberately does not cover: a collapse of the two branches, a third usage value, and the
+     * pre-33 route below.
      *
      * *Re-read 2026-08-13 on the #200 release build*: `HapticUsagePolicy.vibrationUsageFor` reaches
      * `VibrationAttributes$Builder.setUsage` for both usages, the supplied constant is `bipush 18`
