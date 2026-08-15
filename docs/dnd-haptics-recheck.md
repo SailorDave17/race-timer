@@ -146,12 +146,30 @@ Assessed for #186's automation criterion, against the module layout as of #200:
   it keeps certifying the world it was written against.
 - `:shared-android` has **no test source set by decision** — its build file records why, and the
   audio/haptic path is exactly the scope the testing strategy rules out for Robolectric.
-- `wear/` has no test source set yet ([#160](https://github.com/SailorDave17/race-timer/issues/160),
-  open). Once it lands, the one automatable fragment is a **change-detector on the declaration**: a
-  test pinning `WearHapticUsagePolicy.vibrationUsageFor` to `USAGE_TOUCH` for both usages would turn
-  an accidental edit into a red build — trigger 3 above, automated. It asserts what is declared and
-  says nothing about what the platform does with it, so it replaces none of the arms.
+- `wear/` had no test source set at all when this was written. **[#160] landed it on 2026-08-14, so
+  the condition this paragraph deferred on has been met** — see below.
 
 So the delivery half of this check is **permanently manual** — that is a property of what is being
-measured, not a gap a future harness closes — and the declaration half is a one-line test worth
-adding when #160 gives it a home.
+measured, not a gap a future harness closes.
+
+### The declaration half is now startable — trigger fired 2026-08-14
+
+[#160] gave `wear/` a test source set, which is the event the paragraph above was waiting on. The
+deferred fragment is a **change-detector on the declaration**: a test pinning
+`WearHapticUsagePolicy.vibrationUsageFor` to `USAGE_TOUCH` for both usages, turning an accidental
+edit into a red build — trigger 3 above, automated. It asserts what is *declared* and says nothing
+about what the platform does with it, so it replaces none of the arms.
+
+It was **not** written as part of #160, which is scoped to the watch's orchestration, and it is
+tracked as its own story rather than left as a sentence here — a deferred remedy whose trigger has
+fired and which nothing tracks is the state this document was trying to avoid.
+
+**The scope condition it has to satisfy, which #160 created:** `wear/src/test/` is governed by
+`AudioHapticBoundaryTest`, which fails the build on any test naming `HapticManager`,
+`VibrationEffect` or `Vibrator`. That is not an obstacle to this test and the distinction is the
+point — `WearHapticUsagePolicy.vibrationUsageFor` returns a `VibrationAttributes.USAGE_*` constant
+and calls nothing, so pinning it is bookkeeping of exactly the kind the boundary permits, in the
+same class as the foreground-service-type assertion that shipped with #160. A test that went on to
+assert the vibration was *delivered* would be refused, correctly.
+
+[#160]: https://github.com/SailorDave17/race-timer/issues/160

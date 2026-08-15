@@ -147,12 +147,20 @@ class HapticManager(
      * ### Why no test asserts what is passed here (#144 AC 4)
      *
      * Nothing CI runs can see it, and that is a property of the module layout rather than an
-     * oversight. Neither `:shared-android` nor `:wear` has a test source set — the second is
-     * [#160](https://github.com/SailorDave17/race-timer/issues/160), the first is a decision recorded
-     * in this module's build file — and no unit test can reach a `vibrate` call regardless. The only
-     * assertions available are a bytecode read and the on-watch `dumpsys vibrator_manager` table in
-     * #144 — neither of which is a regression test. **A later edit that drops the attributes will go
+     * oversight. `:shared-android` has no test source set by decision, recorded in this module's
+     * build file, and no unit test can reach a `vibrate` call regardless. The only assertions
+     * available are a bytecode read and the on-watch `dumpsys vibrator_manager` table in #144 —
+     * neither of which is a regression test. **A later edit that drops the attributes will go
      * green.**
+     *
+     * *Narrowed by [#160](https://github.com/SailorDave17/race-timer/issues/160), 2026-08-14.* That
+     * issue gave `:wear` a test source set, so the sentence above used to name two modules and now
+     * names one. It does **not** reopen this: the granted scope is the non-audio surfaces, and
+     * `AudioHapticBoundaryTest` fails the build on a test naming `HapticManager` or `VibrationEffect`
+     * at all — so the route is now closed by an assertion rather than merely absent. What #160 *does*
+     * make possible is the narrower change-detector `docs/dnd-haptics-recheck.md` defers: pinning
+     * `WearHapticUsagePolicy.vibrationUsageFor`, which is a declaration and not a `vibrate` call.
+     * That is tracked as its own story; it is not this paragraph becoming false.
      *
      * *Re-read 2026-08-13 on the #200 release build*: `HapticUsagePolicy.vibrationUsageFor` reaches
      * `VibrationAttributes$Builder.setUsage` for both usages, the supplied constant is `bipush 18`

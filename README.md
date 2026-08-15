@@ -173,21 +173,22 @@ race-timer/
 │       │       └── SequencePickerScreen.kt
 │       └── test/                 — JVM unit tests; Robolectric only for the manifest
 └── wear/             # Wear OS standalone app
-    └── src/main/
-        ├── kotlin/com/racetimer/wear/
-        │   ├── MainActivity.kt         — Compose UI, service binding, screen policy
-        │   ├── TimerService.kt         — foreground service, cue scheduling, feedback
-        │   ├── WearCueAudioProfile.kt  — the watch's measured audio answers (#95)
-        │   ├── WearHapticUsagePolicy.kt— the watch's measured DND answer (#144/#187)
-        │   ├── RaceTimerApplication.kt — notification channel creation
-        │   └── ui/
-        │       ├── Theme.kt
-        │       ├── TimerScreen.kt            — countdown face
-        │       ├── SequencePickerScreen.kt
-        │       ├── CustomDurationScreen.kt   — whole-minute stepper for Custom
-        │       ├── LeadInPickerScreen.kt     — box-alert presets
-        │       └── LeadInDurationScreen.kt   — dialled box-alert value
-        └── res/
+    ├── src/main/
+    │   ├── kotlin/com/racetimer/wear/
+    │   │   ├── MainActivity.kt         — Compose UI, service binding, screen policy
+    │   │   ├── TimerService.kt         — foreground service, cue scheduling, feedback
+    │   │   ├── WearCueAudioProfile.kt  — the watch's measured audio answers (#95)
+    │   │   ├── WearHapticUsagePolicy.kt— the watch's measured DND answer (#144/#187)
+    │   │   ├── RaceTimerApplication.kt — notification channel creation
+    │   │   └── ui/
+    │   │       ├── Theme.kt
+    │   │       ├── TimerScreen.kt            — countdown face
+    │   │       ├── SequencePickerScreen.kt
+    │   │       ├── CustomDurationScreen.kt   — whole-minute stepper for Custom
+    │   │       ├── LeadInPickerScreen.kt     — box-alert presets
+    │   │       └── LeadInDurationScreen.kt   — dialled box-alert value
+    │   └── res/
+    └── test/                 — JVM unit tests (#160); Robolectric, non-audio surfaces only
 ```
 
 The dependency direction is one-way and worth preserving: each app module depends on
@@ -249,11 +250,11 @@ successful push is what both states look like.
 ./gradlew :phone:installDebug
 ```
 
-Everything above except the two `installDebug` lines is exactly what CI enforces on every pull
-request — read the list off [`.github/workflows/ci.yml`](.github/workflows/ci.yml) rather than
-counting it here. `bundleRelease` joined the gate in #129 so that R8 runs on every push rather than
-only when somebody remembered, and the phone steps joined it in #197, in the same change that
-created the module.
+Everything above except the two `installDebug` lines is what CI enforces on every pull request — read
+the list off [`.github/workflows/ci.yml`](.github/workflows/ci.yml) rather than counting it here,
+because this block has fallen behind that file twice. `bundleRelease` joined the gate in #129 so that
+R8 runs on every push rather than only when somebody remembered, the phone steps joined it in #197 in
+the same change that created the module, and `:wear:testDebugUnitTest` joined it in #160.
 
 It behaves differently here than on CI, which matters when you run the gate locally: this machine has
 a `keystore.properties` and therefore signs, while CI has none and builds unsigned — see
