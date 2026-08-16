@@ -374,8 +374,10 @@ the same decision from the message surface's side.
 
 **A low-battery watch has not been tested.** Every measurement in this file was taken on a watch on
 its charger, which is the condition under which a watch dozes least — the bias runs toward a clean
-result. A watch at 10 % on a sailor's wrist is the harsher case and remains unmeasured; #16 is the
-battery baseline that would reach it.
+result. A watch at 10 % on a sailor's wrist is the harsher case and remains unmeasured. #16's
+battery baseline has since shipped and does **not** reach it either — both its runs start near a
+full charge, at 100 % and 94 % ([`battery-baseline.md`](battery-baseline.md)) — so this gap is
+still open rather than closed by that story.
 
 ## Limits of these measurements
 
@@ -388,4 +390,5 @@ battery baseline that would reach it.
 - **`sleptMs` is a whole-device measure, not a per-cue one.** It reports suspend accumulated since the
   race started, so a cue's own deferral has to be read from the *increase* between consecutive cues.
 - **Battery state changes the answer.** These runs were on a watch on its charger, which is the
-  condition under which a watch dozes least. A low battery is the harsher case and is not covered.
+  condition under which a watch dozes least. A low battery is the harsher case and is not covered
+  here; what a race costs the watch off charger is in [`battery-baseline.md`](battery-baseline.md).
