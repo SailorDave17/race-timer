@@ -104,17 +104,30 @@ class PhoneTimerService : Service() {
         pendingRestoreNotice.also { pendingRestoreNotice = null }
 
     /**
-     * What a launch should open on, decided by the shared plan from persistence alone (#205).
+     * What a launch should open on, decided by the shared plan from persistence alone (#205, #209).
      *
-     * The phone passes no remembered pick - the picker's memory is its own story - so the plan
-     * either offers the saved race on its own sequence or reports nothing to offer.
+     * Both records go in, and the shared plan ranks them: a saved race outranks a remembered pick,
+     * because it *is* a pick, made more recently and with a race attached. #209 supplied the second
+     * argument - it was `null` until then, with a comment saying the picker's memory was its own
+     * story, and this is that story.
+     *
+     * The fall-through is what makes the two independent (#88): a saved race whose id resolves to
+     * nothing does not drag the pick down with it.
      */
     fun launchPlan(): LaunchPlan = launchPlan(
         snapshot = persistence.saved(),
-        pickedSequenceId = null,
+        pickedSequenceId = persistence.pickedSequenceId(),
         nowElapsedMs = SystemClock.elapsedRealtime(),
         nowWallMs = System.currentTimeMillis(),
     )
+
+    /**
+     * Remember the sequence the officer just chose, so the next cold launch opens on it (#209).
+     *
+     * Called for every selection including Custom, whose id carries its own duration - which is
+     * what makes a re-run of last week's 8-minute start a single tap rather than a re-dial.
+     */
+    fun savePickedSequence(sequenceId: String) = persistence.savePickedSequenceId(sequenceId)
 
     private val handler = Handler(Looper.getMainLooper())
 

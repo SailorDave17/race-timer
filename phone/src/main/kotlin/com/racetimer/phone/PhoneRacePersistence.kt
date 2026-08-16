@@ -13,7 +13,7 @@ import com.racetimer.shared.snapshotFrom
  *
  * Every *decision* about the persisted race — is it a race, does it restore, what does a launch
  * offer — lives in `shared/RestorePlan.kt` and `TimerEngine`, where the JVM suite reaches it and
- * where the watch reads the identical rules. This class only moves four values to disk and back;
+ * where the watch reads the identical rules. This class only moves values to disk and back;
  * a rule that crept in here would be the second copy the restore path's every shipped defect came
  * from (`resumeOfferRemainingMs`, duplicated inverted — see RestorePlan's header).
  *
@@ -52,8 +52,26 @@ class PhoneRacePersistence(context: Context) {
     )
 
     /**
+     * Remember the sequence the officer just chose (#209).
+     *
+     * `apply()` for the same reason [persist] uses it, and with less at stake: losing this costs the
+     * next launch its opening pick, never a race.
+     */
+    fun savePickedSequenceId(sequenceId: String) {
+        prefs.edit().putString(PREF_PICKED_SEQUENCE_ID, sequenceId).apply()
+    }
+
+    /** The sequence last chosen, or null on a first-ever launch. Read by [PhoneTimerService.launchPlan]. */
+    fun pickedSequenceId(): String? = prefs.getString(PREF_PICKED_SEQUENCE_ID, null)
+
+    /**
      * Forget the race in flight. By key, not `clear()` — the watch learned that a blanket clear
      * silently takes unrelated keys with it the day somebody adds one (#88).
+     *
+     * [PREF_PICKED_SEQUENCE_ID] is **not** in this list, and that omission is the whole of #88's
+     * lesson rather than an oversight: this method runs on Stop and at the post-gun teardown, so a
+     * pick cleared here would be remembered exactly while a race was running and forgotten in every
+     * ordinary case — a cold launch after three Club races reverting to the default.
      */
     fun clear() {
         prefs.edit()
@@ -70,5 +88,18 @@ class PhoneRacePersistence(context: Context) {
         const val PREF_GUN_ELAPSED = "gun_elapsed_ms"
         const val PREF_GUN_WALL_CLOCK = "gun_wall_clock_ms"
         const val PREF_CAPTURED_ELAPSED = "captured_elapsed_ms"
+
+        /**
+         * The sequence the officer last chose — a preference that outlives every race, not one of
+         * the four keys above that describe a race in flight (#209).
+         *
+         * Shares the prefs file rather than opening a second one: same owner, same lifetime. What
+         * matters is that no clear path touches it, which [clear] states in its own words.
+         *
+         * A Custom race needs nothing else stored. `custom_8m` carries its duration inside the id,
+         * so `BuiltInSequences.resolve` rebuilds the whole sequence from this one string — there is
+         * no second value here that could disagree with it.
+         */
+        const val PREF_PICKED_SEQUENCE_ID = "picked_sequence_id"
     }
 }
