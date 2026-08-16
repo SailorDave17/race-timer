@@ -286,11 +286,13 @@ class TimerEngine(
      *
      * A double-tap guard prevents a second snap within [guardMs] milliseconds.
      *
-     * There is no separate correction ceiling. One existed while this rounded to nearest, to stop a
-     * round-down flooring 3:55 to 3:00 — a 55 s deletion that would silently make the sailor OCS.
-     * Under the late-tap rule 3:55 rounds *up*, so that case cannot arise, and a ceiling left in
-     * place would invert the rule: a floor of 31–49 s would exceed it and fall back to nearest,
-     * which rounds up (#150).
+     * There is no separate correction ceiling, and reinstating one would be a mistake rather than a
+     * belt-and-braces. The old 30 s ceiling existed to stop a round-down flooring 3:55 to 3:00 — a
+     * 55 s deletion that would silently make the sailor OCS — and under the late-tap rule 3:55
+     * rounds *up*, so that case cannot arise at all. More than that, a 30 s ceiling is now
+     * *incompatible* with the rule rather than redundant to it: this rule's own largest correction
+     * is a 59 s floor, so a ceiling would refuse or redirect precisely the corrections the change
+     * exists to enable (#150).
      *
      * @param guardMs Minimum interval between consecutive syncs.
      */
