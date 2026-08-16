@@ -64,6 +64,10 @@ import com.racetimer.shared.backgroundArgbFor
 import com.racetimer.shared.bannerFitsRoundScreen
 import com.racetimer.shared.formatCountdown
 import com.racetimer.shared.formatElapsed
+import com.racetimer.shared.NEUTRAL_BUTTON_ARGB
+import com.racetimer.shared.ON_ACCENT_ARGB
+import com.racetimer.shared.PRIMARY_ARGB
+import com.racetimer.shared.SECONDARY_ARGB
 import kotlinx.coroutines.delay
 
 /** How long a Tier 1 banner stays up, counted from the composition that puts it on screen (#102). */
@@ -329,7 +333,7 @@ fun TimerScreen(
                 Text(
                     text = syncLabel,
                     style = MaterialTheme.typography.caption1,
-                    color = Color(0xFFFFD700),
+                    color = Color(PRIMARY_ARGB),
                     textAlign = TextAlign.Center,
                 )
             } else {
@@ -594,8 +598,8 @@ private fun StartButton(onClick: () -> Unit) {
             .fillMaxWidth(0.68f)
             .height(56.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFFFFD700),
-            contentColor = Color(0xFF1A1A2E),
+            backgroundColor = Color(PRIMARY_ARGB),
+            contentColor = Color(ON_ACCENT_ARGB),
         ),
     ) {
         Text(
@@ -631,8 +635,8 @@ private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
                 .weight(1f)
                 .height(52.dp),
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = Color(0xFFFFD700),
-                contentColor = Color(0xFF1A1A2E),
+                backgroundColor = Color(PRIMARY_ARGB),
+                contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
             Text(
@@ -649,7 +653,7 @@ private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
                 .weight(1f)
                 .height(52.dp),
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = Color(0xFF555577),
+                backgroundColor = Color(NEUTRAL_BUTTON_ARGB),
                 contentColor = Color.White,
             ),
         ) {
@@ -690,8 +694,8 @@ private fun StartWithLeadIn(onStart: () -> Unit, onLeadIn: () -> Unit) {
                 .weight(1f)
                 .height(52.dp),
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = Color(0xFFFFD700),
-                contentColor = Color(0xFF1A1A2E),
+                backgroundColor = Color(PRIMARY_ARGB),
+                contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
             Text(
@@ -708,8 +712,8 @@ private fun StartWithLeadIn(onStart: () -> Unit, onLeadIn: () -> Unit) {
                 .weight(1f)
                 .height(52.dp),
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = Color(0xFF64B5F6),
-                contentColor = Color(0xFF1A1A2E),
+                backgroundColor = Color(SECONDARY_ARGB),
+                contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
             Text(
@@ -738,7 +742,7 @@ private fun WideStopButton(onClick: () -> Unit) {
             .fillMaxWidth(0.68f)
             .height(56.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFF555577),
+            backgroundColor = Color(NEUTRAL_BUTTON_ARGB),
             contentColor = Color.White,
         ),
     ) {
@@ -791,8 +795,8 @@ private fun DoneButton(onClick: () -> Unit) {
             .fillMaxWidth(0.68f)
             .height(56.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFFFFD700),
-            contentColor = Color(0xFF1A1A2E),
+            backgroundColor = Color(PRIMARY_ARGB),
+            contentColor = Color(ON_ACCENT_ARGB),
         ),
     ) {
         Text(
@@ -810,8 +814,8 @@ private fun SyncButton(onClick: () -> Unit) {
         onClick = onClick,
         modifier = Modifier.size(64.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFF64B5F6),
-            contentColor = Color(0xFF1A1A2E),
+            backgroundColor = Color(SECONDARY_ARGB),
+            contentColor = Color(ON_ACCENT_ARGB),
         ),
     ) {
         Text(
@@ -829,7 +833,7 @@ private fun SecondaryButton(label: String, onClick: () -> Unit) {
         onClick = onClick,
         modifier = Modifier.size(56.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFF555577),
+            backgroundColor = Color(NEUTRAL_BUTTON_ARGB),
             contentColor = Color.White,
         ),
     ) {

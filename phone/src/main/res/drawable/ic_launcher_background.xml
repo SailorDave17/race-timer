@@ -6,9 +6,14 @@
 <!-- Adaptive-icon background layer: full-bleed charcoal grey, the field half of the scarlet-and-grey
      scheme (owner decision, 2026-08-12).
 
-     This deliberately no longer matches colors.xml bg_normal (#1A1A2E). It did until the recolour,
-     and the comment here said so; the countdown UI is unchanged and only the icon and the store
-     artwork moved, so the tie is broken on purpose rather than by drift. -->
+     This deliberately no longer matches the app's normal-state background, `BG_NORMAL_ARGB` in
+     shared/src/main/kotlin/com/racetimer/shared/MessageContrast.kt. It did until the recolour, and
+     the comment here said so; the countdown UI is unchanged and only the icon and the store artwork
+     moved, so the tie is broken on purpose rather than by drift.
+
+     The colour is named and not repeated. This comment used to cite `colors.xml`, which #198
+     deleted: it was read by no code, and three of its four state values had drifted from the
+     contrast-tested ones while every comment pointing at it still read as current. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"

@@ -17,6 +17,10 @@ package com.racetimer.shared
 // The colours are here rather than in `wear/` deliberately. A guard that measured its own private
 // copy of `#FFC107` would pass forever while the screen drew something else — it has to read the
 // value the UI actually uses, so this file is the single definition and `TimerScreen` imports it.
+//
+// The rest of the palette — the accents, surfaces and button fills that are not a countdown state
+// and are not contrast-measured — is `Palette.kt`, moved out of the watch by #198 on the same
+// argument. `ON_ACCENT_ARGB` there is defined from [BG_NORMAL_ARGB] below rather than repeating it.
 // ---------------------------------------------------------------------------
 
 // --- Background states ------------------------------------------------------

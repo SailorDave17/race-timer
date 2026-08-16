@@ -6,11 +6,12 @@ import org.junit.Test
 import java.io.File
 
 /**
- * The structural criteria of #197 and #199, asserted rather than greped by hand.
+ * The structural criteria of #197, #198 and #199, asserted rather than greped by hand.
  *
- * #197's AC 3 and AC 5 and #199's AC 4 all say "grep-verified", and a grep somebody remembers to run
- * is the shape of rule this repo has already watched decay — the same argument `MessageContrast`
- * makes for moving a contrast table out of prose. So they run in CI, on every push, as tests.
+ * #197's AC 3 and AC 5, #198's AC 1 and AC 5 and #199's AC 4 all say "grep-verified", and a grep
+ * somebody remembers to run is the shape of rule this repo has already watched decay — the same
+ * argument `MessageContrast` makes for moving a contrast table out of prose. So they run in CI, on
+ * every push, as tests.
  *
  * The scan is deliberately confined to `src/main/kotlin`. A guard whose subject is source text
  * otherwise fires on the file explaining it (cairn
@@ -50,11 +51,22 @@ class ModuleBoundaryTest {
             .filter { it.isFile && it.extension == "kt" }
             .toList()
 
-    @Test
-    fun `the phone module holds no colour of its own`() {
-        val sources = kotlinSourcesIn("phone")
+    /**
+     * One rule, one implementation, both app modules (#198 AC 1, #197 AC 3).
+     *
+     * The watch's half arrived when #198 moved `Theme.kt`'s palette into `shared/Palette.kt`; before
+     * that the same rule was asserted for `:phone` only, and this method's own message said the
+     * watch's palette was still to come. Writing the wear scan as a second test — or as a second
+     * test in `:wear` — would have put two copies of one rule in the tree on the day the story whose
+     * whole subject is *a value must exist once* landed. So it takes the module as an argument.
+     *
+     * Scanning `:wear` from `:phone` is not the tidiest home for it, and it is the one that cannot
+     * drift. Both modules' tests run on every push (`ci.yml`), so nothing is lost by where it sits.
+     */
+    private fun assertNoColourLiteralsIn(module: String, atLeast: Int) {
+        val sources = kotlinSourcesIn(module)
         // A guard that scanned nothing would pass silently — the absent-result-reads-as-clean shape.
-        assertTrue("no phone sources were scanned", sources.size >= 4)
+        assertTrue("no $module sources were scanned", sources.size >= atLeast)
 
         val literal = Regex("0x[0-9A-Fa-f]{6,8}")
         val offenders = sources.flatMap { file ->
@@ -63,12 +75,49 @@ class ModuleBoundaryTest {
                 .map { (index, line) -> "${file.name}:${index + 1}: ${line.trim()}" }
         }
         assertEquals(
-            "Colour literals under :phone. Every colour here comes from shared/MessageContrast.kt " +
-                "or a Compose named absolute; the watch's palette moves to shared code in #198. " +
-                "(The launcher-icon vectors under res/ are a deliberate copy of the watch's and " +
-                "are outside this scan — see phone/src/main/res/drawable/.)",
+            "Colour literals under :$module. Every colour in either app module comes from " +
+                "shared/Palette.kt, shared/MessageContrast.kt or a Compose named absolute — one " +
+                "definition both form factors read, which is what #198 bought and what a literal " +
+                "here spends. (The launcher-icon vectors under res/ are a deliberate per-module " +
+                "copy and are outside this scan — see $module/src/main/res/drawable/.)",
             emptyList<String>(),
             offenders,
+        )
+    }
+
+    @Test
+    fun `the phone module holds no colour of its own`() = assertNoColourLiteralsIn("phone", atLeast = 4)
+
+    @Test
+    fun `the watch module holds no colour of its own`() = assertNoColourLiteralsIn("wear", atLeast = 10)
+
+    /**
+     * #198 AC 2: the colour palette does not come back as a resource.
+     *
+     * `wear/src/main/res/values/colors.xml` was deleted by that story. It was read by no code — only
+     * by comments — and three of its four state values had drifted from the contrast-tested ones in
+     * `shared/MessageContrast.kt` while every comment citing it still read as current. Nothing about
+     * that was visible: a resource nobody references is invisible to the compiler, and this repo has
+     * no lint step.
+     *
+     * The literal scan above cannot see this class, because it reads `src/main/kotlin` only. So the
+     * deletion is asserted here, or it is an event that happened once rather than a property that
+     * holds. If a themed resource ever genuinely needs one, this test is where that decision gets
+     * taken — deliberately, with the history above in front of whoever takes it.
+     */
+    @Test
+    fun `neither app module keeps a colour palette in resources`() {
+        val found = listOf("wear", "phone")
+            .map { File(repoRoot, "$it/src/main/res/values/colors.xml") }
+            .filter { it.isFile }
+            .map { it.relativeTo(repoRoot).path }
+        assertEquals(
+            "A resource colour palette is back. Colours live once, in shared/Palette.kt or " +
+                "shared/MessageContrast.kt, where both form factors read them and a test pins " +
+                "them; a res/values copy is read by neither module's Kotlin and drifts unwatched, " +
+                "which is exactly what #198 removed.",
+            emptyList<String>(),
+            found,
         )
     }
 

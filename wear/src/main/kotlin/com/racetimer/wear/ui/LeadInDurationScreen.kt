@@ -30,6 +30,10 @@ import androidx.wear.compose.material.Text
 import com.racetimer.shared.BOX_ALERT_MAX_SECONDS
 import com.racetimer.shared.BOX_ALERT_MIN_SECONDS
 import com.racetimer.shared.leadInSecondsFor
+import com.racetimer.shared.DISABLED_BUTTON_ARGB
+import com.racetimer.shared.ON_ACCENT_ARGB
+import com.racetimer.shared.PRIMARY_ARGB
+import com.racetimer.shared.SECONDARY_ARGB
 
 /**
  * Sets a lead-in the presets do not cover, in whole seconds.
@@ -117,8 +121,8 @@ fun LeadInDurationScreen(
                     .fillMaxWidth(0.6f)
                     .height(48.dp),
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = Color(0xFFFFD700),
-                    contentColor = Color(0xFF1A1A2E),
+                    backgroundColor = Color(PRIMARY_ARGB),
+                    contentColor = Color(ON_ACCENT_ARGB),
                 ),
             ) {
                 Text(
@@ -174,9 +178,9 @@ private fun LeadStepButton(glyph: String, enabled: Boolean, onClick: () -> Unit)
         enabled = enabled,
         modifier = Modifier.size(44.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFF64B5F6),
-            contentColor = Color(0xFF1A1A2E),
-            disabledBackgroundColor = Color(0xFF3A4A5E),
+            backgroundColor = Color(SECONDARY_ARGB),
+            contentColor = Color(ON_ACCENT_ARGB),
+            disabledBackgroundColor = Color(DISABLED_BUTTON_ARGB),
             disabledContentColor = Color.White.copy(alpha = 0.5f),
         ),
     ) {

@@ -10,7 +10,8 @@
      nothing else has to survive.
 
      Scarlet and grey, owner decision 2026-08-12, replacing gold on navy. The scarlet is a near
-     neighbour of colors.xml bg_final_ten, the final-ten-seconds alarm. Harmless for an icon, which
+     neighbour of `BG_FINAL_TEN_ARGB` (shared/.../MessageContrast.kt), the final-ten-seconds alarm,
+     which #198 made the one definition of it. Harmless for an icon, which
      is never on screen during a race — but it constrains any future theme change, because a
      countdown UI in this palette would cost that alarm its punch.
 
