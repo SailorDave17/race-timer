@@ -9,11 +9,16 @@ import com.racetimer.shared.BG_NORMAL_ARGB
 /**
  * The phone app's theme.
  *
- * Every colour here is either a shared constant from `shared/MessageContrast.kt` or one of Compose's
- * own named absolutes — there is no palette literal in this module, by rule (#197 AC 3, asserted by
- * `ModuleBoundaryTest`). The watch's `Theme.kt` still carries its gold/navy literals; moving those
- * into shared code so both modules read one palette is #198, and this theme is deliberately thin so
- * that story has nothing to unpick here.
+ * Every colour here is either a shared constant — from `shared/MessageContrast.kt` or, since #198,
+ * `shared/Palette.kt` — or one of Compose's own named absolutes. There is no palette literal in this
+ * module, by rule (#197 AC 3 and #198 AC 5, asserted for both app modules by `ModuleBoundaryTest`).
+ * #198 moved the watch's gold/navy accents into that shared file, so the two form factors now read
+ * one palette rather than two matching copies; this theme stayed thin through it and had nothing to
+ * unpick.
+ *
+ * That it names only `BG_NORMAL_ARGB` is not an omission. The phone's chrome is white on the state
+ * colour by the reasoning below, so the accents are there to be reached for when a phone screen
+ * wants one — not to be adopted for the sake of it.
  *
  * Dark only. A committee-boat console in daylight wants maximum contrast, not a light scheme, and
  * the running screen paints its own state colour over this anyway.

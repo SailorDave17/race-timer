@@ -9,19 +9,34 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.racetimer.shared.BG_NORMAL_ARGB
+import com.racetimer.shared.ERROR_ARGB
+import com.racetimer.shared.ON_ACCENT_ARGB
+import com.racetimer.shared.PRIMARY_ARGB
+import com.racetimer.shared.PRIMARY_VARIANT_ARGB
+import com.racetimer.shared.SECONDARY_ARGB
+import com.racetimer.shared.SECONDARY_VARIANT_ARGB
+import com.racetimer.shared.SURFACE_ARGB
 
+// Every value here comes from `shared/Palette.kt` or `shared/MessageContrast.kt`, so the phone
+// module reads the same palette rather than a matching copy of it (#198). Colour literals under
+// `wear/src/main/kotlin` are asserted absent by `ModuleBoundaryTest`, and each shared constant is
+// pinned to its pre-move watch value by `PaletteTest` — the move is a relocation, not a retune.
+//
+// The four countdown state backgrounds are not part of this theme: `TimerScreen` paints them
+// itself from `backgroundArgbFor`, so `background` below is only what shows before a race starts.
 private val RaceTimerColors = Colors(
-    primary = Color(0xFFFFD700),          // Gold — primary action buttons
-    primaryVariant = Color(0xFFB8860B),    // Dark gold
-    secondary = Color(0xFF64B5F6),        // Light blue — secondary actions
-    secondaryVariant = Color(0xFF1565C0),
-    error = Color(0xFFCF6679),
-    onPrimary = Color(0xFF1A1A2E),
-    onSecondary = Color(0xFF1A1A2E),
+    primary = Color(PRIMARY_ARGB),
+    primaryVariant = Color(PRIMARY_VARIANT_ARGB),
+    secondary = Color(SECONDARY_ARGB),
+    secondaryVariant = Color(SECONDARY_VARIANT_ARGB),
+    error = Color(ERROR_ARGB),
+    onPrimary = Color(ON_ACCENT_ARGB),
+    onSecondary = Color(ON_ACCENT_ARGB),
     onError = Color.Black,
-    background = Color(0xFF1A1A2E),
+    background = Color(BG_NORMAL_ARGB),
     onBackground = Color.White,
-    surface = Color(0xFF2A2A40),
+    surface = Color(SURFACE_ARGB),
     onSurface = Color.White,
 )
 

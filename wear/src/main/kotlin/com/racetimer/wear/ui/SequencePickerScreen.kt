@@ -20,6 +20,7 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.RaceSequence
+import com.racetimer.shared.LIST_ROW_ARGB
 
 /**
  * Screen that lets the user pick a race sequence before starting.
@@ -77,7 +78,7 @@ private fun SequenceChip(label: String, onClick: () -> Unit) {
             )
         },
         colors = ChipDefaults.chipColors(
-            backgroundColor = Color(0xFF2A2A50),
+            backgroundColor = Color(LIST_ROW_ARGB),
             contentColor = Color.White,
         ),
     )
