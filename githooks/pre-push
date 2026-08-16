@@ -2,8 +2,19 @@
 # Refuse a local push to an owner-only branch outright, and gate the one branch
 # that may be pushed directly behind this repo's own checks.
 #
-# This file is a generic driver and is byte-identical in every repo. What
-# differs per repo is `githooks/checks` beside it - one shell command per line.
+# This file is a generic driver and is MEANT to be byte-identical in every repo.
+# What differs per repo is `githooks/checks` beside it - one shell command per
+# line.
+#
+# It is NOT byte-identical as of 2026-08-16. The open-pipe fix below landed in
+# cairn (and race-timer, which shares this driver) while `burgee` still carries
+# the previous text, and `Taskr`, `cohssa-attendance` and `maverick-smart-home`
+# carry three older versions that had already diverged. Enumerate with
+# `sha256sum */githooks/pre-push` from ~/Code rather than trusting this
+# paragraph. The claim is stated as an intention rather than a fact on purpose:
+# an assertion of byte-identity that nothing checks is the kind of line that goes
+# on reading as true after it stops being (see cairn
+# memory/global/a-computable-claim-does-not-belong-in-prose).
 #
 # Why this exists rather than branch protection: GitHub gates both classic
 # branch protection AND repository rulesets behind GitHub Pro for *private*
@@ -117,18 +128,35 @@ branch_listed_in_file() {  # $1 = branch, $2 = file
 # as the fail-open above and as Windows hazard 7: the instruction that tells you
 # when you are finished was not the thing doing the checking.
 #
-# Two shapes, because a hand run arrives two ways:
+# THREE shapes, because a hand run arrives three ways. The third was missing
+# until 2026-08-16 and it does not fail open - it HANGS, which is worse, because
+# a hung gate and a thorough gate look identical from outside:
 #   - stdin is a terminal -> `read` would BLOCK on the keyboard, so skip the loop.
 #   - stdin is empty/redirected (a script, or a tool whose stdin is /dev/null)
 #     -> the loop runs zero times and `saw_ref` stays 0.
-# Both mean "the owner asked for the checks", so both run them. Failing toward
-# RUNNING is the safe direction: a real push always carries refs, and the worst
-# case of a false positive is that a no-op push runs the list.
+#   - stdin is an OPEN PIPE WITH NOTHING COMING - not a terminal, not at EOF.
+#     `[ -t 0 ]` is false, so `read` blocks on a line that never arrives. This is
+#     the ordinary state in an agent harness, and in any shell whose stdin was
+#     repurposed earlier in the same call (a heredoc will do it). Measured
+#     2026-08-16: `sh githooks/pre-push` blocked past 600 s having printed
+#     nothing, minutes after the same command ran clean.
+#
+# The discriminator for that third case is ARGUMENTS, not stdin. Git always
+# invokes this hook with exactly two - the remote's name and its URL - so a run
+# with none of them cannot be a push, whatever stdin is doing. That is POSIX,
+# deterministic and costs no timeout; `read -t 1` would also close the case but
+# is a bash extension dash rejects, and it would make every real push wait.
+#
+# `[ -t 0 ]` asks *is this a keyboard*. It does not ask *is anything coming*.
+#
+# All three mean "the owner asked for the checks", so all three run them. Failing
+# toward RUNNING is the safe direction: a real push always carries refs, and the
+# worst case of a false positive is that a no-op push runs the list.
 pushing_owner_only=""
 pushing_direct_ok=0
 saw_ref=0
 hand_run=0
-if [ -t 0 ]; then
+if [ -t 0 ] || [ $# -eq 0 ]; then
     hand_run=1
 fi
 while [ "$hand_run" -eq 0 ] &&       read -r _local_ref _local_sha remote_ref _remote_sha || [ -n "$remote_ref" ]; do
