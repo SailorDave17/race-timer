@@ -17,8 +17,20 @@ until somebody uploads it and fills the date in.
 
 This is also the only thing in this repo that **counts releases**, and one deferred decision reads
 off it: [#81](https://github.com/SailorDave17/race-timer/issues/81) holds the move of release
-signing into CI until *three or more releases have been cut by hand*. Until this table has three
-uploaded rows, that trigger cannot be checked — which is why #81's AC 1 points here.
+signing into CI until *three or more releases have been cut by hand*. That is why #81's AC 1 points
+here: before this file existed nothing counted releases, so the trigger had no instrument and could
+not be read in either direction.
+
+**It can be read now, and a count below three is the trigger returning false — not the trigger being
+unmeasurable.** Those are different states and only the first is healthy: an unreadable trigger is a
+defect in this file, a false one is this file working.
+
+**So counting the rows is part of writing one.** After adding a row with a date in **Uploaded**,
+count the uploaded rows; on the third, #81's trigger has fired — say so on #81 in the same sitting.
+This is a step in the hand procedure rather than a check in CI because the row is written by hand and
+nothing else in the repo reads this table; a checker wired into no gate would be worse than the
+sentence. What it replaces is somebody remembering, which is what both revisits so far have been
+(2026-08-12 against no instrument at all, 2026-08-16 against this table).
 
 ## The log
 
