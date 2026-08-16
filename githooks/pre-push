@@ -2,19 +2,24 @@
 # Refuse a local push to an owner-only branch outright, and gate the one branch
 # that may be pushed directly behind this repo's own checks.
 #
-# This file is a generic driver and is MEANT to be byte-identical in every repo.
-# What differs per repo is `githooks/checks` beside it - one shell command per
-# line.
+# This file is a generic driver, maintained in cairn and copied verbatim to every
+# other repo. What differs per repo is `githooks/checks` beside it - one shell
+# command per line - plus the optional `githooks/owner-only` and
+# `githooks/direct-push-ok` lists it reads.
 #
-# It is NOT byte-identical as of 2026-08-16. The open-pipe fix below landed in
-# cairn (and race-timer, which shares this driver) while `burgee` still carries
-# the previous text, and `Taskr`, `cohssa-attendance` and `maverick-smart-home`
-# carry three older versions that had already diverged. Enumerate with
-# `sha256sum */githooks/pre-push` from ~/Code rather than trusting this
-# paragraph. The claim is stated as an intention rather than a fact on purpose:
-# an assertion of byte-identity that nothing checks is the kind of line that goes
-# on reading as true after it stops being (see cairn
-# memory/global/a-computable-claim-does-not-belong-in-prose).
+# DO NOT state here whether the copies currently agree. They have diverged twice
+# (2026-08-14, 2026-08-16), each time silently and each time for months, and a
+# sentence asserting sameness reads as true long after it stops being - which is
+# the defect cairn memory/global/a-computable-claim-does-not-belong-in-prose
+# exists for. Ask the question instead, and it costs one command from ~/Code:
+#
+#     sha256sum */githooks/pre-push
+#
+# Any hash that differs from cairn's is a repo running an older driver, and the
+# history says what it is missing: CR stripping (2026-08-05), hand-run support
+# (2026-08-07), the open-pipe fix (2026-08-16). Every one of those failed SILENTLY
+# in the repos that lacked it - a guard falling open, or a gate reporting success
+# without checking, or a hang. None of them announced itself.
 #
 # Why this exists rather than branch protection: GitHub gates both classic
 # branch protection AND repository rulesets behind GitHub Pro for *private*
