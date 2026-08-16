@@ -149,7 +149,9 @@ class PhoneRaceRunner(
     }
 
     /**
-     * Snap the countdown to the nearest minute (#204's control; the mechanism lands with #203).
+     * Snap the countdown to a whole minute (#204's control; the mechanism lands with #203).
+     * The rounding rule is [snapToMinute]'s, shared with the watch: up inside the late-tap window,
+     * floored beyond it (#150).
      *
      * The engine refuses on its own terms — outside RUNNING, in a lead-in, under the double-tap
      * guard — and the re-arm after a refused sync is a no-op, so this is unconditional the same way

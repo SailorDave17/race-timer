@@ -4,9 +4,10 @@ package com.racetimer.phone
  * How long the race's `PARTIAL_WAKE_LOCK` is asked to hold, from what is left to run (#203).
  *
  * Pure arithmetic in its own file for one reason: the watch shipped this inline and the inline copy
- * carried #126 — the lock was sized once at Start, `ACTION_SYNC` re-anchored the gun up to 30 s
- * later without re-sizing, and two round-up syncs spent the whole margin, after which a timed lock
- * expires *silently* (no callback) and the CPU is free to suspend with cues pending. The phone's
+ * carried #126 — the lock was sized once at Start, `ACTION_SYNC` re-anchored the gun up to
+ * `LATE_TAP_WINDOW_MS` later without re-sizing, and enough round-up syncs spent the whole margin,
+ * after which a timed lock expires *silently* (no callback) and the CPU is free to suspend with
+ * cues pending. The phone's
  * criterion is that the sizing is unit-tested and re-computed on every event that can move the gun,
  * and an inline expression inside a `Service` can be neither.
  *

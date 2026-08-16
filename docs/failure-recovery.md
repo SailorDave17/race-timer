@@ -185,12 +185,16 @@ that answers it, and that is an adb-side read, not something the app can do to i
 ### What Sync does
 
 Tap Sync on the committee's signal — a flag, a horn, a whistle. `TimerEngine.sync()` snaps the
-remaining time to the **nearest whole minute** and re-anchors the gun there, re-queuing only the cues
-that have not yet fired.
+remaining time to **a whole minute** and re-anchors the gun there, re-queuing only the cues that have
+not yet fired.
+
+The tap is read as coming from someone watching for that signal: on it, or a fraction late, but never
+early. So an up-correction of **10 s or less** rounds up to the minute above, and anything else floors
+to the minute below ([#150](https://github.com/SailorDave17/race-timer/issues/150)).
 
 | Guard | Value | Why |
 |---|---|---|
-| Maximum correction | 30 s | A sync is a correction, not a jump. A larger snap falls back to nearest, which is always within half a minute — this is what stops a round-down flooring 3:55 to 3:00 and silently making the sailor OCS |
+| Late-tap window | 10 s | How far a sync may move the countdown **up**. Beyond it the tap is read as a watch running behind rather than as a late tap, and the countdown floors instead. There is no separate correction ceiling: one existed under round-to-nearest to stop a floor deleting 3:55 to 3:00, and under this rule 3:55 rounds *up* ([#150](https://github.com/SailorDave17/race-timer/issues/150)) |
 | Double-tap guard | 1 s | A second tap inside a second is ignored |
 | Lead-in | Inert | A sync during the run-up has no signal to correct against, and snapping there would delete the lead ([#104](https://github.com/SailorDave17/race-timer/issues/104)) |
 | Wake lock | Re-armed | The lock is sized from the countdown at the instant it is taken, and a sync moves the gun later ([#126](https://github.com/SailorDave17/race-timer/issues/126)) |
@@ -201,19 +205,22 @@ re-anchored race survives a kill at its corrected time, not its original one.
 ### What the sailor does
 
 1. **Watch for the next committee signal** rather than trying to reconstruct the one that was missed.
-2. **Tap Sync on it.** The clock snaps to the nearest whole minute; the label flashes what it snapped
-   to, so the correction is legible before it matters.
+2. **Tap Sync on it.** The clock snaps to a whole minute; the label flashes what it snapped to, so
+   the correction is legible before it matters.
 3. **After a `DEGRADED` restore, do this once regardless** — the persistent prompt is asking for
    exactly this.
 
 ### What Sync cannot do
 
-- **It cannot correct by more than 30 seconds.** Nearest-minute snapping moves the clock by at most
-  half a minute by construction, so a sailor further out of step than that is snapped to the *wrong*
-  minute — confidently, with no signal that it happened.
-- **It only rounds to the nearest minute.** `sync()` takes a `roundDown` parameter and the UI never
-  passes it; a round-down toggle is a V1.1 candidate, listed out of scope on
-  [#7](https://github.com/SailorDave17/race-timer/issues/7).
+- **It cannot rescue a watch that is more than 10 s *ahead* of the sequence.** Correcting upward is
+  what the late-tap window bounds, and past it the same tap is read the other way — as a watch
+  carrying time the sequence has spent — so the countdown is floored and the sailor loses a minute
+  rather than gaining one. This is the designed limit of a one-tap correction, not a gap: nothing in
+  the tap distinguishes "I am 20 s ahead" from "I am 40 s behind", and only one of those two happens
+  in practice.
+- **It cannot correct a watch more than 59 s behind.** Flooring reaches the minute below and no
+  further, so a sailor a whole minute out of step is snapped to the wrong minute. Watch for the next
+  signal and tap again — each tap corrects within its own minute.
 - **It does nothing after the gun.** The Sync button is not on screen once the sequence is spent —
   there is no committee flag left to sync against.
 
@@ -231,8 +238,9 @@ The question this table exists to answer: **is this a designed limitation or a g
 | Process killed after the gun (race-manager) | Count-up resumes on the same anchor | **Supported** |
 | Saved race unreadable | Discarded, sailor told | **Designed limitation** |
 | Start tapped on a different sequence | Saved race overwritten, warned first | **Designed limitation** ([#89](https://github.com/SailorDave17/race-timer/issues/89)) |
-| Sailor loses sequence position | Sync re-anchors to the nearest minute | **Supported** |
-| Sailor is more than 30 s out | Snapped to the wrong minute, silently | **Gap** — [#150](https://github.com/SailorDave17/race-timer/issues/150) |
+| Sailor loses sequence position | Sync re-anchors: up to 10 s of late-tap correction upward, otherwise floors to the minute below | **Supported** |
+| Watch is up to 59 s **behind** the sequence | Floored to the minute below — corrected | **Supported** ([#150](https://github.com/SailorDave17/race-timer/issues/150)) |
+| Watch is more than 10 s **ahead** of the sequence | Read as a late tap on the minute below, and floored | **Designed limitation** — the tap carries no way to tell the two cases apart, and only one of them happens ([#150](https://github.com/SailorDave17/race-timer/issues/150)) |
 | Cue fires while the CPU is suspended | Fires **late**, not dropped — `tick()` drains every overdue cue in order | **Designed limitation** — `docs/timing-accuracy.md` |
 | Haptics under Do Not Disturb | Every cue delivered as `USAGE_TOUCH` (#187) — resting on DND policy permitting the feedback class | **Supported, fragile** — re-checked per [`dnd-haptics-recheck.md`](dnd-haptics-recheck.md) ([#186](https://github.com/SailorDave17/race-timer/issues/186)) |
 | Audio refused under Do Not Disturb | Tones stay silent; a Tier 3 line — *"Do Not Disturb — cues silent, wrist still buzzing"* — says so during the race (#96) | **Supported, degraded** — the wrist carries every cue |
@@ -265,14 +273,16 @@ from what shipped, not recovered from what was decided.
 | Haptic missed — under DND | **In scope — done** | Different from the above: the app *caused* it by not declaring attributes. #187 declares `USAGE_TOUCH` and the wrist now carries every cue under DND; the residual dependency on DND policy is [#186](https://github.com/SailorDave17/race-timer/issues/186) |
 | Cues silent — DND | **In scope — done** | The refusal was already observed; #96 shipped the warning built on it (*"Do Not Disturb — cues silent, wrist still buzzing"*, Tier 3, running only) |
 | Lost sequence position | **Recoverable in-MVP — done** | Sync is the re-anchor gesture #24 hypothesised, and it shipped |
-| Lost position by more than 30 s | **Proposed: out of scope** | Beyond half a minute the sailor should stop and restart the sequence against the committee rather than nudge a wrong anchor. Now [#150](https://github.com/SailorDave17/race-timer/issues/150), which exists to decide this rather than to implement the proposal |
+| Lost position by more than 30 s | **In scope — done, and decided the other way** | The proposal here was *out of scope: beyond half a minute the sailor should stop and restart against the committee*. [#150](https://github.com/SailorDave17/race-timer/issues/150) decided against it: a watch running behind is now corrected up to 59 s by flooring, because the tap itself is the evidence. What survives of the proposal is the **ahead** direction, where past 10 s there is nothing an unaided tap can do |
 | Display unreadable | **In scope, not done** | Not enumerated by #24. Tracked as #139 / #147 |
 
 Two of these had no issue behind them when this document was written. The owner accepted both as
 in-scope on 2026-08-10 and they are now filed: the >30 s mis-anchor is
-[#150](https://github.com/SailorDave17/race-timer/issues/150), and the `apply()` write window is
-[#151](https://github.com/SailorDave17/race-timer/issues/151). Neither prejudges the outcome — #150's
-first criterion is a decision, and #151's is a measurement.
+[#150](https://github.com/SailorDave17/race-timer/issues/150) — **since decided, and shipped as the
+late-tap rule described above** — and the `apply()` write window is
+[#151](https://github.com/SailorDave17/race-timer/issues/151). Neither prejudged the outcome —
+#150's first criterion was a decision, since taken and rewritten as the rule it produced, and #151's
+is still a measurement.
 
 ---
 
@@ -341,7 +351,10 @@ Source: this repo's code as of the `develop` branch, plus issues #24, #9, #10, #
 #89, #96, #102, #126, #144, #186, PR #187, and `docs/message-surface.md` / `docs/timing-accuracy.md`
 / `docs/dnd-haptics-recheck.md`.
 Owner: SailorDave17.
-Last reviewed: 2026-08-13 (#186 — the DND sections rewritten after #187 reversed the both-channels
+Last reviewed: 2026-08-16 (#150 — Sync's rounding rule changed from nearest-minute to the late-tap
+rule, so the What Sync does / cannot do sections, the guard table and both disposition tables were
+rewritten; the >30 s row was decided against its own proposal).
+Previously: 2026-08-13 (#186 — the DND sections rewritten after #187 reversed the both-channels
 state and #96 shipped its warning; the re-check procedure and baseline split out to
 `docs/dnd-haptics-recheck.md`).
 Previously: 2026-08-10 (#120 — first capture of the #24 result; #150 and #151 filed against the two
