@@ -81,9 +81,11 @@ process death during the run-up comes back on the right clock.
 
 ### Sync button
 
-Tap **Sync** during the countdown to snap to the nearest whole minute — this absorbs the
-reaction-time lag between the Race Committee's flag reaching the top of the staff and your thumb
-landing. Round-to-nearest by default.
+Tap **Sync** during the countdown to snap to a whole minute — this absorbs the reaction-time lag
+between the Race Committee's flag reaching the top of the staff and your thumb landing. A tap within
+10 s of a whole minute rounds **up** to it, on the reading that the signal was a moment ago; any
+later and the watch is taken to be carrying time the sequence has already spent, so the countdown
+floors to the minute below.
 
 Sync is deliberately **unavailable during a lead-in**: there is nothing to snap to yet, and snapping
 4:07 to 4:00 on a 3:00 sequence would silently delete seven seconds of the very run-up the lead-in

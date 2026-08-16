@@ -55,9 +55,10 @@ class RaceTimerAppTimerScreenTest {
         app.startRace()
 
         app.advance(35_000L)
-        // 4:25 left: 25 s past the 4:00 boundary, so the nearest minute is below and the correction
-        // is inside the engine's 30 s limit. Both halves matter — a sync that overshot the limit
-        // would be refused, and the test would then be asserting the refusal.
+        // 4:25 left: a 35 s up-correction, well past the 10 s late-tap window, so the snap floors
+        // to 4:00 and 25 s comes off. Round-to-nearest gave the same answer here for a different
+        // reason, which is why this case cannot tell the two rules apart — the assertions that do
+        // are in SyncManagerTest (#150).
         app.assertReadout("4:25")
 
         compose.onNodeWithText("Sync").performClick()

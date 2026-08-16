@@ -69,11 +69,13 @@ val timeoutMs = engine.remainingMs.coerceAtLeast(0L) + WAKE_LOCK_MARGIN_MS  // m
 ```
 
 **`ACTION_SYNC` moves the gun later and, until #126, did not re-arm it.** `TimerEngine.sync()` snaps
-the remaining time to the nearest whole minute and re-anchors: `gunTimeMs = now + snapped`. Nearest
-rounds *up* about half the time, by as much as 30 s. Sync is a button the race manager can tap
-repeatedly, guarded only against a double-tap within one second, and nothing caps the total.
+the remaining time to a whole minute and re-anchors: `gunTimeMs = now + snapped`. It rounds *up*
+whenever the tap is within `LATE_TAP_WINDOW_MS` of a whole minute, so by as much as 10 s (#150; it
+was as much as 30 s under the round-to-nearest rule this section was first written against). Sync is
+a button the race manager can tap repeatedly, guarded only against a double-tap within one second,
+and nothing caps the total.
 
-So two round-up syncs spend the entire 30 s margin, and the lock then expires with cues still pending.
+So three round-up syncs spend the entire 30 s margin, and the lock then expires with cues still pending.
 A timed `PARTIAL_WAKE_LOCK` expires silently — no callback, no log, and `releaseWakeLock()` correctly
 does nothing afterwards because `isHeld` is already false. From that moment the app is relying on the
 watch happening not to sleep.
@@ -293,6 +295,11 @@ minute 5:00, so the gun moves ~12 s later — a round-up, the case that matters)
 BEFORE sync   PARTIAL_WAKE_LOCK 'RaceTimer:TimerWakeLock' ACQ=-12s404ms  ... lock=520e6a7
 AFTER  sync   PARTIAL_WAKE_LOCK 'RaceTimer:TimerWakeLock' ACQ=-2s420ms   ... lock=a0635f9
 ```
+
+That run predates #150 and was taken under round-to-nearest, which is why a 12 s up-correction
+rounded up. Under the late-tap rule the same tap floors to 4:00; the equivalent round-up today is a
+tap at 4:50 or later. What the run proves — that a sync moves the gun later and the lock is re-armed
+against the new gun — is unchanged, and is now bounded at 10 s per sync rather than 30 s.
 
 Two things, and the second is the one worth having:
 

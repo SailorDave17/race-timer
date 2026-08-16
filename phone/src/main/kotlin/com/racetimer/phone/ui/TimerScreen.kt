@@ -54,7 +54,7 @@ private const val GLYPH_WIDTH_FRACTION = 0.68f
  * @param running       True while the engine is in a state Stop applies to.
  * @param onStart       Tapped to start the sequence.
  * @param onStop        Tapped to abandon the run and return to the top of the same sequence.
- * @param onSync        Tapped to snap the countdown to the nearest minute (#204) — the officer who
+ * @param onSync        Tapped to snap the countdown to a whole minute (#204) — the officer who
  *                      missed the exact flag bringing the phone back into step with it. Only
  *                      offered while running: before the start there is nothing to correct, and
  *                      the engine refuses everywhere else anyway.
