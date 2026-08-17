@@ -367,11 +367,63 @@ harness, not of the code** — a test asserting durability here would pass which
 file, which is the shape cairn's `a-stubbed-default-cannot-report-the-platform-moved` records. The
 window is reachable only by the on-device instrument above.
 
-**Not covered by this run:** abrupt power loss (a different layer, see above), the reboot path
-(#122), and the phone module — `PhoneRacePersistence` still uses `apply()` on a rationale this run
-falsified, tracked as
-[#256](https://github.com/SailorDave17/race-timer/issues/256) rather than changed on the watch's
-numbers.
+**Not covered by this run:** abrupt power loss (a different layer, see above) and the reboot path
+(#122). The phone module was not covered either, and deliberately was not changed on these numbers —
+[#256](https://github.com/SailorDave17/race-timer/issues/256) measured it separately and is the
+section below. `PhoneRacePersistence` still uses `apply()`, now on its own measurement rather than on
+the rationale this run falsified.
+
+---
+
+### 2026-08-16 — the phone's write window, measured and `apply()` kept (#256)
+
+SM-S918U (Galaxy S23 Ultra), Android, on Wi-Fi adb, screen on. Debug APK
+`5394f838…dae5589`, hash-verified against the installed `base.apk` before every arm. Same instrument
+as the #151 run above — no kill, the window computed from the snapshot's own stamps against the
+prefs file's mtime, entirely on the device's clock:
+
+```
+T_persist(wall) = gun_wall_clock_ms - (gun_elapsed_ms - captured_elapsed_ms)
+window          = mtime(phone_race_state.xml) - T_persist(wall)
+```
+
+Prefs live at `/data/data/io.github.sailordave17.racetimer/shared_prefs/phone_race_state.xml` —
+the **applicationId**, which the phone shares with the watch, not the `com.racetimer.phone` namespace.
+
+| Arm | n | Result |
+|---|---|---|
+| `apply()` window, warm | 7 | 0.8 – 12.8 ms |
+| `apply()` window, cold | 10 | 2.8 – 11.8 ms |
+| `commit()` window | 13 | −4.2 to −0.2 ms — zero at resolution |
+| `commit()` main-thread cost | 13 | 1.8 – **17.9** ms, median 4.6 |
+
+**The watch's numbers do not transfer, and the cold arm is where that shows.** On the watch the cold
+process was materially worse (69–205 ms) because the write queued behind a cold launch on
+`QueuedWork`'s single background thread. On this phone cold and warm are indistinguishable, both at
+the instrument's floor. **Decision: `apply()` stays** — `commit()` would trade a median 4.6 ms of
+arm-path main thread for about 6 ms of exposure, which is break-even at the median and worse at the
+tail.
+
+**Positive control, run because a clean result would otherwise prove nothing.** With the write
+deferred 1500 ms in a locally built harness APK, the same instrument read **1597.8 – 1600.8 ms**
+across 3 trials. It can report a large window and reports it accurately.
+
+**A missed tap reads exactly like a fast write, and cost five trials.** The first cold attempt
+returned five plausible windows that were all re-reads of the *previous* trial's file — the taps had
+landed on a restore-offer screen the script did not expect. Nothing in the computed number reveals
+this, because the arithmetic is internally consistent whichever write produced the file. The guard
+that catches it is one line: **take the device clock before the trial and refuse any prefs file whose
+mtime predates it.** It fired 5/5, and the procedure below only became a measurement after it did.
+
+Nav is made deterministic by deleting the prefs file while the app is force-stopped, so no restore
+offer can appear mid-chain: `run-as <pkg> rm -f <prefs>`.
+
+**Not covered by this run:** a slower phone. The finding is that the window is a property of the
+device's flash and startup profile rather than of the code, so it does not generalise off this
+handset — which is the same mistake, in the same direction, that assuming the watch's numbers would
+have made.
+
+
 
 ### 2026-08-10 — first run: A, B1, C, D, and C again at a tighter kill (#125)
 

@@ -17,26 +17,40 @@ import com.racetimer.shared.snapshotFrom
  * a rule that crept in here would be the second copy the restore path's every shipped defect came
  * from (`resumeOfferRemainingMs`, duplicated inverted — see RestorePlan's header).
  *
- * ### `apply()`, on a premise the watch has since disproved (#256)
+ * ### `apply()`, kept on this device's own measurement (#256)
  *
- * **This is no longer the same choice the watch made.** It was when it was written; #151 measured the
- * watch's window and closed it with `commit()`, so `TimerService.persistSnapshot()` now commits and
- * this class is the last `apply()` on a snapshot path.
+ * **The watch and this class deliberately differ, and the difference is measured rather than
+ * inherited.** #151 measured the watch's `apply()` window at 20-53 ms warm and 69-205 ms cold and
+ * closed it with `commit()`. #256 ran the same instrument against `:phone` rather than assuming those
+ * numbers transfer - and they do not.
  *
- * The reasoning below is kept rather than quietly deleted, because the half that failed is worth
- * seeing. `apply()` writes to disk asynchronously, so a process killed in the window between the
- * write and the flush loses the snapshot — the race is gone, the officer starts fresh, nothing is
- * *wrong*, just lost. The argument for accepting that was: `commit()` closes the window by blocking
- * the caller, the caller here includes the arm path's persist slot between the first cue's
- * synchronous dispatch and the wake-lock acquisition, and a disk write blocking that path is a worse
- * trade than a lost snapshot.
+ * On SM-S918U, debug build hash-verified as the installed artefact:
  *
- * **The cost in that trade was never measured, and on the watch it turned out to be ~8 ms** — against
- * an `apply()` window of 20–53 ms warm and 69–205 ms cold, and landing after the first cue is already
- * dispatched, which is the very ordering this comment relies on. So the trade was priced backwards
- * there. What is *not* known is this device's numbers, which is why nothing here changed on the
- * strength of the watch's: [#256](https://github.com/SailorDave17/race-timer/issues/256) measures the
- * phone's own window and decides on it.
+ * | | Measured |
+ * |---|---|
+ * | `apply()` window, warm and cold, n=17 | 0.8 - 12.8 ms (median 5.8) |
+ * | `commit()` window, n=13 | -4.2 to -0.2 ms, i.e. zero at the instrument's ~3 ms resolution |
+ * | `commit()` main-thread cost, n=13 | 1.8 - 17.9 ms (median 4.6) |
+ *
+ * So on this device class `commit()` would buy roughly 6 ms of durability for a median 4.6 ms of
+ * main thread, with a measured 17.9 ms tail - and it would spend it in the arm path's persist slot,
+ * between the first cue's synchronous dispatch and the wake-lock acquisition. That is break-even at
+ * the median and worse at the tail, which is the opposite of the watch's result, where `commit()`
+ * bought 68-205 ms for ~8 ms.
+ *
+ * **`apply()` therefore stays - but the original argument for it was still wrong.** It reasoned that
+ * a blocking disk write on the arm path is a worse trade than a lost snapshot, and priced neither
+ * side. Both sides are priced above. The conclusion survived; the reasoning did not, and a rationale
+ * nothing executes is an empirical claim that ages silently.
+ *
+ * `apply()` writes asynchronously, so a process killed inside the window above loses the snapshot -
+ * the race is gone, the officer starts fresh, nothing is *wrong*, just lost. On this device that
+ * window is single-digit milliseconds.
+ *
+ * **What would change this answer:** a materially slower phone. The whole finding is that the window
+ * is a property of the device's flash and startup profile, not of this code, so it is worth
+ * re-measuring on the slowest phone the app is expected to run on rather than assuming an S23 Ultra
+ * generalises. The harness is in `docs/process-kill-test.md` and needs no process kill.
  */
 class PhoneRacePersistence(context: Context) {
 
