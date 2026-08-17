@@ -122,7 +122,7 @@ Two things worth knowing because they are not obvious from the screen:
 | Watch reboots mid-race | Race is **reconstructed**, flagged `DEGRADED`, re-sync prompted | **Designed** — and a reversal of what #9 expected; see the reconciliation below |
 | A different sequence is selected and Start is tapped | The saved race is overwritten. A Tier 3 line — *"Start discards saved &lt;name&gt;"* — warns first | **Designed** ([#89](https://github.com/SailorDave17/race-timer/issues/89)) |
 | The saved `sequence_id` no longer resolves | Race is gone. Tier 1: *"Saved race unreadable — starting fresh"* | **Designed** ([#102](https://github.com/SailorDave17/race-timer/issues/102)) — announced, never absorbed |
-| Process killed within the snapshot's write window | Snapshot may be lost; the race comes back as if never started | **Gap, unmeasured.** `persistSnapshot()` uses `apply()`, not `commit()`. #9's notes asked for this to be verified and nothing records an answer — [#151](https://github.com/SailorDave17/race-timer/issues/151) |
+| Process killed within the snapshot's write window | **Closed.** The write is durable before `ACTION_START` returns | **Designed — measured and fixed** ([#151](https://github.com/SailorDave17/race-timer/issues/151)). `apply()` left the write queued **20–53 ms** (warm) and **69–205 ms** (cold) behind a cold launch; `commit()` closes it to **0 ms** for ~8 ms of main thread. This is #9's unanswered question, answered |
 
 ---
 
@@ -246,7 +246,7 @@ The question this table exists to answer: **is this a designed limitation or a g
 | Audio refused under Do Not Disturb | Tones stay silent; a Tier 3 line — *"Do Not Disturb — cues silent, wrist still buzzing"* — says so during the race (#96) | **Supported, degraded** — the wrist carries every cue |
 | Foreground service blocked / permission denied | Unhandled — `handleStart` assumes it works | **Gap** — [#13](https://github.com/SailorDave17/race-timer/issues/13), Tier 2 unbuilt |
 | Display renders upside down | Countdown unreadable | **Gap** — [#139](https://github.com/SailorDave17/race-timer/issues/139) / [#147](https://github.com/SailorDave17/race-timer/issues/147) |
-| Snapshot lost to an `apply()` race | Unmeasured | **Gap, unquantified** — [#151](https://github.com/SailorDave17/race-timer/issues/151) |
+| Snapshot lost to an `apply()` race | Cannot happen: `persistSnapshot()` commits synchronously | **Supported** — measured at 0 ms, was 20–205 ms ([#151](https://github.com/SailorDave17/race-timer/issues/151)) |
 
 One line is worth pulling out because it is counter-intuitive: **a cue deferred by doze is late, not
 lost.** `tick()` drains every cue whose time has passed, in order, so a watch that sleeps through two
@@ -282,7 +282,7 @@ in-scope on 2026-08-10 and they are now filed: the >30 s mis-anchor is
 late-tap rule described above** — and the `apply()` write window is
 [#151](https://github.com/SailorDave17/race-timer/issues/151). Neither prejudged the outcome —
 #150's first criterion was a decision, since taken and rewritten as the rule it produced, and #151's
-is still a measurement.
+was a measurement, since taken: the window was real (20–205 ms) and is now closed.
 
 ---
 
@@ -341,9 +341,13 @@ and off the issues that shipped the behaviour — not recovered from the spike.
   decides anything for this app's cues.
 - **The disposition table is a proposal.** Until the owner accepts it, it records what a reader would
   reasonably conclude, not what was decided.
-- **The `apply()` write window is unquantified.** It is listed as a gap on the strength of #9 having
-  asked the question, not on the strength of anyone having answered it.
-  [#151](https://github.com/SailorDave17/race-timer/issues/151) is where it gets measured.
+- **The write window is measured, but no kill ever reached it.** [#151](https://github.com/SailorDave17/race-timer/issues/151)
+  measured the `apply()` window directly — 20–53 ms warm, 69–205 ms cold — and then failed to land a
+  kill inside it: the tightest adb-driven kill arrived 333 ms after the anchor, against a 205 ms
+  ceiling. That is a limit of the harness, **not** evidence the window was unreachable in the wild,
+  which is why it was closed rather than documented as safe. The harness was proven able to detect a
+  loss first (write deferred 1500 ms: 3/3 lost, against 6/6 survived unmutated) — otherwise the clean
+  result would have been a fact about the apparatus.
 
 ---
 
@@ -351,7 +355,10 @@ Source: this repo's code as of the `develop` branch, plus issues #24, #9, #10, #
 #89, #96, #102, #126, #144, #186, PR #187, and `docs/message-surface.md` / `docs/timing-accuracy.md`
 / `docs/dnd-haptics-recheck.md`.
 Owner: SailorDave17.
-Last reviewed: 2026-08-16 (#150 — Sync's rounding rule changed from nearest-minute to the late-tap
+Last reviewed: 2026-08-16 (#151 — the snapshot write window measured on hardware and closed with
+`commit()`; both tables' `apply()` rows moved off *Gap, unmeasured*, and the Limits section now
+records that the window was measured directly rather than by a kill that reached it).
+Previously: 2026-08-16 (#150 — Sync's rounding rule changed from nearest-minute to the late-tap
 rule, so the What Sync does / cannot do sections, the guard table and both disposition tables were
 rewritten; the >30 s row was decided against its own proposal).
 Previously: 2026-08-13 (#186 — the DND sections rewritten after #187 reversed the both-channels

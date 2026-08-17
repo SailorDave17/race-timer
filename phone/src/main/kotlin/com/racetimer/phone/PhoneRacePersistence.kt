@@ -17,16 +17,26 @@ import com.racetimer.shared.snapshotFrom
  * a rule that crept in here would be the second copy the restore path's every shipped defect came
  * from (`resumeOfferRemainingMs`, duplicated inverted — see RestorePlan's header).
  *
- * ### `apply()`, consciously (#151)
+ * ### `apply()`, on a premise the watch has since disproved (#256)
  *
- * The same choice the watch made, made here on purpose rather than inherited by copy. `apply()`
- * writes to disk asynchronously, so a process killed in the window between the write and the flush
- * loses the snapshot — the race is gone, the officer starts fresh, nothing is *wrong*, just lost.
- * `commit()` closes that window by blocking the caller — and the caller here includes the arm
- * path's persist slot, which sits between the first cue's synchronous dispatch and the wake-lock
- * acquisition. A disk write blocking that path is a worse trade than a lost snapshot: the snapshot
- * protects a rare failure, the arm path runs every race. #151 tracks the question for the watch;
- * whatever it decides applies here identically, which is why this comment names it.
+ * **This is no longer the same choice the watch made.** It was when it was written; #151 measured the
+ * watch's window and closed it with `commit()`, so `TimerService.persistSnapshot()` now commits and
+ * this class is the last `apply()` on a snapshot path.
+ *
+ * The reasoning below is kept rather than quietly deleted, because the half that failed is worth
+ * seeing. `apply()` writes to disk asynchronously, so a process killed in the window between the
+ * write and the flush loses the snapshot — the race is gone, the officer starts fresh, nothing is
+ * *wrong*, just lost. The argument for accepting that was: `commit()` closes the window by blocking
+ * the caller, the caller here includes the arm path's persist slot between the first cue's
+ * synchronous dispatch and the wake-lock acquisition, and a disk write blocking that path is a worse
+ * trade than a lost snapshot.
+ *
+ * **The cost in that trade was never measured, and on the watch it turned out to be ~8 ms** — against
+ * an `apply()` window of 20–53 ms warm and 69–205 ms cold, and landing after the first cue is already
+ * dispatched, which is the very ordering this comment relies on. So the trade was priced backwards
+ * there. What is *not* known is this device's numbers, which is why nothing here changed on the
+ * strength of the watch's: [#256](https://github.com/SailorDave17/race-timer/issues/256) measures the
+ * phone's own window and decides on it.
  */
 class PhoneRacePersistence(context: Context) {
 

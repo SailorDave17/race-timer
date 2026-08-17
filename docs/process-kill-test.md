@@ -264,8 +264,10 @@ it means the next launch is a first-ever launch and will look like one.
 
 ## What this procedure does not cover
 
-- **Abrupt power loss.** Every kill here is graceful, and `persistSnapshot` uses `apply()`, whose write
-  can still be in flight when a battery dies. Unexercised, here and on #122.
+- **Abrupt power loss.** Every kill here is graceful. Since #151 `persistSnapshot` uses `commit()`, so
+  the write no longer outlives the call that made it — but that was measured against a **process
+  kill**, where data already handed to the kernel survives. A battery dying is a different question
+  about a different layer, and it is unexercised here and on #122.
 - **The reboot path** — #122, and the wall-clock reconstruction a reboot forces.
 - **Audibility.** That a cue fired is what the log line settles. Whether it was loud enough to hear on
   the water is a different question with its own issues (#95, #96) and its own instrument — cairn's
@@ -276,6 +278,100 @@ it means the next launch is a first-ever launch and will look like one.
 Results go here, newest first, one section per run: build under test, who drove what, and the four
 scenarios with their instants. Follow the shape of `timing-accuracy.md`'s Measurements section — an
 entry that records only "passed" is the thing this file was written to stop.
+
+### 2026-08-16 — the snapshot write window, measured and closed (#151)
+
+SM-R925U, Wear OS on Android 16, on the wireless charger at 100%, screen on throughout
+(`screen_off_timeout` raised to 600000 ms for the run and returned to 15000 ms after).
+`log.tag.TimerService DEBUG`. adb drove every tap, kill and read; no owner action.
+
+**This run answers #9's `apply()` vs `commit()` question, which had gone unanswered since #9 closed.**
+
+**The instrument, which needs no kill at all.** `TimerEngine.snapshot()` stamps `captured_elapsed_ms`
+at the instant `persistSnapshot()` runs, and `gun_wall_clock_ms` / `gun_elapsed_ms` are the same
+instant expressed in the two clock domains. So the write window is computable from the persisted file
+plus its mtime, entirely on the **watch's** clock — the 1.16 s host/device offset above never enters:
+
+```
+T_persist(wall) = gun_wall_clock_ms - (gun_elapsed_ms - captured_elapsed_ms)
+window          = mtime(race_timer_state.xml) - T_persist(wall)
+```
+
+Read it with `run-as <pkg> stat -c '%y' <prefs>`; resolution is about ±3 ms, which is the floor every
+"0 ms" below should be read against.
+
+**The window, on the shipping build** (debug APK `faa9576…c5e9b3`, hash-verified as the installed
+artefact):
+
+| Arm | n | Window |
+|---|---|---|
+| Warm process | 6 | 20.6 – 52.6 ms (median 46.6) |
+| Cold process | 5 | 68.6 – **204.6** ms (median 80.6) |
+| Cold, first launch after `pm clear` | 1 | 182.6 ms |
+
+The cold process is materially worse, which is what made it worth measuring: the write queues behind
+the rest of a cold launch on `QueuedWork`'s single background thread.
+
+**No kill ever reached it, and that is a fact about the harness.** Kills via
+`run-as <pkg> kill -9 <pid>` — `am force-stop` is slower, and plain `kill` from the shell uid is
+refused outright with `Operation not permitted` — landed 333–953 ms after the anchor across six
+trials at nominal delays of 0 to 0.4 s, all **SURVIVED**. The floor is set by `input tap` and
+`run-as` spawn latency (~238 ms for `run-as` alone), not by the delay asked for, so a nominal delay
+is not a controlled one on this device.
+
+**Positive control, run because a clean result would otherwise prove nothing** (cairn's
+`prove-an-instrument-could-have-shown-the-opposite`). With the write deferred 1500 ms in a locally
+built harness APK, the same kills went **3/3 LOST** against **6/6 SURVIVED** unmutated. So the
+harness can lose the snapshot and can tell that it did; what it cannot do is land inside 205 ms.
+
+**The classification trap, which cost one trial.** A missed tap and a lost snapshot both produce "no
+keys on disk". They are told apart by the app's own first-cue line, which `engine.tick()` emits
+*before* `persistSnapshot()` runs:
+
+| first cue logged | four keys present | reading |
+|---|---|---|
+| yes | yes | survived |
+| yes | no | **snapshot lost in the window** |
+| no | — | invalid trial — the race never started |
+
+One cold trial at a 7 s launch wait came back with no keys and was **not** a loss: the screenshot
+showed the pre-start screen and the tap had missed. The launch wait is 9 s in this procedure for that
+reason.
+
+**The fix, and its cost.** Both measured on one instrumented APK selecting behaviour by log tag:
+
+| | `apply()` | `commit()` |
+|---|---|---|
+| Window | 52 – 94 ms | **−1.9 – +1.1 ms** |
+| Main-thread cost of the call | 0.40 – 0.99 ms | **6.8 – 9.1 ms** |
+
+The write itself takes ~8 ms, so the tens-to-hundreds of milliseconds `apply()` left exposed were
+**queue latency, not I/O** — which is what makes `commit()` close to free rather than a real trade.
+
+**After the change** (`8ad9ea5…1bc02e9`): window **−2.9 to +2.1 ms** across 9 trials (5 cold,
+4 warm) — zero at this instrument's resolution, from 68.6–204.6 ms cold.
+
+**Cue timing, verified end to end rather than argued.** One full US Sailing 5-4-1-Go race on the
+changed build: **30 of 30 cues delivered, `errorMs` 0–26, `sleptMs=0` throughout**. The 2026-08-10 run
+above is the baseline, and its worst cues were 102 ms and 88 ms — so cue dispatch is no worse, and on
+this run better. The first cue is dispatched by `engine.tick()` *before* the persist (#62), so it
+cannot be affected by construction, and it read `errorMs=2`.
+
+**Why no unit test came with the change, measured rather than asserted.** A probe was written that
+reads `race_timer_state.xml` **off disk** — not through `SharedPreferences`, whose in-memory map is
+identical either way — and asserts the four keys are there once `onStartCommand` returns. It passes
+under `commit()`. Mutating the shipped line back to `apply()` reddened **0**, against a prediction of
+0 written first: Robolectric drains the background write inside the test's own looper, so the two are
+indistinguishable to it. The probe was discarded rather than committed. **This is a property of the
+harness, not of the code** — a test asserting durability here would pass whichever call was in the
+file, which is the shape cairn's `a-stubbed-default-cannot-report-the-platform-moved` records. The
+window is reachable only by the on-device instrument above.
+
+**Not covered by this run:** abrupt power loss (a different layer, see above), the reboot path
+(#122), and the phone module — `PhoneRacePersistence` still uses `apply()` on a rationale this run
+falsified, tracked as
+[#256](https://github.com/SailorDave17/race-timer/issues/256) rather than changed on the watch's
+numbers.
 
 ### 2026-08-10 — first run: A, B1, C, D, and C again at a tighter kill (#125)
 
