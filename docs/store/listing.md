@@ -229,11 +229,37 @@ are not visible from the text itself.
   which is a mechanism `shared/ScreenPolicy.kt` implements and a test asserts. It does not say the
   screen is readable in direct sun, because the contrast audit that would establish that is
   **unfinished** — [#121](https://github.com/SailorDave17/race-timer/issues/121) is open.
-- **No promise you will always hear or feel the gun.** Under Do Not Disturb the watch currently loses
-  both channels ([#144](https://github.com/SailorDave17/race-timer/issues/144)), and there is no
-  pre-start warning for it ([#96](https://github.com/SailorDave17/race-timer/issues/96)). The copy
-  describes the cue mechanism and stops there. Once #144 and #96 close, a line about feeling the gun
-  through a sleeve becomes available and would be worth adding.
+- **No promise you will always hear or feel the gun.** Under Do Not Disturb the tones are silent —
+  `setStreamVolume` is refused, and the watch says so during the race, since
+  [#96](https://github.com/SailorDave17/race-timer/issues/96) shipped the Tier 3 line *"Do Not
+  Disturb — cues silent, wrist still buzzing"*. The wrist is the channel that survives: cues are
+  declared `USAGE_TOUCH`, and **30 of 30 were delivered at `zen_mode=2`, the 3000 ms gun included**
+  ([#144](https://github.com/SailorDave17/race-timer/issues/144) →
+  [#187](https://github.com/SailorDave17/race-timer/pull/187)). The copy still describes the cue
+  mechanism and stops there.
+
+  **The trigger fired, and the line was declined** — owner decision, 2026-08-17, taken on
+  [#236](https://github.com/SailorDave17/race-timer/issues/236). This bullet used to say that once
+  #144 and #96 closed, *"a line about feeling the gun through a sleeve becomes available and would be
+  worth adding"*. Both closed; the line is still not being added, for three reasons the reversal did
+  not touch:
+
+  - **The delivery is a dependency, not a property.** Every cue reaching the wrist under DND rests on
+    this platform continuing to permit the feedback class — the declaration is a deliberate mislabel,
+    and `USAGE_ALARM`, the honest class, measured **0 of 30**. Nothing CI runs can reach a `vibrate`
+    call, so if the policy moves, the promise goes false with no error and no failing build. The check
+    is manual: [`dnd-haptics-recheck.md`](../dnd-haptics-recheck.md)
+    ([#186](https://github.com/SailorDave17/race-timer/issues/186)).
+  - **One watch, one OS version.** The baseline is an SM-R925U on API 36. A listing sentence is read
+    as a claim about every device it installs on — the same reason the timing figure stays out, where
+    a median-shaped number would be read as a bound.
+  - **The draft revision above is two-form-factor, and the phone has no haptic path at all.**
+    [#208](https://github.com/SailorDave17/race-timer/issues/208) is unbuilt, so a shared line would
+    over-claim on the device it was never measured on.
+
+  What would make it available: a re-check that holds across a `targetSdk` bump and a platform
+  upgrade, or arm 3 retiring the mislabel — plus the phone's haptics landing, if the line is to sit in
+  copy that describes both.
 
 Nothing in the listing describes a feature on the roadmap rather than in the build: no Tile, no
 complication, no phone companion, no named custom presets.
