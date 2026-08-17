@@ -36,7 +36,7 @@ sentence. What it replaces is somebody remembering, which is what both revisits 
 
 | versionCode | versionName | Commit | Track | Uploaded | Notes |
 |---|---|---|---|---|---|
-| 1 | 1.0 | [`089f216`](https://github.com/SailorDave17/race-timer/commit/089f216) | Internal testing | 2026-08-13 | First build. Commit **re-taken a second time**: prepared from `cadaea9` on `develop`, then rebuilt from `release` at `089f216`, which is the artifact Play accepted. Sitting as a **draft** on the track — no tester has it yet. |
+| 1 | 1.0 | [`089f216`](https://github.com/SailorDave17/race-timer/commit/089f216) | Internal testing | 2026-08-13 | First build. Commit **re-taken a second time**: prepared from `cadaea9` on `develop`, then rebuilt from `release` at `089f216`, which is the artifact Play accepted. **Rolled out to internal testers** — owner-asserted 2026-08-17. This cell read *"sitting as a draft on the track — no tester has it yet"* until then: written true at upload time on 2026-08-13, and never revisited. |
 
 ## How each field is established
 
@@ -58,6 +58,13 @@ is that it was taken rather than remembered.
   day: versionCode 1 was uploaded at 21:25 EDT on 2026-08-12 and the Console reads
   `Aug 13, 2026, 1:25 AM`. Take the Console's date, not your local one — otherwise this column and
   Play disagree by a day and the log stops being the tiebreak it exists to be.
+- **Notes** — free text, with one rule: a sentence describing the **track state** (draft, rolled
+  out, halted) is a claim with an expiry, and this table has no instrument that reads Play. Date it,
+  and re-read it when you count the rows — which #79 AC 11 already makes a step of writing one, so
+  the check costs nothing extra. Row 1's said *draft, no tester has it yet* after that had stopped
+  being true — for how long is unreconstructable, because nothing dated the rollout, which is the
+  second half of the same defect. The log's whole purpose is answering *which commit is on
+  testers' watches?*
 - **Signing** — every bundle here is signed with the upload key whose SHA-256 fingerprint is recorded
   in [`release-signing.md`](release-signing.md). Verify with `keytool -printcert -jarfile <bundle>`;
   that command is correct for an `.aab` and **wrong for an APK**, where it prints
