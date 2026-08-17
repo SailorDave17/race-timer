@@ -233,30 +233,28 @@ successful push is what both states look like.
 
 ### Commands
 
+Everyday commands, for a fresh clone:
+
 ```bash
-# Run shared module unit tests (JVM only — no device needed). Fast feedback loop.
+# Fast feedback: pure-JVM logic tests, no device needed
 ./gradlew :shared:test
-
-# Build the Wear OS debug APK
-./gradlew :wear:assembleDebug
-
-# Phone module: unit tests, then the debug APK
-./gradlew :phone:testDebugUnitTest
-./gradlew :phone:assembleDebug
-
-# Build the release bundle — runs R8, so it catches shrinker breakage the debug build cannot
-./gradlew :wear:bundleRelease
 
 # Install on a connected device / emulator
 ./gradlew :wear:installDebug
 ./gradlew :phone:installDebug
 ```
 
-Everything above except the two `installDebug` lines is what CI enforces on every pull request — read
-the list off [`.github/workflows/ci.yml`](.github/workflows/ci.yml) rather than counting it here,
-because this block has fallen behind that file twice. `bundleRelease` joined the gate in #129 so that
-R8 runs on every push rather than only when somebody remembered, the phone steps joined it in #197 in
-the same change that created the module, and `:wear:testDebugUnitTest` joined it in #160.
+**The gate CI enforces on every pull request is not listed here.** Read it off
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), which is the file that actually runs it. This
+block used to copy that list and fell behind it three times — once when `bundleRelease` joined in
+#129, once when the two `:phone` steps joined in #197, and once when `:wear:testDebugUnitTest` joined
+in #160. Each time every command listed here still ran and still passed, so the stale copy gave a
+green result and no signal at all that a step had been skipped. A copy of that kind fails by staying
+true, which is why it is now a pointer rather than a list.
+
+`sh githooks/pre-push` runs the local check list in [`githooks/checks`](githooks/checks). That is
+**deliberately a fast subset** of the CI gate, not the whole of it — the reasoning for each command's
+presence or absence is in that file's comments. A green hand run is not a green CI run.
 
 It behaves differently here than on CI, which matters when you run the gate locally: this machine has
 a `keystore.properties` and therefore signs, while CI has none and builds unsigned — see
@@ -297,11 +295,11 @@ internal testing.
 
 | Milestone | Scope |
 |---|---|
-| **Shipped** | Six sequences including both race-manager modes, signal-box lead-in, Sync, rendered cue audio, scheduled cues, foreground service, screen policy, restore-after-kill |
+| **Shipped** | Six sequences including both race-manager modes, signal-box lead-in, Sync, rendered cue audio, scheduled cues, foreground service, screen policy, restore-after-kill, the `:phone` companion module ([#197](https://github.com/SailorDave17/race-timer/issues/197)) — built and in the CI gate, not published |
 | **Play internal testing** ([#66](https://github.com/SailorDave17/race-timer/issues/66)) | Developer account, upload keystore, icon set, store listing and screenshots, privacy policy, App content declarations, first internal build |
 | **Shipped toward that** | `compileSdk`/`targetSdk` 35 ([#116](https://github.com/SailorDave17/race-timer/pull/116), closing [#69](https://github.com/SailorDave17/race-timer/issues/69)) on the AGP 8.6.1 / Gradle 8.9 toolchain ([#111](https://github.com/SailorDave17/race-timer/pull/111), closing [#68](https://github.com/SailorDave17/race-timer/issues/68)) — the 2026-08-31 Wear OS deadline is met |
 | **Known open defects** | Under Do Not Disturb the watch loses **both** channels, so the gun never fires ([#144](https://github.com/SailorDave17/race-timer/issues/144)), with no pre-start warning that the cues will be silent ([#96](https://github.com/SailorDave17/race-timer/issues/96)); a cue dropped or truncated mid-race says nothing ([#161](https://github.com/SailorDave17/race-timer/issues/161)); the Settings remedy cannot clear the foreground-service block it raises ([#165](https://github.com/SailorDave17/race-timer/issues/165)). The display can still stick 180° off — a device fault, not the app: [#115](https://github.com/SailorDave17/race-timer/issues/115) is closed but **the remedy did not hold**, and [#147](https://github.com/SailorDave17/race-timer/issues/147) runs the control arm that would settle the cause |
-| **Later** | Named custom presets, round-down sync toggle, Wear Tile + complication, phone companion, rolling/chained starts |
+| **Later** | Named custom presets, round-down sync toggle, Wear Tile + complication, rolling/chained starts |
 
 The Google Play account the app publishes under — and why publishing from a different one would create
 a separate app — is in [`docs/play-store-account.md`](docs/play-store-account.md).
