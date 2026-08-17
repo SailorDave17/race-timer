@@ -1,7 +1,14 @@
 # Play Console — App content declarations
 
 Every declaration in Play Console's **App content** section for `io.github.sailordave17.racetimer`
-(Race Timer for Wear OS), with the answer and the evidence it rests on. Tracked as issue #75.
+(Mad Cow Race Timer), with the answer and the evidence it rests on. Tracked as issue #75, and
+re-derived for the phone form factor by [#212](https://github.com/SailorDave17/race-timer/issues/212).
+
+**One `applicationId`, two artifacts.** The watch app and the phone app ship under one Play
+listing, so **there is one set of App content answers covering both** — Console asks these
+questions of the app, not of each artifact. That is what makes the phone's arrival cheap here and
+it is the single most useful finding of the re-derivation: *measured 2026-08-17, the phone
+introduces no permission the watch did not already declare*, so no answer below moves.
 
 This file exists to be a **diff base**. The answers are cheap to give and expensive to re-derive: at
 the next release, or the moment a permission is added, the question is not "what is true?" but "what
@@ -19,39 +26,48 @@ Two boundaries worth stating up front:
 
 ## The build these answers describe
 
-| | |
-|---|---|
-| Package | `io.github.sailordave17.racetimer` (`applicationId` in `wear/build.gradle.kts`) |
-| `versionCode` / `versionName` | `1` / `1.0` (same file, keys of those names) |
-| `minSdk` / `targetSdk` / `compileSdk` | `30` / `35` / `35` (same file, keys of those names) |
-| Verified against | `develop` at `aafa5de`, 2026-08-11 |
+| | Watch (`:wear`) | Phone (`:phone`) |
+|---|---|---|
+| Package | `io.github.sailordave17.racetimer` | the **same** `applicationId`, deliberately — one listing, two form factors |
+| Declared in | `wear/build.gradle.kts` | `phone/build.gradle.kts` |
+| `versionCode` / `versionName` | `1` / `1.0` | `1` / `1.0` — **not an upload candidate.** Both modules currently read `1`, which cannot both go to Play; allocating from the shared counter ratified as epic #196 decision D3 is [#211](https://github.com/SailorDave17/race-timer/issues/211)'s job |
+| `minSdk` / `targetSdk` / `compileSdk` | `30` / `35` / `35` | `30` / `35` / `35` |
+| Verified against | `develop` at `f953e97`, 2026-08-17 | same |
 
-An answer below is true of *that* build. A later `versionCode` inherits nothing automatically.
+An answer below is true of *those* builds. A later `versionCode` inherits nothing automatically.
+
+**The phone's `targetSdk` is the one field here with a deadline against it.** Play requires API 36
+of a phone artifact after **2026-08-31** and the Wear carve-out does not cover it, so the row above
+is correct today and blocks the phone upload the moment that date passes. That bump is
+[#261](https://github.com/SailorDave17/race-timer/issues/261), which needs
+[#192](https://github.com/SailorDave17/race-timer/issues/192) first. It is recorded in this table
+rather than only on the tracker because this document is the diff base somebody reads at upload
+time, and `targetSdk 35` on a phone bundle is a rejection rather than a warning.
 
 ## The declarations
 
 | Console section | Answer | Evidence |
 |---|---|---|
-| **Privacy policy URL** | The published URL of `docs/privacy-policy.md`. **Not yet live** — publication is #73. | Source committed at `docs/privacy-policy.md`; the URL is a repo-settings action, not a code fact |
+| **Privacy policy URL** | `https://sailordave17.github.io/race-timer/privacy-policy` — **live**. *(Corrected 2026-08-17: this row said "Not yet live — publication is #73" for five days after #73 published it on 2026-08-12.)* | Source at `docs/privacy-policy.md`, built to the `gh-pages` branch by `.github/scripts/build-privacy-page.py`. **Fetched 2026-08-17** rather than inherited — it answered, and the maintainer block was correctly absent from the rendered page |
 | **Data safety** | **No data collected. No data shared.** | Long form below — this is the only row whose answer needs an argument |
 | **Content ratings** (IARC questionnaire) | Every substantive question **no**; rates as low as the questionnaire allows | Long form below |
 | **Target audience and content** | **13-15, 16-17, and 18 and over.** Owner decision 2026-08-12 — see *Target audience* below | A product decision, not a code fact. **This row said "adults, no child age band" until it was filed**, and the app ships a **Scholastic (ICSA)** sequence, which is high-school sailing |
-| **Ads** | **No ads.** The app contains no advertising | No ad SDK among the dependencies (`wear/build.gradle.kts`, `dependencies` block); no `com.google.android.gms.permission.AD_ID` in the merged manifest |
+| **Ads** | **No ads.** Neither app contains advertising | No ad SDK in the dependencies of **any** of the four modules; no `com.google.android.gms.permission.AD_ID` in **either** merged manifest |
 | **Advertising ID** | **Not used** | `com.google.android.gms.permission.AD_ID` is not declared in the merged manifest. From `targetSdk` 33 an app must declare it to read the ID at all, so its absence is the answer. **Check the merged manifest, not the source** — Console's own page warns that an SDK's library manifest can inject this permission, which is precisely the check this document already does |
 | **News apps** | No | Not a news or magazine app |
 | **COVID-19 contact tracing and status apps** | No | No contact-tracing or health-status function |
 | **Government apps** | No | Not published on behalf of, or in association with, a government entity |
-| **Financial features** | **None.** No in-app purchases, no subscriptions, no financial products | No billing or payments dependency (`wear/build.gradle.kts`); no purchase flow anywhere in `wear/src` |
-| **Health apps** | **No.** The app reads no health or fitness data | No `BODY_SENSORS`, no `ACTIVITY_RECOGNITION`, no health permission in the merged manifest; no Health Services dependency. It is a sports app that measures **time**, not the athlete |
-| **Data deletion** | No account exists, so there is nothing held off-device to delete. Local data is removed by uninstalling the app or clearing its storage from watch settings | No account or sign-in code anywhere in `wear/src`; nothing is transmitted (no `INTERNET` permission) |
-| **Foreground service permissions** | `specialUse`, with the written justification | `docs/play-store-fgs-justification.md` — paste that document's *Declaration text* section. **This is the only row with real rejection risk** |
-| **App access** | **All functionality is available without any special access.** No login, no region lock, no unlocked-content gate; no reviewer credentials needed | No account/sign-in code in `wear/src`; the only `startActivity` leaves for a **system settings screen**, never a login or a web page (`MainActivity.kt:726`) |
+| **Financial features** | **None.** No in-app purchases, no subscriptions, no financial products | No billing or payments dependency in any of the four build files; no purchase flow in `wear/src` or `phone/src` |
+| **Health apps** | **No.** Neither app reads health or fitness data | No `BODY_SENSORS`, no `ACTIVITY_RECOGNITION`, no health permission in **either** merged manifest; no Health Services dependency. It is a sports app that measures **time**, not the athlete |
+| **Data deletion** | No account exists, so there is nothing held off-device to delete. Local data is removed by uninstalling the app or clearing its storage from the device's settings | No account or sign-in code in `wear/src` or `phone/src`; neither app transmits anything (no `INTERNET` permission in either merged manifest) |
+| **Foreground service permissions** | `specialUse`, with the written justification | `docs/play-store-fgs-justification.md` — paste that document's *Declaration text* section. **This is the only row with real rejection risk**, and the phone raises the stakes rather than changing the answer: **both** artifacts declare `FOREGROUND_SERVICE_SPECIAL_USE`, for the same reason (a race-start countdown is none of the enumerated FGS types), so one rejected argument rejects both. The phone's subtype string is in `phone/src/main/AndroidManifest.xml`; check that the justification document still reads as true of a phone and not only of a wrist before pasting it |
+| **App access** | **All functionality is available without any special access.** No login, no region lock, no unlocked-content gate; no reviewer credentials needed — true of **both** apps | No account/sign-in code in `wear/src` or `phone/src`; on the watch the only `startActivity` leaves for a **system settings screen**, never a login or a web page |
 
 And one that Console asks conditionally rather than as its own checklist row:
 
 | Console section | Answer | Evidence |
 |---|---|---|
-| **Photo and video permissions** (asked only if the permission is declared) | Not applicable | No `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO` / `READ_EXTERNAL_STORAGE` in the merged manifest |
+| **Photo and video permissions** (asked only if the permission is declared) | Not applicable | No `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO` / `READ_EXTERNAL_STORAGE` in **either** merged manifest |
 
 *Advertising ID sat in this conditional table, described as "asked inside Data safety", until the
 form was actually opened on 2026-08-12. It is **its own required section** in App content, and
@@ -126,8 +142,11 @@ The form is still mandatory for an app that collects nothing.
 
 ### What the app actually stores
 
-One `SharedPreferences` file, `race_timer_state`, in the app's private storage
-(`TimerService.kt:1014`). It holds **eight** keys:
+One `SharedPreferences` file per app, each in that app's own private storage, never shared and
+never synced between the two. The count is deliberately not written here — the tables are the
+enumeration, for the reason `docs/privacy-policy.md` records having been bitten by twice.
+
+**Watch** — `race_timer_state` (`TimerService.kt:1085`):
 
 | Key | What it is | Line |
 |---|---|---|
@@ -138,17 +157,50 @@ One `SharedPreferences` file, `race_timer_state`, in the app's private storage
 | `picked_sequence_id` | The sequence the sailor last chose — a preference that outlives a race (#88) | `:1034` |
 | `last_box_alert_seconds` | The lead time a race was last armed with (#104) | `:1048` |
 | `raised_cue_stream` | Which audio stream a running race raised the volume on (#95) | `:1069` |
-| `raised_cue_previous_volume` | What that stream's volume was before, so it can be put back (#95) | `:1070` |
+| `raised_cue_previous_volume` | What that stream's volume was before, so it can be put back (#95) | `:1141` |
+
+**Phone** — `phone_race_state` (`PhoneRacePersistence.kt:110`):
+
+| Key | What it is | Line |
+|---|---|---|
+| `sequence_id` | Which start sequence a race in flight is running | `PhoneRacePersistence.kt:111` |
+| `gun_elapsed_ms` | Scheduled gun time as a monotonic clock reading | `:112` |
+| `gun_wall_clock_ms` | Scheduled gun time as a wall-clock reading, for recovery after a restart | `:113` |
+| `captured_elapsed_ms` | Monotonic reading at the moment the race was saved | `:114` |
+| `picked_sequence_id` | The sequence the officer last chose — a preference that outlives a race (#209) | `:127` |
+
+The phone's set is a **subset** of the watch's, and the three it lacks are behavioural rather than
+a policy choice: no `last_box_alert_seconds` because the signal-box lead-in is unbuilt on the phone
+(#207), and no volume-receipt pair because the phone never raises a device volume. A Custom race
+adds no key on either — `custom_8m` carries its duration inside the sequence id, so
+`BuiltInSequences.resolve` rebuilds the whole sequence from that one string.
 
 Clock readings, a sequence identifier, a stream index and a volume integer. No name, no account, no
-device identifier, no location, no health value, no free text — the app has **no text input at all**.
+device identifier, no location, no health value, no free text — **neither** app has any text input
+at all (swept 2026-08-17 across `wear/src/main` and `phone/src/main`).
 
-### The part that is not obvious: `allowBackup`
+### The part that is not obvious: `allowBackup`, and the two apps answer it differently
 
-`android:allowBackup="true"` is set (`wear/src/main/AndroidManifest.xml:25`). Android's Auto Backup
-is on by default for apps targeting API 23 or higher and **includes `SharedPreferences` files**, so
-`race_timer_state` is eligible to be copied into a private folder of the user's Google Drive. Data
-does leave the device.
+**Watch:** `android:allowBackup="true"` (`wear/src/main/AndroidManifest.xml:25`). Android's Auto
+Backup is on by default for apps targeting API 23 or higher and **includes `SharedPreferences`
+files**, so `race_timer_state` is eligible to be copied into a private folder of the user's Google
+Drive. Data does leave the device.
+
+**Phone:** `android:allowBackup="false"`, set explicitly and ratified as epic #196 decision D5
+(`phone/src/main/AndroidManifest.xml`, with the reasoning in a comment beside it). Confirmed in the
+**merged** manifest 2026-08-17, not just the source. So the argument below is **watch-only**; on
+the phone the question does not arise.
+
+The asymmetry is deliberate and worth keeping straight, because it is the kind of thing that gets
+"tidied" into consistency later: the watch keeps Auto Backup so a sailor's sequence preference
+survives a replacement watch, and the phone declines it because the decision point was the moment
+its manifest was authored and nothing there needed to survive a new phone.
+
+**`docs/privacy-policy.md` said the opposite of this section until 2026-08-17**, and it is the
+*published* document — it asserted "This data never leaves the watch" while this file had said
+"Data does leave the device" since 2026-08-11. Corrected under #212 by giving the policy a
+*Device backup* section. Recorded here because two documents disagreeing on a material point, with
+the public one carrying the wrong side, is worse than either being wrong alone.
 
 The answer is still *no data collected*, for three independent reasons — listed weakest-first, so the
 order to argue them in is clear:
@@ -179,12 +231,16 @@ Two answers are worth stating with their evidence rather than as assertions, bec
 ones a reviewer could reasonably expect to be "yes":
 
 - **No user-generated content and no user-to-user interaction.** There is no text input anywhere in
-  the app — a sweep of `wear/src/main` for `TextField`, `BasicTextField`, `EditText` and
-  `RemoteInput` returns nothing. Every value the sailor sets is chosen from a picker or stepped with
-  `+` / `−`.
-- **No unrestricted access to the internet.** The app has no `INTERNET` permission, and the single
-  `startActivity` call in the app opens a **system settings screen** (`MainActivity.kt:726`), never a
-  browser or a web view.
+  either app — a sweep of `wear/src/main` **and `phone/src/main`** for `TextField`,
+  `BasicTextField`, `EditText` and `RemoteInput` returns nothing (re-run 2026-08-17). Every value
+  the sailor or officer sets is chosen from a picker or stepped with `+` / `−`.
+- **No unrestricted access to the internet.** Neither app has the `INTERNET` permission. The watch
+  contains exactly one `startActivity` call and it opens a **system settings screen**
+  (`wear/.../MainActivity.kt:775`), never a browser or a web view; the phone app contains **no
+  `startActivity` call at all**, so it cannot leave itself for anywhere.
+
+  *(That citation read `MainActivity.kt:726` until 2026-08-17 and pointed at nothing — the third
+  time a line number in these two documents has been found drifted. Re-cite on every re-check.)*
 
 ## What would change, and what it would break
 
@@ -199,17 +255,32 @@ change that, on the day it merges, makes something above **wrong**.
 | **Ads or an ads SDK** | The **Ads** declaration flips. **Advertising ID** likely becomes used and must be declared. **Target audience** acquires ad-serving obligations. Data safety gains sharing with a third party. The content rating changes. The privacy policy's "no advertising networks" is false |
 | **In-app purchases or subscriptions** | **Financial features** and the content rating both change, and the store listing must say so |
 | **Free-text entry** (naming a custom sequence, say) | The content rating's user-generated-content answer changes, and Data safety may gain a type depending on where the text goes |
-| **A phone companion or Data Layer sync** | Data leaves the watch **by the app's own action** — the reasoning in *the part that is not obvious* above no longer applies, and Data safety must be re-answered from scratch. The standalone `meta-data` declaration in the manifest also becomes wrong |
+| **Data Layer sync between the watch and the phone** ([#219](https://github.com/SailorDave17/race-timer/issues/219)) | Data leaves a device **by the app's own action** — the reasoning in *the part that is not obvious* above no longer applies, and Data safety must be re-answered from scratch rather than edited. The watch's standalone `meta-data` declaration would also need re-reading, though it describes *not requiring* a phone rather than *not talking to* one |
+| **Haptics on the phone** ([#208](https://github.com/SailorDave17/race-timer/issues/208)) | Adds `VIBRATE` to the phone manifest. Nothing in this document moves — the permission is already declared by the watch and already in the app-wide set — but `docs/privacy-policy.md`'s permission table says `VIBRATE` is **watch-only**, and that row becomes wrong the day it merges |
 
-The common shape: **a permission added to the manifest invalidates a declaration in Play Console, and
-nothing in the build fails when it does.** Turning that dependency into an enforced check rather than
-a paragraph is #83.
+**One row of this table has already been half-resolved, and the correction is instructive.** It
+used to read *"A phone companion or Data Layer sync"* as a single trigger, predicting that a phone
+would make data leave the watch by the app's own action. The phone shipped in #197 and **none of
+that happened**, because it is a *standalone* app rather than a companion: two apps that never talk
+to each other, each storing its own state locally. The row had conflated *a second form factor*
+with *a link between them*, and only the second one carries the consequence. Split above so the
+shipped half stops implying a re-answer nobody owes.
+
+The common shape: **a permission added to either manifest invalidates a declaration in Play Console,
+and nothing in the build fails when it does.** Turning that dependency into an enforced check rather
+than a paragraph is [#83](https://github.com/SailorDave17/race-timer/issues/83) — which now has
+**two** manifests to read rather than one. That is not a detail: a check written against
+`wear/`'s merged manifest alone would pass while the phone gained a permission, which is the exact
+failure mode #83 exists to remove, arriving through the module list rather than through the
+permission list. Noted here rather than filed separately because #83 is open and this extends its
+input, not its purpose.
 
 ---
 
 ## Maintainer notes — not for Play Console
 
-Every claim above was checked against `develop` at `aafa5de` on **2026-08-11**.
+Every claim above was checked against `develop` at `aafa5de` on **2026-08-11**, and **re-derived
+for both form factors against `develop` at `f953e97` on 2026-08-17** (#212).
 
 **Check the merged manifest, not the source file.** The shipped permission set is what
 `wear/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml`
@@ -241,10 +312,36 @@ Other checks run the same day:
 - The eight `race_timer_state` keys, at the lines cited in the table above.
 
 **The module set drifts too, and a sweep that names it goes silently under-scoped.** The sweep above
-covered `wear/src` and `shared/src` because those were the only source trees on 2026-08-11. Since
-#200 there is a third, `shared-android/src`, and a third build file — include both when this is
-re-run. The record above is left as written because it was true; what would not be true is treating
-its scope as the current one.
+covered `wear/src` and `shared/src` because those were the only source trees on 2026-08-11. There
+are now **four** — `shared/`, `shared-android/` (#200), `wear/` and `phone/` (#197) — and four
+build files. The 2026-08-11 record is left as written because it was true of the tree it read; what
+would not be true is treating its scope as the current one.
+
+**Re-run 2026-08-17 across all four trees**, plus all four build files and
+`gradle/libs.versions.toml`, with the same pattern as before. Two hits, **both comments** — one in
+`phone/src/main/AndroidManifest.xml` and one in `phone/src/test/.../LauncherReachabilityTest.kt`,
+each explaining why Auto Backup matters *given the absence of* `INTERNET`. No code hit in any
+module. Derive the module list with `./gradlew projects` rather than from this paragraph, which is
+the same enumeration hazard one level up.
+
+**Both merged release manifests, read 2026-08-17** — built with
+`./gradlew :phone:processReleaseMainManifest :wear:processReleaseMainManifest --no-watch-fs
+--rerun-tasks`, then read from
+`<module>/build/intermediates/merged_manifest/release/processReleaseMainManifest/`:
+
+| | Watch | Phone |
+|---|---|---|
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `WAKE_LOCK`, `POST_NOTIFICATIONS` | yes | yes |
+| `VIBRATE` | yes | **no** — until #208 |
+| `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` (androidx-injected) | yes | yes |
+| `INTERNET`, `AD_ID`, any media/storage/health permission | no | no |
+| `uses-feature` | `android.hardware.type.watch`; `android.hardware.audio.output` `required="false"` | **none at all** |
+| `meta-data` | `com.google.android.wearable.standalone=true`, plus androidx startup initialisers | androidx startup initialisers only (emoji2, lifecycle, profileinstaller) |
+| `allowBackup` | `true` | `false` (D5) |
+
+**The phone's permission set is a strict subset of the watch's.** That single fact is why the
+re-derivation changed no answer in the table at the top, and it is the thing to re-check first at
+the next release rather than re-reading every row.
 
 **Line numbers drift.** Every citation here was correct on the date above and will not stay correct;
 re-cite them when this document is re-checked rather than trusting them. `docs/privacy-policy.md`
@@ -255,22 +352,37 @@ account, a health sensor, an ads SDK or any third-party SDK is introduced, one o
 is wrong the moment that change merges — see *What would change*. #83 exists to turn that dependency
 into an enforced check.
 
-**Known disagreement with `docs/privacy-policy.md`.** That document's *Information stored on your
-device* table lists **four** keys; there are **eight** (the table above). The four it is missing —
-`picked_sequence_id` (#88), `last_box_alert_seconds` (#104), `raised_cue_stream` and
-`raised_cue_previous_volume` (both #95) — all landed between 2026-08-02 and 2026-08-05, before that
-document's own re-check on 2026-08-09 restated "the four persisted keys" unchanged. None of them
-alters a claim the policy makes: they are a preference, a preference, and a two-key receipt for
-restoring a device volume, and none is personal, identifying, or transmitted. The **enumeration** is
-incomplete, not the conclusion. Correcting it belongs to #73, which is still open.
+**The key-count disagreement with `docs/privacy-policy.md` is RESOLVED**, and this paragraph is
+kept as a record rather than deleted. That document's table listed four keys where there were
+eight; it was corrected on 2026-08-12 under #73, and this note went on describing the
+disagreement as live for five days afterwards. Both documents now enumerate rather than count, and
+**neither states a number in prose** — #212 AC 2 made that a criterion after the same drift
+happened twice. A stale "known disagreement" is its own small hazard: it invites the next reader
+to go and fix something already fixed, and to distrust the document that was right.
+
+**A live disagreement did exist, on a different axis, and was corrected under #212.** The policy
+claimed *"This data never leaves the watch"* while this file has said *"Data does leave the
+device"* since 2026-08-11 — a material contradiction with the **published** document on the wrong
+side of it. The policy now carries a *Device backup* section. The lesson is not about backup: it is
+that these two files were cross-checked for *key counts*, which is the easy axis to compare,
+while a flat contradiction sat in prose neither check looked at.
 
 **Where the entries actually get made.** The Console app already exists — created 2026-08-03 as
 `io.github.sailordave17.racetimer`, status Draft — so #79's first criterion was satisfied before this
 document was written, and #79 now covers the *upload*, not the app's creation. Seven declarations
 were filed 2026-08-12 (above). Two remain gated and neither can be discharged by #75:
 
-- **Privacy policy URL** — a required field with no value to enter. GitHub Pages is not enabled on
-  this repo (`/pages` returns 404, *measured 2026-08-12*), so `docs/privacy-policy.md` has no public
-  URL. That is **#73**, whose contact-address input is now settled as `hsc.coach@gmail.com`.
+- **Privacy policy URL** — ~~a required field with no value to enter~~ **DISCHARGED**. #73 published
+  it on 2026-08-12 to `https://sailordave17.github.io/race-timer/privacy-policy`, served from the
+  `gh-pages` branch. *Fetched 2026-08-17 and it answers.* The bullet above described a 404 that had
+  stopped being true the same day it was written, which is why the row in the main table now cites a
+  fetch rather than a memory.
+
+  **The published copy lags this branch by design.** `.github/workflows/publish-privacy-policy.yml`
+  republishes on a push to `develop` touching the policy or its build script, so the #212 revision
+  goes live when this work merges — not when it is written. Before the phone upload, confirm the
+  live page shows the **17 August 2026** effective date; the policy's own *Changes to this policy*
+  section promises an update before a version it affects is published, and that promise is what
+  #212 sits ahead of #214 to keep.
 - **Foreground service permissions** — not offered as a task until a bundle declaring `specialUse`
   is uploaded. That is **#79**. The text is ready in `docs/play-store-fgs-justification.md` (#74).

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Check the Play listing and release-note fields against Play's character limits.
 
+Covers the live fields AND the two-form-factor draft added by #212. A field whose block is
+missing is an error rather than a zero -- see extract() -- so adding a name to LIMITS without
+adding the block to listing.md fails loudly, which is the behaviour that makes this worth running.
+
 Run by hand: `python docs/store/count-listing.py`. It is deliberately **not** wired into CI --
 race-timer has no lint step by design, and enforcing docs-to-Play consistency is its own piece of
 work (#83). An unwired check that reads as a gate is worse than an honest manual one, so this says
@@ -23,6 +27,11 @@ LIMITS = {
     "short": 80,
     "full": 4000,
     "notes": 500,
+    # The two-form-factor draft (#212), not yet in Console. It is counted for the same reason the
+    # live fields are: a draft that overruns its limit is discovered at the paste, in a web form,
+    # by whoever is least able to rewrite it. There is no draft name -- the app name does not move.
+    "short-draft": 80,
+    "full-draft": 4000,
 }
 
 # Which file each field lives in. `notes` is in its own document because release notes are per
@@ -33,6 +42,8 @@ SOURCES = {
     "short": "listing.md",
     "full": "listing.md",
     "notes": "release-notes.md",
+    "short-draft": "listing.md",
+    "full-draft": "listing.md",
 }
 
 
@@ -70,7 +81,7 @@ def main():
         status = "ok " if used <= limit else "OVER"
         if used > limit:
             failed = True
-        print(f"{status} {field:6} {used:>4} / {limit}")
+        print(f"{status} {field:11} {used:>4} / {limit}")
 
     if failed:
         print("\nAt least one field is over its Play limit.")

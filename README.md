@@ -1,7 +1,9 @@
 # Mad Cow Race Timer — Sailing Start-Sequence Timer
 
-A precise, glanceable start-sequence timer for sailboat racing that runs **standalone on a Wear OS
-watch** (no phone required on the water).
+A precise, glanceable start-sequence timer for sailboat racing. It runs **standalone on a Wear OS
+watch** — no phone required on the water — and, since [epic #196](https://github.com/SailorDave17/race-timer/issues/196),
+**standalone on an Android phone** for the committee-boat console. Standalone on both: the phone is
+not a companion, and neither device needs the other.
 
 Two audiences, one app: a **sailor** counting down to the gun, and a **race committee** sounding the
 signals the fleet is counting down to. The race-manager sequences are not a re-skin — they are voiced
@@ -295,7 +297,9 @@ internal testing.
 
 | Milestone | Scope |
 |---|---|
-| **Shipped** | Six sequences including both race-manager modes, signal-box lead-in, Sync, rendered cue audio, scheduled cues, foreground service, screen policy, restore-after-kill, the `:phone` companion module ([#197](https://github.com/SailorDave17/race-timer/issues/197)) — built and in the CI gate, not published |
+| **Shipped (watch)** | Six sequences including both race-manager modes, signal-box lead-in, Sync, rendered cue audio, scheduled cues, foreground service, screen policy, restore-after-kill |
+| **In progress: the phone app** ([epic #196](https://github.com/SailorDave17/race-timer/issues/196)) | A **standalone** phone timer, not a companion — the same `TimerEngine` on the same monotonic anchor, shipping under the same Play listing. A sailor with no watch gets the complete timer, which is a hard requirement of the epic rather than a fallback. Built and in the CI gate, **not published**: countdown, cue audio, screen-off cueing, Sync, Custom, restore-after-kill and the officer's screen choice have landed ([#197](https://github.com/SailorDave17/race-timer/issues/197), #199, #202–#205, #209, #225); the race-manager count-up ([#206](https://github.com/SailorDave17/race-timer/issues/206)), signal-box lead-in ([#207](https://github.com/SailorDave17/race-timer/issues/207)) and haptics ([#208](https://github.com/SailorDave17/race-timer/issues/208)) have not |
+| **Then: the pair** | Linking watch and phone over the Wearable Data Layer so a race started on either counts to the same gun ([#219](https://github.com/SailorDave17/race-timer/issues/219)–[#223](https://github.com/SailorDave17/race-timer/issues/223)). **Nothing of this is built**, and the two apps do not talk to each other today |
 | **Play internal testing** ([#66](https://github.com/SailorDave17/race-timer/issues/66)) | Developer account, upload keystore, icon set, store listing and screenshots, privacy policy, App content declarations, first internal build |
 | **Shipped toward that** | `compileSdk`/`targetSdk` 35 ([#116](https://github.com/SailorDave17/race-timer/pull/116), closing [#69](https://github.com/SailorDave17/race-timer/issues/69)) on the AGP 8.6.1 / Gradle 8.9 toolchain ([#111](https://github.com/SailorDave17/race-timer/pull/111), closing [#68](https://github.com/SailorDave17/race-timer/issues/68)) — the 2026-08-31 Wear OS deadline is met |
 | **Known open defects** | Under Do Not Disturb the watch loses **both** channels, so the gun never fires ([#144](https://github.com/SailorDave17/race-timer/issues/144)), with no pre-start warning that the cues will be silent ([#96](https://github.com/SailorDave17/race-timer/issues/96)); a cue dropped or truncated mid-race says nothing ([#161](https://github.com/SailorDave17/race-timer/issues/161)); the Settings remedy cannot clear the foreground-service block it raises ([#165](https://github.com/SailorDave17/race-timer/issues/165)). The display can still stick 180° off — a device fault, not the app: [#115](https://github.com/SailorDave17/race-timer/issues/115) is closed but **the remedy did not hold**, and [#147](https://github.com/SailorDave17/race-timer/issues/147) runs the control arm that would settle the cause |
