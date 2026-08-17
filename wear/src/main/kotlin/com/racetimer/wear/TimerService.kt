@@ -1004,6 +1004,28 @@ class TimerService : Service() {
 
     // --- State persistence ----------------------------------------------------
 
+    /**
+     * Write the race in flight, durably.
+     *
+     * **`commit()`, not `apply()`, and the difference is measured** (#151). `apply()` returns as soon
+     * as the in-memory map is updated and hands the disk write to `QueuedWork`'s single background
+     * thread — where, at `ACTION_START`, it queues behind the rest of a cold launch. Measured on
+     * SM-R925U against this file's own `captured_elapsed_ms` and the prefs file's mtime: the write
+     * landed **20–53 ms** after the call on a warm process and **69–205 ms** on a cold one. A process
+     * killed inside that window comes back with nothing saved — indistinguishable, to the sailor, from
+     * never having tapped Start.
+     *
+     * The write itself is not what takes that long. `commit()` does the same work on the calling
+     * thread in **7–9 ms**, so the tens-to-hundreds of milliseconds `apply()` leaves exposed are queue
+     * latency, not I/O. That is the whole trade: ~8 ms of main thread buys the window shut.
+     *
+     * Those 8 ms delay nothing that matters. The first cue of every sequence is dispatched by the
+     * `engine.tick()` above this call, deliberately (#62), so no cue waits on the write; what follows
+     * it is the wake lock, `startForeground` (a multi-second deadline) and the tick loop.
+     *
+     * `clearPersistedState()` deliberately keeps `apply()`: a lost *clear* leaves a spent snapshot,
+     * which restore already handles as `EXPIRED`, so it fails safe where a lost *write* does not.
+     */
     private fun persistSnapshot() {
         val snap = engine.snapshot() ?: return
         prefs.edit()
@@ -1011,7 +1033,7 @@ class TimerService : Service() {
             .putLong(PREF_GUN_ELAPSED, snap.gunElapsedMs)
             .putLong(PREF_GUN_WALL_CLOCK, snap.gunWallMs)
             .putLong(PREF_CAPTURED_ELAPSED, snap.capturedElapsedMs)
-            .apply()
+            .commit()
     }
 
     /**
