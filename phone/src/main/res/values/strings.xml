@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Same label as the watch: one Play listing, one name on two form factors. -->
+    <string name="app_name">Mad Cow Race Timer</string>
+
+    <!-- Foreground-service notification (#203). The channel name is what Settings shows the
+         officer; the title sits above the live countdown text the service posts. -->
+    <string name="notification_channel_name">Race countdown</string>
+    <string name="notification_channel_description">Shows the race countdown while the screen is off</string>
+    <string name="notification_content_title">Mad Cow Race Timer</string>
+</resources>

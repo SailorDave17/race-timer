@@ -9,7 +9,7 @@
  *  1. Call [load] with the desired [RaceSequence].
  *  2. Call [start] to begin the countdown.
  *  3. Poll [remainingMs] (or observe via a coroutine loop / Handler) to update the UI.
- *  4. Call [sync] to snap to the nearest whole minute at any time while running.
+ *  4. Call [sync] to snap to a whole minute at any time while running.
  *  5. Call [stop] / [reset] to cancel. For a [RaceSequence.countUpAfterFinish] sequence, call
  *     [endRace] once the gun has fired to freeze the elapsed time for review, then [stop] to
  *     dismiss it.
@@ -115,7 +115,7 @@ interface TimerListener {
 // ---------------------------------------------------------------------------
 
 /**
- * @param clock      Injectable monotonic clock. In production, pass [com.racetimer.wear.SystemMonotonicClock]
+ * @param clock      Injectable monotonic clock. In production, pass `com.racetimer.android.SystemMonotonicClock`
  *                   (or any [MonotonicClock] backed by [android.os.SystemClock.elapsedRealtime]).
  *                   In unit tests, inject a fake clock via a lambda: `MonotonicClock { fakeNow }`.
  * @param wallClock  Injectable wall clock, used only for persistence/restore across process death.
@@ -277,22 +277,26 @@ class TimerEngine(
     }
 
     /**
-     * Snap the running countdown to the nearest whole minute.
+     * Snap the running countdown to a whole minute, per [snapToMinute]: up by at most
+     * [LATE_TAP_WINDOW_MS], down by anything else.
      *
-     * For example, with 4:05 remaining this jumps to 4:00; with 3:52 it jumps to 4:00.
+     * For example, with 4:52 remaining this jumps to 5:00; with 4:49 it jumps to 4:00.
      * The gun-time anchor is updated so that all future cues fire at the correct absolute
      * monotonic times — the display stays correct even after a snap.
      *
      * A double-tap guard prevents a second snap within [guardMs] milliseconds.
      *
-     * @param roundDown       If true, prefer rounding down — but never by more than [maxCorrectionMs];
-     *                        beyond that it falls back to nearest so a stray tap can't delete a minute.
-     *                        Default false (nearest).
-     * @param guardMs         Minimum interval between consecutive syncs.
-     * @param maxCorrectionMs Maximum amount a single sync may move the clock. A sync is a correction,
-     *                        not a jump; nearest is always within half a minute of the current time.
+     * There is no separate correction ceiling, and reinstating one would be a mistake rather than a
+     * belt-and-braces. The old 30 s ceiling existed to stop a round-down flooring 3:55 to 3:00 — a
+     * 55 s deletion that would silently make the sailor OCS — and under the late-tap rule 3:55
+     * rounds *up*, so that case cannot arise at all. More than that, a 30 s ceiling is now
+     * *incompatible* with the rule rather than redundant to it: this rule's own largest correction
+     * is a 59 s floor, so a ceiling would refuse or redirect precisely the corrections the change
+     * exists to enable (#150).
+     *
+     * @param guardMs Minimum interval between consecutive syncs.
      */
-    fun sync(roundDown: Boolean = false, guardMs: Long = 1_000L, maxCorrectionMs: Long = 30_000L) {
+    fun sync(guardMs: Long = 1_000L) {
         if (state != TimerState.RUNNING) return
         val seq = sequence ?: return
 
@@ -302,7 +306,7 @@ class TimerEngine(
         // Inert through a lead-in (#104). A sync is a correction against a sequence already under
         // way — the whole run-up is the window *before* there is anything to be corrected against,
         // since the signal box has not been started yet. Snapping here would be worse than useless:
-        // with a 70 s lead on a 3:00 sequence the clock reads 4:07, nearest-minute lands on 4:00,
+        // with a 70 s lead on a 3:00 sequence the clock reads 4:07, the snap lands on 4:00,
         // and seven seconds of lead vanish — the exact misalignment the lead-in exists to prevent,
         // with no signal to notice it by. Refused *before* the double-tap guard is armed, so it
         // costs a later, legitimate sync nothing.
@@ -314,15 +318,7 @@ class TimerEngine(
         lastSyncTimeMs?.let { if (now - it < guardMs) return }
         lastSyncTimeMs = now
 
-        var snapped = snapToMinute(remaining, roundDown)
-
-        // A sync is a *correction*, not a jump: never move the clock more than maxCorrectionMs.
-        // This guards round-down from flooring a near-full minute away (e.g. 3:55 -> 3:00, a 55s
-        // deletion that would silently make the sailor OCS). If the chosen rounding overshoots the
-        // bound, fall back to nearest, which is always within half a minute.
-        if (kotlin.math.abs(snapped - remaining) > maxCorrectionMs) {
-            snapped = snapToMinute(remaining, roundDown = false)
-        }
+        val snapped = snapToMinute(remaining)
 
         // Re-anchor the gun time
         gunTimeMs = now + snapped
@@ -649,18 +645,36 @@ private fun recoverableRemainingMs(
 // ---------------------------------------------------------------------------
 
 /**
- * Snap [remainingMs] to the nearest whole minute (60 000 ms).
+ * Snap [remainingMs] to a whole minute, on the assumption that the tap came from an officer
+ * watching for the committee's signal — and so is on it, or a fraction late, but never early.
  *
- * @param roundDown  If true, always rounds toward zero (sailor never gains time).
+ * Up by [LATE_TAP_WINDOW_MS] or less; down by anything else:
+ *
+ * ```
+ * 4:52 -> 5:00   an 8 s up-correction: in step, thumb a hair late
+ * 4:50 -> 5:00   exactly 10 s, the boundary — resolves UP
+ * 4:49 -> 4:00   a 49 s down-correction: the watch is carrying time the sequence has spent
+ * 4:01 -> 4:00
+ * ```
+ *
+ * The boundary is stated because it does not follow from the arithmetic: an up-correction of
+ * exactly [LATE_TAP_WINDOW_MS] rounds **up**, so the comparison is `<=`.
+ *
+ * Nearest-minute rounding, which this replaces, added up to 30 s on the assumption the officer
+ * might have tapped half a minute *early* — which does not happen — and could not floor an error
+ * past 30 s at all, which does (#150).
  */
-fun snapToMinute(remainingMs: Long, roundDown: Boolean = false): Long {
+fun snapToMinute(remainingMs: Long): Long {
     if (remainingMs <= 0L) return 0L
     val minute = 60_000L
     val lower = (remainingMs / minute) * minute
     val upper = lower + minute
-    return if (roundDown) {
-        lower
-    } else {
-        if (remainingMs - lower <= upper - remainingMs) lower else upper
-    }
+    return if (upper - remainingMs <= LATE_TAP_WINDOW_MS) upper else lower
 }
+
+/**
+ * How far a sync may move the countdown **up**: the plausible lag between a committee signal and a
+ * thumb landing on the watch. Beyond it, a tap is read as evidence the watch is running behind
+ * rather than as a late tap, and the countdown is floored instead (#150).
+ */
+const val LATE_TAP_WINDOW_MS: Long = 10_000L

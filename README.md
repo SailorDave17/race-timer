@@ -81,9 +81,11 @@ process death during the run-up comes back on the right clock.
 
 ### Sync button
 
-Tap **Sync** during the countdown to snap to the nearest whole minute — this absorbs the
-reaction-time lag between the Race Committee's flag reaching the top of the staff and your thumb
-landing. Round-to-nearest by default.
+Tap **Sync** during the countdown to snap to a whole minute — this absorbs the reaction-time lag
+between the Race Committee's flag reaching the top of the staff and your thumb landing. A tap within
+10 s of a whole minute rounds **up** to it, on the reading that the signal was a moment ago; any
+later and the watch is taken to be carrying time the sequence has already spent, so the countdown
+floors to the minute below.
 
 Sync is deliberately **unavailable during a lead-in**: there is nothing to snap to yet, and snapping
 4:07 to 4:00 on a 3:00 sequence would silently delete seven seconds of the very run-up the lead-in
@@ -154,29 +156,58 @@ race-timer/
 │       │   ├── CountdownFormat.kt— MM:SS and H:MM:SS rendering
 │       │   └── BannerLayout.kt   — notice geometry inside a round screen
 │       └── test/                 — JVM unit tests, no device needed
+├── shared-android/   # Android leaf managers — no app identity, no UI, no service
+│   └── src/main/kotlin/com/racetimer/android/
+│       ├── HapticManager.kt        — cue → VibrationEffect waveform
+│       ├── ToneManager.kt          — cue → rendered AudioTrack buffer
+│       ├── SystemMonotonicClock.kt — the engine's clock, on Android
+│       ├── CueAudioProfile.kt      — seam: what a CueStream means on THIS device
+│       └── HapticUsagePolicy.kt    — seam: what a vibration is declared as here
+├── phone/            # Phone standalone app (#197, epic #196)
+│   └── src/
+│       ├── main/kotlin/com/racetimer/phone/
+│       │   ├── MainActivity.kt          — Compose UI, the display refresh loop
+│       │   ├── PhoneTimerViewModel.kt   — holds the race across a rotation
+│       │   └── ui/
+│       │       ├── PhoneReadout.kt          — engine state -> what the screen says
+│       │       ├── PhoneTheme.kt
+│       │       ├── TimerScreen.kt           — the console clock
+│       │       └── SequencePickerScreen.kt
+│       └── test/                 — JVM unit tests; Robolectric only for the manifest
 └── wear/             # Wear OS standalone app
-    └── src/main/
-        ├── kotlin/com/racetimer/wear/
-        │   ├── MainActivity.kt         — Compose UI, service binding, screen policy
-        │   ├── TimerService.kt         — foreground service, cue scheduling, feedback
-        │   ├── HapticManager.kt        — cue → VibrationEffect waveform
-        │   ├── ToneManager.kt          — cue → rendered AudioTrack buffer
-        │   ├── SystemMonotonicClock.kt — the engine's clock, on Android
-        │   ├── RaceTimerApplication.kt — notification channel creation
-        │   └── ui/
-        │       ├── Theme.kt
-        │       ├── TimerScreen.kt            — countdown face
-        │       ├── SequencePickerScreen.kt
-        │       ├── CustomDurationScreen.kt   — whole-minute stepper for Custom
-        │       ├── LeadInPickerScreen.kt     — box-alert presets
-        │       └── LeadInDurationScreen.kt   — dialled box-alert value
-        └── res/
+    ├── src/main/
+    │   ├── kotlin/com/racetimer/wear/
+    │   │   ├── MainActivity.kt         — Compose UI, service binding, screen policy
+    │   │   ├── TimerService.kt         — foreground service, cue scheduling, feedback
+    │   │   ├── WearCueAudioProfile.kt  — the watch's measured audio answers (#95)
+    │   │   ├── WearHapticUsagePolicy.kt— the watch's measured DND answer (#144/#187)
+    │   │   ├── RaceTimerApplication.kt — notification channel creation
+    │   │   └── ui/
+    │   │       ├── Theme.kt
+    │   │       ├── TimerScreen.kt            — countdown face
+    │   │       ├── SequencePickerScreen.kt
+    │   │       ├── CustomDurationScreen.kt   — whole-minute stepper for Custom
+    │   │       ├── LeadInPickerScreen.kt     — box-alert presets
+    │   │       └── LeadInDurationScreen.kt   — dialled box-alert value
+    │   └── res/
+    └── test/                 — JVM unit tests (#160); Robolectric, non-audio surfaces only
 ```
 
-The dependency direction is one-way and worth preserving: `wear` depends on `shared`, never the
-reverse. Keeping `shared` free of Android types is what lets the whole timing core run on the JVM in
-seconds with no emulator — and it is where the rules that would otherwise get written twice, and
-drift, are made assertable.
+The dependency direction is one-way and worth preserving: each app module depends on
+`shared-android`, which depends on `shared`, never the reverse — and `wear` and `phone` never
+reference each other, which `phone`'s `ModuleBoundaryTest` asserts in both directions rather than
+leaving to a grep somebody remembers to run. Keeping `shared` free of Android types is what lets the whole timing
+core run on the JVM in seconds with no emulator — and it is where the rules that would otherwise get
+written twice, and drift, are made assertable.
+
+`shared-android` (#200, epic #196 decision D1) holds the leaf managers that touch the platform's
+audio, haptic and clock APIs, so the highest-drift-risk code in the app exists once rather than once
+per form factor. It holds **leaf managers only** — `TimerService` stays in the app module, and each
+app keeps its own service shell, because a service shell drags notification channels,
+foreground-service types and two different lifecycle stories with it. What it deliberately does *not*
+hold is any answer that was measured on one device: `USAGE_TOUCH` and the `CueStream` → stream
+mapping are supplied by the app module through `HapticUsagePolicy` and `CueAudioProfile`, with no
+default, so a second form factor is made to measure its own rather than inherit the watch's.
 
 ## Build
 
@@ -202,23 +233,28 @@ successful push is what both states look like.
 
 ### Commands
 
+Everyday commands, for a fresh clone:
+
 ```bash
-# Run shared module unit tests (JVM only — no device needed). Fast feedback loop.
+# Fast feedback: pure-JVM logic tests, no device needed
 ./gradlew :shared:test
 
-# Build the Wear OS debug APK
-./gradlew :wear:assembleDebug
-
-# Build the release bundle — runs R8, so it catches shrinker breakage the debug build cannot
-./gradlew :wear:bundleRelease
-
-# Install on a connected Wear OS device / emulator
+# Install on a connected device / emulator
 ./gradlew :wear:installDebug
+./gradlew :phone:installDebug
 ```
 
-Those first three are exactly what CI enforces on every pull request — see
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml). `bundleRelease` joined the gate in #129 so
-that R8 runs on every push rather than only when somebody remembered.
+**The gate CI enforces on every pull request is not listed here.** Read it off
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), which is the file that actually runs it. This
+block used to copy that list and fell behind it three times — once when `bundleRelease` joined in
+#129, once when the two `:phone` steps joined in #197, and once when `:wear:testDebugUnitTest` joined
+in #160. Each time every command listed here still ran and still passed, so the stale copy gave a
+green result and no signal at all that a step had been skipped. A copy of that kind fails by staying
+true, which is why it is now a pointer rather than a list.
+
+`sh githooks/pre-push` runs the local check list in [`githooks/checks`](githooks/checks). That is
+**deliberately a fast subset** of the CI gate, not the whole of it — the reasoning for each command's
+presence or absence is in that file's comments. A green hand run is not a green CI run.
 
 It behaves differently here than on CI, which matters when you run the gate locally: this machine has
 a `keystore.properties` and therefore signs, while CI has none and builds unsigned — see
@@ -232,7 +268,9 @@ automatically a CI failure.
 Deploying to a real watch — pairing over adb-over-Wi-Fi, and confirming which APK actually landed —
 is in [`docs/watch-setup.md`](docs/watch-setup.md). Proving that a race killed mid-sequence comes back
 — the force-stop procedure, the four scenarios it splits into, and what each run measured — is in
-[`docs/process-kill-test.md`](docs/process-kill-test.md).
+[`docs/process-kill-test.md`](docs/process-kill-test.md). Proving cues still reach the wrist under Do
+Not Disturb — the two-arm race procedure, its triggers, the measured baseline, and why that check is
+permanently manual — is in [`docs/dnd-haptics-recheck.md`](docs/dnd-haptics-recheck.md).
 
 ## Tech stack
 
@@ -257,11 +295,11 @@ internal testing.
 
 | Milestone | Scope |
 |---|---|
-| **Shipped** | Six sequences including both race-manager modes, signal-box lead-in, Sync, rendered cue audio, scheduled cues, foreground service, screen policy, restore-after-kill |
+| **Shipped** | Six sequences including both race-manager modes, signal-box lead-in, Sync, rendered cue audio, scheduled cues, foreground service, screen policy, restore-after-kill, the `:phone` companion module ([#197](https://github.com/SailorDave17/race-timer/issues/197)) — built and in the CI gate, not published |
 | **Play internal testing** ([#66](https://github.com/SailorDave17/race-timer/issues/66)) | Developer account, upload keystore, icon set, store listing and screenshots, privacy policy, App content declarations, first internal build |
 | **Shipped toward that** | `compileSdk`/`targetSdk` 35 ([#116](https://github.com/SailorDave17/race-timer/pull/116), closing [#69](https://github.com/SailorDave17/race-timer/issues/69)) on the AGP 8.6.1 / Gradle 8.9 toolchain ([#111](https://github.com/SailorDave17/race-timer/pull/111), closing [#68](https://github.com/SailorDave17/race-timer/issues/68)) — the 2026-08-31 Wear OS deadline is met |
 | **Known open defects** | Under Do Not Disturb the watch loses **both** channels, so the gun never fires ([#144](https://github.com/SailorDave17/race-timer/issues/144)), with no pre-start warning that the cues will be silent ([#96](https://github.com/SailorDave17/race-timer/issues/96)); a cue dropped or truncated mid-race says nothing ([#161](https://github.com/SailorDave17/race-timer/issues/161)); the Settings remedy cannot clear the foreground-service block it raises ([#165](https://github.com/SailorDave17/race-timer/issues/165)). The display can still stick 180° off — a device fault, not the app: [#115](https://github.com/SailorDave17/race-timer/issues/115) is closed but **the remedy did not hold**, and [#147](https://github.com/SailorDave17/race-timer/issues/147) runs the control arm that would settle the cause |
-| **Later** | Named custom presets, round-down sync toggle, Wear Tile + complication, phone companion, rolling/chained starts |
+| **Later** | Named custom presets, round-down sync toggle, Wear Tile + complication, rolling/chained starts |
 
 The Google Play account the app publishes under — and why publishing from a different one would create
 a separate app — is in [`docs/play-store-account.md`](docs/play-store-account.md).

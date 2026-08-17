@@ -26,10 +26,14 @@ import androidx.compose.runtime.setValue
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable as wearComposable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+import com.racetimer.android.HapticManager
+import com.racetimer.android.SystemMonotonicClock
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.DeviceReadiness
+import com.racetimer.shared.ForegroundRefusalLatch
 import com.racetimer.shared.LaunchNotice
+import com.racetimer.shared.NoticeTier
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
@@ -38,6 +42,8 @@ import com.racetimer.shared.StartRemedy
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.armedNotice
+import com.racetimer.shared.cueLossNotice
 import com.racetimer.shared.discardedOnStartRemainingMs
 import com.racetimer.shared.forcesMaxBrightness
 import com.racetimer.shared.formatCountdown
@@ -147,14 +153,20 @@ class MainActivity : ComponentActivity() {
     private var uiDiscardWarning by mutableStateOf<String?>(null)
 
     /**
-     * The one thing worth telling the sailor about the state of this watch, or null (#13).
+     * The one thing worth telling the sailor about the state of this watch, or null (#13, #96).
      *
-     * The *judgement* is [startNotice] in `shared/`; this holds only its answer. Which tier it
-     * lands on decides whether it appears as a Tier 3 line under the sequence name or as a Tier 2
-     * panel standing where the Start button would be — and `TimerScreen` makes that second case
-     * structural rather than conditional by rendering the panel *in place of* the button, inside
-     * the branch that draws it. Blocking therefore cannot reach a running race by construction,
-     * which is rule 3 of `docs/message-surface.md` enforced by geometry rather than by a flag.
+     * The *judgement* is never here. Two rules in `shared/` produce it and they do not overlap:
+     * [startNotice] answers the pre-start screen from five conditions readable before a tap, and
+     * [armedNotice] answers a running race from the one condition that can only be measured by
+     * arming it. `refreshUiState` picks whichever branch it is in, so exactly one is ever live.
+     *
+     * Which tier it lands on decides whether it appears as a Tier 3 line under the sequence name or
+     * as a Tier 2 panel standing where the Start button would be — and `TimerScreen` makes that
+     * second case structural rather than conditional by rendering the panel *in place of* the
+     * button, inside the branch that draws it. Blocking therefore cannot reach a running race by
+     * construction, which is rule 3 of `docs/message-surface.md` enforced by geometry rather than by
+     * a flag — and [armedNotice], the only rule that can speak during a race, returns a
+     * [NoticeTier.WARNING] or nothing at all.
      */
     private var uiStartNotice by mutableStateOf<StartNotice?>(null)
 
@@ -407,6 +419,11 @@ class MainActivity : ComponentActivity() {
         // service that never arrived would otherwise leave the pre-start screen with no controls at
         // all. Leaving and returning is the one recovery a sailor would think to try, so make it work.
         resumeAnswered = false
+        // Same recovery, other latch (#165): this is the return leg of the Settings trip the Tier 2
+        // remedy started, so forget the refusal before the refresh below recomputes the notice.
+        // Until #165 nothing here touched it, and the only clearing path was behind the Start
+        // button the blocking panel removes — the remedy could not lift the block it explained.
+        foregroundRefusal.returnedToForeground()
         // Bind to the service (start it if already running)
         val serviceIntent = Intent(this, TimerService::class.java)
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -589,7 +606,7 @@ class MainActivity : ComponentActivity() {
     // --- Device readiness (#13) -----------------------------------------------
 
     /**
-     * True once `startForegroundService` itself threw, as opposed to the service being refused
+     * Latched once `startForegroundService` itself threw, as opposed to the service being refused
      * after it started.
      *
      * There are two distinct ways this fails and both have to be caught, because they happen on
@@ -599,8 +616,40 @@ class MainActivity : ComponentActivity() {
      * [TimerService.foregroundStartRefused]. Only catching the second would leave the first
      * throwing out of a tap handler and crashing the app, which is the loudest possible way to fail
      * silently: a crash tells the sailor nothing about why their race would not start.
+     *
+     * *(This was a bare boolean until #165, which is how its clearing ended up reachable only
+     * through the Start button the blocking panel removes. When the latch is forgotten — and why
+     * that is a decision, not plumbing — lives with [ForegroundRefusalLatch] in `shared/`, where
+     * `StartPreconditionsTest` asserts it.)*
      */
-    private var foregroundStartRefusedHere = false
+    private val foregroundRefusal = ForegroundRefusalLatch()
+
+    /**
+     * Whether to refuse the next foreground-service dispatch on purpose, read once at construction
+     * (#165 AC 4).
+     *
+     * The real refusal has never been observed on this hardware and cannot be provoked from here —
+     * a tap is processed while the activity is visible, which exempts the app from the
+     * background-start restriction — so without this switch the Settings-remedy round trip could
+     * only be *reviewed*, which is what #102 cost. Armed over adb, no root and no debug build,
+     * before launching the app:
+     *
+     * ```
+     * adb shell setprop log.tag.RaceTimerStartFault VERBOSE
+     * ```
+     *
+     * Disarm with `ASSERT`, never an empty string — `setprop log.tag.X ""` is rejected with a
+     * `usage:` line and leaves the old value in place, so a run "disarmed" that way runs armed.
+     * Read the property back with `getprop` either way; a state-setting command's success is a
+     * claim, not an outcome.
+     *
+     * Same idiom, same three decisions as `ToneManager.cueFaultArmed`: read once at construction
+     * so the tap path pays one boolean test, its own tag so the switch and this class's debug
+     * logging can never trip each other, and it ships — the artifact a sailor installs is the
+     * artifact the remedy was proven on. Armed, [armRace] throws before dispatching, so nothing
+     * starts — which is exactly what a real refusal delivers.
+     */
+    private val startFaultArmed: Boolean = Log.isLoggable(START_FAULT_TAG, Log.VERBOSE)
 
     /** Monotonic reading of the last [readDeviceReadiness], for [refreshStartNoticeThrottled]. */
     private var lastReadinessReadMs = Long.MIN_VALUE
@@ -658,7 +707,7 @@ class MainActivity : ComponentActivity() {
         val service = timerService
         return DeviceReadiness(
             foregroundServiceRefused =
-                foregroundStartRefusedHere || service?.foregroundStartRefused == true,
+                foregroundRefusal.refused || service?.foregroundStartRefused == true,
             audioUnavailable = service?.audioUnavailable == true,
             notificationsBlocked = !notificationsGranted(),
             vibratorAbsent = !HapticManager.hasVibrator(this),
@@ -760,18 +809,34 @@ class MainActivity : ComponentActivity() {
      *
      * On success the latch is cleared. That matters more than it looks: the refusal condition is
      * usually something the sailor has just gone and fixed in Settings, and a panel that stayed up
-     * after the remedy worked would be indistinguishable from one that had not.
+     * after the remedy worked would be indistinguishable from one that had not. This arm alone
+     * cannot deliver that, though — the blocking panel removes every button that reaches this
+     * method — so the Settings round trip clears the latch on the way back in, in [onStart].
+     * The rule itself is [ForegroundRefusalLatch] (#165).
      */
     private fun armRace(intent: Intent) {
         try {
+            // The fault switch stands in for the dispatch rather than wrapping it, so an armed run
+            // reaches the catch by the route a real refusal takes — thrown from this try, nothing
+            // started. IllegalStateException because that is ForegroundServiceStartNotAllowedException's
+            // supertype, and the real class's constructor is API 31+ against a minSdk of 30. See
+            // [startFaultArmed].
+            if (startFaultArmed) {
+                throw IllegalStateException("Injected foreground-start refusal ($START_FAULT_TAG armed)")
+            }
             startForegroundService(intent)
-            foregroundStartRefusedHere = false
+            foregroundRefusal.dispatchSucceeded()
         } catch (e: RuntimeException) {
-            // ForegroundServiceStartNotAllowedException (Android 12+) and the SecurityException an
-            // Android 14+ watch raises for a disallowed FGS type. Same response either way, so they
-            // are caught by the supertype they share — the idiom ToneManager already uses.
+            // ForegroundServiceStartNotAllowedException, the Android 12+ background-start
+            // restriction — the one refusal the platform throws at *dispatch*. The Android 14
+            // FGS-type SecurityException never lands here: that check fires inside
+            // Service.startForeground(), which is TimerService.startForegroundWithNotification(),
+            // and latches the service-side flag instead. (This comment blamed it here until #165.)
+            // RuntimeException stays as the caught type all the same — the exact class an OEM
+            // build throws is not worth betting the tap handler on, and it is the idiom
+            // ToneManager already uses.
             Log.e(TAG, "Foreground service refused at dispatch; blocking the start", e)
-            foregroundStartRefusedHere = true
+            foregroundRefusal.dispatchRefused()
             // The tap is spent and no race is coming, so give the pre-start screen its controls
             // back rather than leaving the resume offer answered and the screen with neither.
             resumeAnswered = false
@@ -917,6 +982,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Say out loud that a cue the sailor was timing off did not sound, or did not sound in full (#161).
+     *
+     * The last leg of the route from the tone thread. `ToneManager` records the loss under the lock
+     * it already holds, this collects it lock-free on the next refresh, and `cueLossNotice` in
+     * `shared/` decides the words — so the only thing here is *when* to ask.
+     *
+     * Read-and-clear, so a loss is announced exactly once however many refreshes see it. Called from
+     * the race-under-way branch of [refreshUiState] alongside [announceRestoreOutcome], which is the
+     * only branch that can be reached while cues are firing.
+     *
+     * Tier 1 rather than Tier 3, unlike #96's Do Not Disturb line: that describes a condition
+     * standing over the whole countdown, and this is a single event that has already happened. A
+     * persistent line would still be on screen at the gun, saying nothing about the gun.
+     */
+    private fun announceCueLoss() {
+        cueLossNotice(timerService?.consumeCueLoss())?.let { showTransientMessage(it) }
+    }
+
     private fun refreshUiState() {
         // Binding uses BIND_AUTO_CREATE, so the service exists well before anything is started -
         // with an engine holding no sequence, whose remainingMs is 0. Showing that made a fresh
@@ -959,9 +1043,19 @@ class MainActivity : ComponentActivity() {
         }
         // A race is under way, so nothing here is actionable and rule 3 of docs/message-surface.md
         // forbids taking the screen. The panel is already unreachable by construction — it renders
-        // inside the idle button branch — and clearing the state as well keeps a stale Tier 3 line
-        // from riding along under the sequence name for the length of a race (#13).
-        uiStartNotice = null
+        // inside the idle button branch — and dropping the pre-start judgement as well keeps a stale
+        // Tier 3 line from riding along under the sequence name for the length of a race (#13).
+        //
+        // What replaces it is the one warning that belongs *only* here (#96). The five conditions
+        // above are all knowable before Start; whether the cues could be made audible is not, because
+        // the platform refuses a volume raise without saying so. `TimerService` finds out by trying
+        // at the moment the race is armed, and this is the first screen that can carry the answer.
+        // `armedNotice` returns null in every state but RUNNING and whenever the raise was not
+        // refused, so the ordinary race is byte-for-byte the screen it was.
+        uiStartNotice = armedNotice(
+            state = engine.currentState,
+            cueVolumeRefused = timerService?.cueVolumeRefused == true,
+        )
         // A race the engine is actually running outranks a saved one: it has already been answered.
         clearResumeOffer()
         // And the lead-in that armed it was a per-race choice, spent the moment the engine took the
@@ -985,6 +1079,7 @@ class MainActivity : ComponentActivity() {
             uiRemainingMs = displayedRemainingMs(engine.remainingMs)
         }
         announceRestoreOutcome()
+        announceCueLoss()
         // Prompt a re-sync only while a degraded recovery is still running and unconfirmed.
         uiShowResyncPrompt = timerService?.lastRestoreOutcome == RestoreOutcome.DEGRADED &&
             engine.currentState == TimerState.RUNNING &&
@@ -997,6 +1092,15 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+
+        /**
+         * Log tag that exists only to be a switch, never to be logged against (#165 AC 4).
+         *
+         * Separate from [TAG] for `ToneManager.FAULT_TAG`'s reason, both directions: arming the
+         * fault must not turn on this class's logging, and turning on logging to watch a start
+         * must not silently start refusing races.
+         */
+        private const val START_FAULT_TAG = "RaceTimerStartFault"
         private const val NAV_TIMER = "timer"
         private const val NAV_PICKER = "picker"
         private const val NAV_CUSTOM = "custom"

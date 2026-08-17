@@ -1,10 +1,9 @@
-package com.racetimer.wear
+package com.racetimer.android
 
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.ToneGenerator
 import android.os.Build
@@ -14,30 +13,14 @@ import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
+import com.racetimer.shared.CueLoss
 import com.racetimer.shared.CueStream
 import com.racetimer.shared.CueTiming
 import com.racetimer.shared.CueTrackPacing
 import com.racetimer.shared.CueVoice
 import com.racetimer.shared.CueWaveform
 import com.racetimer.shared.SignalPattern
-
-/**
- * The legacy stream type a [CueStream] means, for the APIs that still take one (#95).
- *
- * Top-level and `internal` rather than a member of [ToneManager]'s private companion, because
- * [TimerService] needs the same answer to raise that stream's volume — and the one thing this file
- * must not do is let a second copy of this mapping exist. Every audio and restore defect this app has
- * shipped came from one rule written out twice; `resumeOfferRemainingMs` was even duplicated
- * *inverted*. The playback path and the volume path read this same function or they read nothing.
- *
- * It stays in the `wear` module rather than moving to `shared/` alongside [com.racetimer.shared.cueStream]
- * for the ordinary reason: the values are `AudioManager` constants, and `shared/` is pure JVM so that
- * CI can run its tests without a device.
- */
-internal fun legacyStreamFor(route: CueStream): Int = when (route) {
-    CueStream.ALARM -> AudioManager.STREAM_ALARM
-    CueStream.MEDIA -> AudioManager.STREAM_MUSIC
-}
 
 /**
  * Plays the audible half of a race cue, alongside the haptic half in [HapticManager].
@@ -145,11 +128,19 @@ internal fun legacyStreamFor(route: CueStream): Int = when (route) {
  * class is told the answer through [prepare] and rebuilds its track when it changes, because the
  * stream is fixed at track-build time and cannot be moved on a live one.
  *
+ * What a route *means* to the platform — which `AudioAttributes` usage, which legacy stream — is a
+ * second question, and its answer was measured on one watch rather than derived. Since #200 it
+ * arrives as [audioProfile] rather than being written here, so a second form factor is made to
+ * measure its own instead of inheriting this one's. See [CueAudioProfile].
+ *
  * Audio is best-effort by design. A watch may have no speaker at all, and the audio stack can refuse
  * to hand out a track. Every failure path here logs and returns, so the caller's vibration is never
  * blocked by a broken tone.
  */
-class ToneManager(context: Context) {
+class ToneManager(
+    context: Context,
+    private val audioProfile: CueAudioProfile,
+) {
 
     private val appContext = context.applicationContext
 
@@ -244,12 +235,85 @@ class ToneManager(context: Context) {
      * deliberately does not attempt to predict audibility — that is a separate question, it belongs
      * to [ToneManager.route] and #95, and the two must not grow a second copy of one rule.
      *
-     * False before anything has tried, which is the right way to be wrong: `TimerService.onCreate`
-     * warms a cue up, so by the time a sailor can reach the Start button the audio path has been
-     * exercised and this answers for real. A watch that somehow reaches Start first is warned at the
+     * False before anything has tried, which is the right way to be wrong: the app module's service
+     * warms a cue up on creation — `TimerService.onCreate` on the watch — so by the time a sailor can
+     * reach the Start button the audio path has been exercised and this answers for real. A watch that somehow reaches Start first is warned at the
      * first cue instead of ahead of it, which is the pre-#13 behaviour rather than a regression.
      */
     val audioUnavailable: Boolean get() = initFailed
+
+    /**
+     * A cue this race has lost, waiting to be told to the sailor, or null when there is nothing owed
+     * (#161).
+     *
+     * ### Why an atomic and not a field under [audioLock]
+     *
+     * The three writes all happen inside [writeCue], which already holds [audioLock] on the tone
+     * thread. The **read** is the problem: it comes from `MainActivity`'s 100 ms refresh on the main
+     * thread, and a main thread blocking on the lock that the audio path holds while it talks to the
+     * audio server is exactly the stall this class is built to avoid. An [AtomicReference] is
+     * lock-free on both sides, so the tone thread is never made to wait for the UI and the UI is
+     * never made to wait for the tone thread.
+     *
+     * ### Why read-and-clear rather than a flag the UI samples
+     *
+     * The same reason `TimerService.consumeRestoreNotice` is shaped that way, and the issue named it
+     * as the precedent: a lost cue is *news*, and it has to be announced exactly once. A `@Volatile
+     * Boolean` sampled at 100 ms — the shape [initFailed] and `cueVolumeRefused` correctly use for
+     * *standing conditions* — cannot express that. It would either re-announce on every refresh for
+     * as long as it stayed true, or need a second field remembering whether it had been said.
+     *
+     * [getAndSet] is that read-and-clear, and it is atomic, so two refreshes racing each other can
+     * never both collect the same loss.
+     *
+     * A second loss arriving before the first has been collected overwrites it rather than queueing.
+     * That is rule 6 of `docs/message-surface.md` — one message at a time — and it is unreachable in
+     * practice besides: [writeCue] can lose at most one cue per call, and no sequence this app ships
+     * puts two cues within the 100 ms the activity takes to come back.
+     */
+    private val pendingCueLoss = AtomicReference<CueLoss?>(null)
+
+    /**
+     * Take the cue loss owed a message, clearing it — null when nothing is owed.
+     *
+     * Called from the main thread every refresh while a race is under way, and from the arm path to
+     * discard a loss left over from a race that has already finished. Takes no lock; see
+     * [pendingCueLoss].
+     */
+    fun consumeCueLoss(): CueLoss? = pendingCueLoss.getAndSet(null)
+
+    /**
+     * Whether to fail the next cue write on purpose, read once at construction (#161).
+     *
+     * ### This exists because the alternative was shipping a banner nobody had seen
+     *
+     * None of the three loss paths has ever been observed on this hardware, so without a way to
+     * force one, #161's banner could only be *reviewed*. #102 is what that costs: a Tier 1 banner
+     * whose code was correct, that no sailor ever saw, for two reasons neither review had caught.
+     * Armed over adb with no root and no debug build:
+     *
+     * ```
+     * adb shell setprop log.tag.RaceTimerCueFault VERBOSE
+     * ```
+     *
+     * [Log.isLoggable] against a `log.tag.*` property is this class's own idiom for a debug switch —
+     * [timedRender], [logDispatch] and [logDelivered] are all gated the same way — so this adds a
+     * mechanism the file already depends on rather than a new one.
+     *
+     * ### Read once, deliberately
+     *
+     * [writeCue] is the most timing-sensitive method in the app and it runs under [audioLock] on the
+     * deadline. Reading the property per write would put a property lookup on that path to buy a
+     * convenience nobody needs; a switch you arm before launching the app is no harder to use. What
+     * the hot path pays is one boolean test.
+     *
+     * ### It ships, and that is the point
+     *
+     * Not gated on a debug build, so the artifact a sailor installs is the artifact the banner was
+     * proven on. Arming it needs adb access and a deliberate `setprop`, and the worst it can do to
+     * somebody who does both is silence cues on a watch they are holding a debugger against.
+     */
+    private val cueFaultArmed: Boolean = Log.isLoggable(FAULT_TAG, Log.VERBOSE)
 
     /** The cue-audio thread and its handler, or null before first use and after [release] runs. */
     @Volatile private var toneThread: HandlerThread? = null
@@ -366,6 +430,29 @@ class ToneManager(context: Context) {
     @Volatile private var sampleRateHz: Int = nativeRateFor(CueStream.ALARM)
 
     /**
+     * The device's native output rate for a route's stream, or [FALLBACK_SAMPLE_RATE_HZ].
+     *
+     * An instance member rather than a companion function since #200, because the stream a route
+     * means is [audioProfile]'s answer and not this class's. Nothing else moved: it is still read
+     * once at construction and again whenever [prepare] changes the route.
+     */
+    private fun nativeRateFor(route: CueStream): Int =
+        try {
+            // A platform can answer 0 rather than throw — measured under the phone module's
+            // Robolectric harness, and nothing rules a broken real device out. A zero rate is not
+            // usable and must not be rendered against: it reached CueWaveform's own guard and
+            // killed the tone thread, after which every later post lands on a dead looper (#202).
+            AudioTrack.getNativeOutputSampleRate(audioProfile.legacyStreamFor(route))
+                .takeIf { it > 0 }
+                ?: FALLBACK_SAMPLE_RATE_HZ.also {
+                    Log.w(TAG, "Native output rate not positive; falling back to $it")
+                }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Native output rate unavailable; falling back to $FALLBACK_SAMPLE_RATE_HZ", e)
+            FALLBACK_SAMPLE_RATE_HZ
+        }
+
+    /**
      * Build the track and open the audio output ahead of the first cue, for [newRoute].
      *
      * Without this, both costs land on whichever cue sounds first — and the first cue of a race
@@ -377,7 +464,7 @@ class ToneManager(context: Context) {
      * The stream is baked into the [AudioTrack] at build time — it is an [AudioAttributes] on the
      * builder, not a property that can be set on a live track — so "which stream" has to be known
      * before there is a track, and a change means building a new one. That is why the decision is
-     * made by the caller (which has the [android.media.AudioManager] and the sailor's setting) and
+     * made by the caller (which has the platform's `AudioManager` and the sailor's setting) and
      * arrives here rather than being read from a preference by this class.
      *
      * ### Safe to call repeatedly, and worth calling twice
@@ -686,9 +773,15 @@ class ToneManager(context: Context) {
             // buffer holds MAX_PREFILL_MS - but a sustained cue's length is data, and a silently
             // truncated gun would be the worst possible way to find that out.
             val prefill = minOf(samples.size, trackCapacitySamples)
-            val written = audioTrack.write(samples, 0, prefill)
+            // The fault switch stands in for the write rather than wrapping it, so an armed run
+            // reaches the failure branch by the same route a real refusal would. See [cueFaultArmed].
+            val written =
+                if (cueFaultArmed) AudioTrack.ERROR_INVALID_OPERATION
+                else audioTrack.write(samples, 0, prefill)
             if (written <= 0) {
                 Log.w(TAG, "AudioTrack write returned $written; cue dropped")
+                // The cue does not sound. Tell the sailor rather than only the log (#161).
+                pendingCueLoss.set(CueLoss.DROPPED)
                 return
             }
             framesWritten += written
@@ -704,6 +797,9 @@ class ToneManager(context: Context) {
             writtenAtMs = SystemClock.uptimeMillis()
         } catch (e: IllegalStateException) {
             Log.e(TAG, "AudioTrack write failed, discarding track", e)
+            // Same consequence as the branch above from where the sailor is standing — the cue does
+            // not sound — so the same notice, per [CueLoss] (#161).
+            pendingCueLoss.set(CueLoss.DROPPED)
             releaseTrackLocked()
             return
         }
@@ -720,6 +816,9 @@ class ToneManager(context: Context) {
             framesWritten += audioTrack.write(remainder, pendingFrom, remainder.size - pendingFrom)
         } catch (e: IllegalStateException) {
             Log.w(TAG, "Tail write failed; cue truncated", e)
+            // The cue is already sounding and will stop early. A different notice from the two
+            // above, because a blast cut short is a blast the sailor can misread (#161).
+            pendingCueLoss.set(CueLoss.TRUNCATED)
         }
         return
     }
@@ -1020,11 +1119,11 @@ class ToneManager(context: Context) {
             AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
-                        // USAGE_ALARM so the cue carries outdoors: on Wear it is the loudest stream
-                        // and the one users leave up for alerts, unlike media or notification. The
-                        // exception is a watch that has silenced the alarm path along with the ringer,
-                        // where it is not the loudest stream but the mute one — see [route] and #95.
-                        .setUsage(usageFor(route))
+                        // Which usage a route means is [audioProfile]'s answer, not this class's:
+                        // it was measured per device and does not transfer between form factors
+                        // (#200). See [CueAudioProfile] for why, and [route] and #95 for the
+                        // decision that picks the route in the first place.
+                        .setUsage(audioProfile.audioUsageFor(route))
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build(),
                 )
@@ -1065,7 +1164,7 @@ class ToneManager(context: Context) {
                 // The same stream the cues are on, or it holds the wrong output open and the cue pays
                 // the `startOutput` this exists to prevent — silently, since a keep-alive that works
                 // and a keep-alive on the wrong stream look identical from here (#95).
-                ToneGenerator(legacyStreamFor(route), 0).also { keepAliveGenerator = it }
+                ToneGenerator(audioProfile.legacyStreamFor(route), 0).also { keepAliveGenerator = it }
             } catch (e: RuntimeException) {
                 Log.w(TAG, "Keep-alive generator unavailable; cues may start late", e)
                 return
@@ -1140,25 +1239,13 @@ class ToneManager(context: Context) {
         const val TAG = "ToneManager"
 
         /**
-         * The [AudioAttributes] usage a [CueStream] means, for the modern [AudioTrack] path.
+         * Log tag that exists only to be a switch, never to be logged against (#161).
          *
-         * `USAGE_MEDIA` rather than `USAGE_ASSISTANCE_SONIFICATION` for the rerouted case: the point
-         * is to land on `STREAM_MUSIC`, which is the one stream measured to be neither aliased nor in
-         * this device's ringer-affected mask (#95).
+         * Separate from [TAG] so that arming the fault does not also turn on this class's debug
+         * logging, and — the direction that matters — so that turning debug logging on to watch cue
+         * timing does not silently start dropping cues. See `cueFaultArmed`.
          */
-        fun usageFor(route: CueStream): Int = when (route) {
-            CueStream.ALARM -> AudioAttributes.USAGE_ALARM
-            CueStream.MEDIA -> AudioAttributes.USAGE_MEDIA
-        }
-
-        /** The device's native output rate for a route's stream, or [FALLBACK_SAMPLE_RATE_HZ]. */
-        fun nativeRateFor(route: CueStream): Int =
-            try {
-                AudioTrack.getNativeOutputSampleRate(legacyStreamFor(route))
-            } catch (e: RuntimeException) {
-                Log.w(TAG, "Native output rate unavailable; falling back to $FALLBACK_SAMPLE_RATE_HZ", e)
-                FALLBACK_SAMPLE_RATE_HZ
-            }
+        const val FAULT_TAG = "RaceTimerCueFault"
 
         const val THREAD_NAME = "RaceTimerTone"
 
@@ -1208,8 +1295,10 @@ class ToneManager(context: Context) {
          * The three numbers that pace the shared track live in [CueTrackPacing], not here.
          *
          * They are only meaningful against each other and against [CueTiming] — the heartbeat must
-         * stay under the flush budget and the budget must stay under the shortest cue — and `wear/`
-         * has no test source set to say so. Deliberately re-exported as aliases rather than inlined at
+         * stay under the flush budget and the budget must stay under the shortest cue — and nothing
+         * on this side of the module boundary can say so. `:shared-android` has no test source set by
+         * decision, and `wear/`'s (#160) is scoped away from the cue path, so `shared` is still the
+         * only place these can be asserted. Deliberately re-exported as aliases rather than inlined at
          * the call sites, so that a reader of this class can still see what the cue path depends on.
          */
         const val KEEP_MIXED_INTERVAL_MS = CueTrackPacing.KEEP_MIXED_INTERVAL_MS

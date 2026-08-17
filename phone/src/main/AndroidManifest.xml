@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Each permission belongs to the story that added the behaviour needing it, because it is the
+         MERGED manifest Play's declarations read (#212), and a row declared ahead of its use would
+         describe a capability the app does not have. #199's display properties are deliberately
+         absent: `FLAG_KEEP_SCREEN_ON` and a window brightness override are window state and need no
+         permission at all. -->
+
+    <!-- #203: the race keeps cueing while backgrounded or screen-off. The service is the runner,
+         the wake lock is the whole doze story (watch #126 finding), and the notification is what a
+         foreground service must post. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:name=".RaceTimerPhoneApplication"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+
+        <!-- allowBackup is false by epic #196 decision D5, and it is set explicitly because the
+             platform default is TRUE. Auto Backup ships SharedPreferences to the user's Google
+             account even with no INTERNET permission — an off-device copy of state this app never
+             asked to transmit, and a sentence the published privacy policy would have to carry.
+             Nothing is persisted here yet (#205 owns restore); the flag is set now because the
+             moment to decide is when the manifest is authored, not when the first key is written. -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.Material.NoActionBar">
+            <!-- No android:screenOrientation. The console phone is propped however the officer
+                 props it, and the countdown lays out for whatever it gets. `CLAUDE.md` bars the
+                 attribute on the WATCH for a different reason (wrist placement is a system
+                 rotation); here it is simply a constraint with nothing asking for it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Keeps the countdown cueing while the app is backgrounded or the screen is off (#203).
+             specialUse with a subtype, the same type and for the same reason as the watch's
+             TimerService: a race-start countdown is none of the enumerated FGS types, and the
+             subtype property is what a Play reviewer reads. -->
+        <service
+            android:name=".PhoneTimerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Racing timer — keeps the start-sequence cueing while the screen is off" />
+        </service>
+
+    </application>
+
+</manifest>

@@ -2,6 +2,7 @@ package com.racetimer.shared
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -39,7 +40,59 @@ class StartPreconditionsTest {
         NOTICE_NOTIFICATIONS_BLOCKED,
         NOTICE_VIBRATOR_ABSENT,
         NOTICE_BATTERY_SAVER,
+        NOTICE_CUE_VOLUME_REFUSED,
     )
+
+    /**
+     * Tier 1 cue-loss copy (#161), deliberately **not** folded into [allConstants].
+     *
+     * That list is the set `startNotice` is allowed to produce, and the exhaustive mask test asserts
+     * membership in it. Adding two strings that rule can never emit would widen the thing that test
+     * checks against, which is the opposite of what it is for.
+     */
+    private val cueLossConstants = listOf(
+        NOTICE_CUE_DROPPED,
+        NOTICE_CUE_TRUNCATED,
+    )
+
+    /** Every string a sailor can read, for the guards that are about the copy rather than the rule. */
+    private val everyCopy = allConstants + cueLossConstants
+
+    /**
+     * Every string paired with the surface it is drawn on, **derived by driving the rules** (#231).
+     *
+     * The pairing is the point. `everyCopy` is a flat list, and a flat list is exactly what let one
+     * character ceiling stand in for three plates of different widths — the defect #231 is. Here the
+     * surface comes off `NoticeTier` as the rule returned it, so a notice that changes tier is
+     * automatically re-checked against the plate it moved to, and a fourth surface cannot be added
+     * without `MessageSurface` gaining a member.
+     *
+     * The Tier 1 cue-loss copy has no [NoticeTier] to read — `cueLossNotice` returns a bare string,
+     * because a banner is news rather than a standing condition — so it is the one surface named
+     * here rather than derived. That asymmetry is real and stated instead of smoothed over.
+     */
+    private fun everySurfacedCopy(): List<Pair<MessageSurface, String>> = buildList {
+        for (mask in 0 until 32) {
+            val readiness = DeviceReadiness(
+                foregroundServiceRefused = mask and 1 != 0,
+                audioUnavailable = mask and 2 != 0,
+                notificationsBlocked = mask and 4 != 0,
+                vibratorAbsent = mask and 8 != 0,
+                batterySaverActive = mask and 16 != 0,
+            )
+            for (accepted in listOf(false, true)) {
+                startNotice(readiness, accepted)?.let { add(it.tier.surface to it.text) }
+            }
+        }
+        for (state in TimerState.values()) {
+            for (refused in listOf(false, true)) {
+                armedNotice(state, refused)?.let { add(it.tier.surface to it.text) }
+            }
+        }
+        for (loss in CueLoss.values()) {
+            cueLossNotice(loss)?.let { add(MessageSurface.BANNER to it) }
+        }
+    }.distinct()
 
     // --- The ordinary case ----------------------------------------------------------------------
 
@@ -246,8 +299,9 @@ class StartPreconditionsTest {
 
     @Test fun `every notice fits the screen it has to render on`() {
         // The geometry is docs/message-surface.md's, and a copy edit is exactly the change nobody
-        // re-measures. Two lines of caption1 inside the width cap is the budget.
-        for (copy in allConstants) {
+        // re-measures. The shared ceiling, which holds for every surface and is coarse for all of
+        // them; the sharp, per-surface check is the test below.
+        for (copy in everyCopy) {
             assertTrue(
                 "\"$copy\" is ${copy.length} characters, over the $NOTICE_MAX_CHARS the panel holds",
                 copy.length <= NOTICE_MAX_CHARS,
@@ -255,10 +309,51 @@ class StartPreconditionsTest {
         }
     }
 
+    @Test fun `every notice fits the surface it actually renders on`() {
+        // #231. The ceiling above was derived from the Tier 1 banner's geometry and applied to all
+        // three surfaces, so it is a ceiling that happens to hold rather than a fit — which is how
+        // #96's 49-character notice landed comfortably under 60 and drew on three lines.
+        //
+        // Driven rather than restated, the way MessageContrastTest derives its backgrounds: the
+        // surface comes off the tier the rule itself returned, so a notice that changes tier is
+        // re-checked against the plate it moved to. A hand-written map would have gone on asserting
+        // the old one.
+        for ((surface, copy) in everySurfacedCopy()) {
+            assertTrue(
+                "\"$copy\" takes ${surface.linesFor(copy)} lines on $surface, " +
+                    "which holds ${surface.maxLines} at ${surface.charsPerLine} characters a line",
+                surface.holds(copy),
+            )
+        }
+    }
+
+    @Test fun `the surface check reaches all three surfaces`() {
+        // Anti-vacuity for the test above, and it is not a formality: the pairs are collected by
+        // driving the rules, so a rule that stopped returning anything would empty the loop and the
+        // assertion would pass having checked nothing. That is the failure this workspace has
+        // measured more than once — an absent result reading exactly like a clean one.
+        val reached = everySurfacedCopy().map { it.first }.toSet()
+        assertEquals(MessageSurface.values().toSet(), reached)
+        assertTrue(everySurfacedCopy().size >= everyCopy.size)
+    }
+
+    @Test fun `the surface check would fail a notice that overran its plate`() {
+        // The negative control. Without it the two tests above pass just as happily against a
+        // `holds` that returned true unconditionally — and they would have passed against the state
+        // of the world #231 was filed to describe, because the copy that exposed the gap does fit.
+        // So the proof has to come from a string that does not.
+        val overlong = "Do Not Disturb — every cue on this leg will be silent from here to the gun"
+        assertFalse("a four-line notice must not pass a three-line plate", MessageSurface.STATUS_LINE.holds(overlong))
+        assertTrue(
+            "the same surface must still hold the notice it ships, or this refuses everything",
+            MessageSurface.STATUS_LINE.holds(NOTICE_CUE_VOLUME_REFUSED),
+        )
+    }
+
     @Test fun `no two conditions share a message`() {
         // A sailor reading "Battery saver — sound may be cut" must be able to conclude which
         // condition fired. Distinct copy is what makes the notice diagnostic rather than decorative.
-        assertEquals(allConstants.size, allConstants.toSet().size)
+        assertEquals(everyCopy.size, everyCopy.toSet().size)
     }
 
     // --- Negative control -----------------------------------------------------------------------
@@ -268,5 +363,188 @@ class StartPreconditionsTest {
         // against a rule that never blocks anything at all.
         assertTrue(startNotice(ready.copy(foregroundServiceRefused = true))!!.blocksStart)
         assertFalse(startNotice(ready.copy(batterySaverActive = true))!!.blocksStart)
+    }
+
+
+    // --- armedNotice: the warning that only exists once a race is running (#96) ------------------
+
+    @Test fun `a refused volume raise warns for the length of a running race`() {
+        val notice = armedNotice(TimerState.RUNNING, cueVolumeRefused = true)
+        assertNotNull(notice)
+        assertEquals(NoticeTier.WARNING, notice!!.tier)
+        assertEquals(NOTICE_CUE_VOLUME_REFUSED, notice.text)
+        assertEquals(StartRemedy.NONE, notice.remedy)
+        assertFalse("a running race can never be blocked — rule 3", notice.blocksStart)
+    }
+
+    @Test fun `a race whose cues were made audible is told nothing`() {
+        // AC 5: the ordinary race — including the common case where the volume was already high
+        // enough that no raise was attempted at all — is byte-for-byte the screen it always was.
+        for (state in TimerState.values()) {
+            assertNull(
+                "state $state must stay silent when the raise was not refused",
+                armedNotice(state, cueVolumeRefused = false),
+            )
+        }
+    }
+
+    @Test fun `the warning belongs to the countdown and to no other screen`() {
+        // Before the gun there are cues left to be silent; after it there are none. RACE_ENDED
+        // matters most here — a race committee reads finish times off that screen, and a warning
+        // about cues that have already finished sounding would be furniture.
+        for (state in TimerState.values().filter { it != TimerState.RUNNING }) {
+            assertNull(
+                "$state must not carry the cue-volume warning",
+                armedNotice(state, cueVolumeRefused = true),
+            )
+        }
+    }
+
+    // --- Negative controls for the armed warning ------------------------------------------------
+
+    @Test fun `both inputs to the armed rule are load-bearing`() {
+        // Without this, the two tests above would pass just as happily against a rule that ignored
+        // the measurement and warned on every running race, or against one that never warned at
+        // all. Each input is asserted to change the answer on its own.
+        assertNotNull(armedNotice(TimerState.RUNNING, cueVolumeRefused = true))
+        assertNull(armedNotice(TimerState.RUNNING, cueVolumeRefused = false))
+        assertNull(armedNotice(TimerState.IDLE, cueVolumeRefused = true))
+    }
+
+    @Test fun `the pre-start rule can never produce the armed-race copy`() {
+        // The two rules answer disjoint screens, and this is the half of that `shared` can see: no
+        // combination of the five pre-start conditions may emit the Do Not Disturb line. A sailor
+        // reading it before Start would be reading the *previous* race's verdict, which is exactly
+        // the prediction #96 was rewritten to avoid.
+        //
+        // What this cannot see — stated rather than implied — is that `MainActivity` calls the two
+        // rules from mutually exclusive branches of `refreshUiState`. That is `wear/`, and the
+        // hardware criterion is what discharges it.
+        val everyPreStartText = buildList {
+            for (readiness in listOf(
+                ready,
+                ready.copy(foregroundServiceRefused = true),
+                ready.copy(audioUnavailable = true),
+                ready.copy(notificationsBlocked = true),
+                ready.copy(vibratorAbsent = true),
+                ready.copy(batterySaverActive = true),
+            )) {
+                for (silent in listOf(false, true)) {
+                    startNotice(readiness, silent)?.let { add(it.text) }
+                }
+            }
+        }
+        assertFalse(
+            "the pre-start rule must never produce the armed-race copy",
+            everyPreStartText.contains(NOTICE_CUE_VOLUME_REFUSED),
+        )
+        // And the list is non-empty, or the assertion above would hold against a rule that never
+        // produced anything at all.
+        assertTrue("no pre-start copy was collected, so the check proves nothing", everyPreStartText.size >= 5)
+    }
+
+    // --- cueLossNotice: a cue the audio path lost mid-race (#161) --------------------------------
+
+    @Test fun `a cue that did not sound is announced as silent`() {
+        assertEquals(NOTICE_CUE_DROPPED, cueLossNotice(CueLoss.DROPPED))
+    }
+
+    @Test fun `a cue that stopped early is announced as cut short`() {
+        assertEquals(NOTICE_CUE_TRUNCATED, cueLossNotice(CueLoss.TRUNCATED))
+    }
+
+    @Test fun `nothing lost is nothing said`() {
+        // The null-in/null-out half of the contract. `MainActivity` hands this the read-and-clear
+        // result directly, so the ordinary race — every cue sounding — passes null through here on
+        // every one of its refreshes and must produce no banner.
+        assertNull(cueLossNotice(null))
+    }
+
+    @Test fun `every way of losing a cue has copy, including any added later`() {
+        // Driven off the enum rather than off a list written by hand, so a third CueLoss case added
+        // without copy fails here instead of reaching a sailor as a silent loss — which is the exact
+        // defect #161 exists to close, reintroduced one enum case at a time.
+        for (loss in CueLoss.values()) {
+            assertNotNull("$loss has no copy", cueLossNotice(loss))
+        }
+        assertTrue("the enum is empty, so the loop above proves nothing", CueLoss.values().isNotEmpty())
+    }
+
+    @Test fun `a dropped cue and a truncated cue are distinguishable`() {
+        // AC 4. The decision this encodes: a dropped cue is absent and a truncated one is present
+        // and wrong — a three-second gun cut short sounds like a short blast, which is a different
+        // mark in every sequence this app ships. Collapsing them to one string would pass every
+        // other test in this section.
+        val texts = CueLoss.values().map { cueLossNotice(it) }
+        assertEquals("two losses must not share one message", texts.size, texts.toSet().size)
+    }
+
+    @Test fun `the pre-start rule can never produce a cue-loss banner`() {
+        // The mirror of the armed-notice test above, and the same reasoning: a sailor reading "Cue
+        // silent" before Start would be reading about a race that has already finished. The two
+        // rules answer disjoint screens and this is the half `shared` can see.
+        val everyPreStartText = buildList {
+            for (readiness in listOf(
+                ready,
+                ready.copy(foregroundServiceRefused = true),
+                ready.copy(audioUnavailable = true),
+                ready.copy(notificationsBlocked = true),
+                ready.copy(vibratorAbsent = true),
+                ready.copy(batterySaverActive = true),
+            )) {
+                for (silent in listOf(false, true)) {
+                    startNotice(readiness, silent)?.let { add(it.text) }
+                }
+            }
+        }
+        for (copy in cueLossConstants) {
+            assertFalse("the pre-start rule produced $copy", everyPreStartText.contains(copy))
+        }
+        assertTrue("no pre-start copy was collected, so the check proves nothing", everyPreStartText.size >= 5)
+    }
+
+    @Test fun `the armed warning and the cue-loss banner are different messages`() {
+        // Both are about cues a sailor cannot hear, and they are deliberately separate surfaces:
+        // #96's is a standing condition for the length of the countdown (Tier 3), this is one event
+        // that has already happened (Tier 1). Sharing copy would make the tier the only difference,
+        // and a sailor cannot see a tier.
+        for (copy in cueLossConstants) {
+            assertNotEquals(NOTICE_CUE_VOLUME_REFUSED, copy)
+        }
+    }
+
+    // --- ForegroundRefusalLatch: the refusal's expiry rule (#165) --------------------------------
+
+    @Test fun `the Settings round trip clears a latched refusal and re-offers Start`() {
+        val latch = ForegroundRefusalLatch()
+        latch.dispatchRefused()
+        // Asserted mid-test rather than assumed: the clearing below proves nothing unless the
+        // latch demonstrably latched first — an expected "no notice" is exactly the answer a latch
+        // that never worked would also give.
+        assertTrue(startNotice(DeviceReadiness(foregroundServiceRefused = latch.refused))!!.blocksStart)
+        latch.returnedToForeground()
+        assertNull(startNotice(DeviceReadiness(foregroundServiceRefused = latch.refused)))
+    }
+
+    @Test fun `a successful dispatch clears the latch`() {
+        val latch = ForegroundRefusalLatch()
+        latch.dispatchRefused()
+        assertTrue(latch.refused)
+        latch.dispatchSucceeded()
+        assertFalse(latch.refused)
+    }
+
+    @Test fun `a refusal that survives the round trip re-latches on the next dispatch`() {
+        // The expiry rule is optimism, not amnesia about the condition: clearing the latch is only
+        // safe because a dispatch that still fails puts the panel straight back.
+        val latch = ForegroundRefusalLatch()
+        latch.dispatchRefused()
+        latch.returnedToForeground()
+        latch.dispatchRefused()
+        assertTrue(startNotice(DeviceReadiness(foregroundServiceRefused = latch.refused))!!.blocksStart)
+    }
+
+    @Test fun `a fresh latch reports nothing wrong`() {
+        assertFalse(ForegroundRefusalLatch().refused)
     }
 }

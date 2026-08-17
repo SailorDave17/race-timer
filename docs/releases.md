@@ -17,14 +17,26 @@ until somebody uploads it and fills the date in.
 
 This is also the only thing in this repo that **counts releases**, and one deferred decision reads
 off it: [#81](https://github.com/SailorDave17/race-timer/issues/81) holds the move of release
-signing into CI until *three or more releases have been cut by hand*. Until this table has three
-uploaded rows, that trigger cannot be checked — which is why #81's AC 1 points here.
+signing into CI until *three or more releases have been cut by hand*. That is why #81's AC 1 points
+here: before this file existed nothing counted releases, so the trigger had no instrument and could
+not be read in either direction.
+
+**It can be read now, and a count below three is the trigger returning false — not the trigger being
+unmeasurable.** Those are different states and only the first is healthy: an unreadable trigger is a
+defect in this file, a false one is this file working.
+
+**So counting the rows is part of writing one.** After adding a row with a date in **Uploaded**,
+count the uploaded rows; on the third, #81's trigger has fired — say so on #81 in the same sitting.
+This is a step in the hand procedure rather than a check in CI because the row is written by hand and
+nothing else in the repo reads this table; a checker wired into no gate would be worse than the
+sentence. What it replaces is somebody remembering, which is what both revisits so far have been
+(2026-08-12 against no instrument at all, 2026-08-16 against this table).
 
 ## The log
 
 | versionCode | versionName | Commit | Track | Uploaded | Notes |
 |---|---|---|---|---|---|
-| 1 | 1.0 | [`cadaea9`](https://github.com/SailorDave17/race-timer/commit/cadaea9) | Internal testing | *(not yet uploaded)* | First build. Prepared 2026-08-12; **re-taken** from `cadaea9` after the artifact was rebuilt — see below. |
+| 1 | 1.0 | [`089f216`](https://github.com/SailorDave17/race-timer/commit/089f216) | Internal testing | 2026-08-13 | First build. Commit **re-taken a second time**: prepared from `cadaea9` on `develop`, then rebuilt from `release` at `089f216`, which is the artifact Play accepted. Sitting as a **draft** on the track — no tester has it yet. |
 
 ## How each field is established
 
@@ -42,6 +54,10 @@ is that it was taken rather than remembered.
   [#184](https://github.com/SailorDave17/race-timer/issues/184) the archive records its own
   provenance and will not do so, but the row is still yours to keep honest.
 - **Uploaded** — the date Play accepted the bundle, from the Console, not the date it was built.
+  **The Console renders this in UTC**, so an evening upload from a US timezone is stamped the *next*
+  day: versionCode 1 was uploaded at 21:25 EDT on 2026-08-12 and the Console reads
+  `Aug 13, 2026, 1:25 AM`. Take the Console's date, not your local one — otherwise this column and
+  Play disagree by a day and the log stops being the tiebreak it exists to be.
 - **Signing** — every bundle here is signed with the upload key whose SHA-256 fingerprint is recorded
   in [`release-signing.md`](release-signing.md). Verify with `keytool -printcert -jarfile <bundle>`;
   that command is correct for an `.aab` and **wrong for an APK**, where it prints
