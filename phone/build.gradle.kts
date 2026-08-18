@@ -9,13 +9,13 @@
 //   - a screen that stays on or runs bright during a race: #199 delivered the mechanism
 //     (`PhoneDisplay.kt`) but nothing calls it, because what to ask for is the officer's choice
 //     and #225 is the surface that asks
-//   - release signing, versioning and archiving (#211 hoists wear's out of `wear/build.gradle.kts`;
-//     until then this module has no release signingConfig and `versionCode` is not an upload
-//     candidate — epic decision D3 gives both form factors one monotonic counter, and allocating
-//     from it is that story's job)
+//     (release signing, versioning and archiving arrived in #211 — see the
+//     `racetimer.release-artifacts` plugin in buildSrc, shared with :wear)
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    // #211. Release signing, the #156 keystore guard and the #184 archive task, shared with :wear.
+    id("racetimer.release-artifacts")
 }
 
 android {
@@ -39,8 +39,34 @@ android {
         // Wear carve-out does NOT cover a phone artifact — Play requires API 36 for phone uploads
         // after 2026-08-31 — so #192 gates the first upload (#214), not this scaffold.
         targetSdk = 35
-        versionCode = 1
+        // Epic #196 decision D3: ONE monotonic counter across both form factors, not one per
+        // module. :wear took 1 and burned it at the 2026-08-13 upload, so the next upload — this
+        // one, #214 — takes 2. Both modules ship under the same applicationId, so Play would reject
+        // a second artifact reusing 1; `checkVersionCodeCollision` in the root build enforces the
+        // invariant rather than leaving it to whoever reads this comment.
+        //
+        // This number is an ALLOCATION, not a derivation: if :wear ships an update before the phone
+        // does, it takes 3 and docs/releases.md records who took what.
+        versionCode = 2
         versionName = "1.0"
+    }
+
+    buildTypes {
+        release {
+            // R8 on, matching :wear. AC 5 of #211 puts :phone:bundleRelease in CI so R8 breakage
+            // cannot hide — which only means anything if R8 actually runs. It is also what produces
+            // the mapping.txt the shared archive task asserts on: without minification there is no
+            // mapping, and the archive would refuse rather than store a bundle whose crashes could
+            // never be deobfuscated.
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            // signingConfig is wired by the racetimer.release-artifacts plugin, conditionally on a
+            // keystore.properties existing — deliberately not set here, so the two modules cannot
+            // drift on the one behaviour whose failure mode is a silently unsigned bundle.
+        }
     }
 
     compileOptions {

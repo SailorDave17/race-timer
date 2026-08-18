@@ -65,14 +65,19 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF#refs/tags/v}"
-          name="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' wear/build.gradle.kts | head -1)"
-          code="$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' wear/build.gradle.kts | head -1)"
-          echo "tag=$tag  versionName=$name  versionCode=$code"
-          if [ "$tag" != "$name" ]; then
-            echo "::error::Tag v$tag does not match versionName $name in wear/build.gradle.kts."
-            echo "::error::Either the tag is wrong or the version was never bumped. Refusing."
-            exit 1
-          fi
+          # Both app modules carry a versionName and both are released here since #211, so the
+          # tag has to agree with BOTH. They share a value today; a check reading only :wear
+          # would go quiet exactly when they stopped agreeing.
+          for module in wear phone; do
+            name="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' $module/build.gradle.kts | head -1)"
+            code="$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' $module/build.gradle.kts | head -1)"
+            echo "$module: versionName=$name versionCode=$code (tag=$tag)"
+            if [ "$tag" != "$name" ]; then
+              echo "::error::Tag v$tag does not match versionName $name in $module/build.gradle.kts."
+              echo "::error::Either the tag is wrong or the version was never bumped. Refusing."
+              exit 1
+            fi
+          done
 
       # The keystore lands in RUNNER_TEMP, never in the workspace: a file inside the checkout could
       # be picked up by a later step, an artifact glob, or a docker context. RUNNER_TEMP is outside
@@ -134,10 +139,13 @@ jobs:
       # wear/build.gradle.kts reads -PkeystorePropertiesFile, defaulting to keystore.properties at
       # the repo root. Pointing it outside the checkout is what lets the credential stay out of the
       # workspace while the release signingConfig still gets created.
-      - name: Build the signed release bundle
+      # Both form factors from one keystore materialisation and one shred.
+      # `checkVersionCodeCollision` runs as a dependency of each bundleRelease (#211), so a tag
+      # producing two artifacts that share a versionCode fails here, not at upload.
+      - name: Build the signed release bundles
         run: |
           set -euo pipefail
-          ./gradlew :wear:bundleRelease \
+          ./gradlew :wear:bundleRelease :phone:bundleRelease \
             -PkeystorePropertiesFile="$RUNNER_TEMP/keystore.properties" \
             -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
 
@@ -153,15 +161,18 @@ jobs:
       - name: Verify the bundle carries the expected upload certificate
         run: |
           set -euo pipefail
-          aab=wear/build/outputs/bundle/release/wear-release.aab
-          test -f "$aab" || { echo "::error::No bundle at $aab"; exit 1; }
-
           expected="$(grep -oE '([0-9A-F]{2}:){31}[0-9A-F]{2}' docs/release-signing.md | head -1)"
           if [ -z "$expected" ]; then
             echo "::error::No SHA-256 fingerprint found in docs/release-signing.md."
             echo "::error::This check reads the expected key from that document; it cannot run without it."
             exit 1
           fi
+
+          for module in wear phone; do
+          aab="$module/build/outputs/bundle/release/$module-release.aab"
+          test -f "$aab" || { echo "::error::No bundle at $aab"; exit 1; }
+          echo "--- $module ---"
+
 
           # Never test keytool's exit code: on an unsigned artifact it prints the failure and exits
           # 0 (measured 2026-08-10, #127). The output is the only answer it gives.
@@ -181,10 +192,11 @@ jobs:
           echo "expected: $expected"
           echo "actual:   $actual"
           if [ "$expected" != "$actual" ]; then
-            echo "::error::Signed with the WRONG KEY. Play would reject this bundle."
+            echo "::error::$module signed with the WRONG KEY. Play would reject this bundle."
             exit 1
           fi
-          echo "Bundle is signed with the recorded upload key."
+          echo "$module bundle is signed with the recorded upload key."
+          done
 
       # mapping.txt is not a nice-to-have. Without it a crash report from this build deobfuscates
       # to nothing, and until the bundle is uploaded Play holds no copy — docs/releases.md records
@@ -196,6 +208,8 @@ jobs:
           path: |
             wear/build/outputs/bundle/release/wear-release.aab
             wear/build/outputs/mapping/release/mapping.txt
+            phone/build/outputs/bundle/release/phone-release.aab
+            phone/build/outputs/mapping/release/mapping.txt
           if-no-files-found: error
           retention-days: 90
 
@@ -211,23 +225,41 @@ jobs:
       # when the secret is missing: a release job that quietly published nothing is the failure this
       # whole workflow is meant to remove.
       #
-      # THE TRACK IS `wear:internal`, NOT `internal`. This app is a standalone Wear OS app, and Play
-      # keeps form-factor tracks separately — measured 2026-08-18 against the live account, where
-      # `wear:internal` holds the completed versionCode 1 release and the plain `internal` track is
-      # EMPTY. Publishing to `internal` would succeed, report success, and reach nobody.
-      - name: Publish to the Wear internal testing track
+      # TRACKS ARE PER FORM FACTOR, and the names are not interchangeable. Measured 2026-08-18
+      # against the live account: `wear:internal` holds the completed versionCode 1 release, and the
+      # plain `internal` track is EMPTY — because it is the NON-Wear form factor's internal track and
+      # no phone artifact had ever existed. Publishing the watch to `internal` would succeed, report
+      # success, and reach nobody.
+      #
+      # Since #211 both modules are built, signed and published here. Each goes to its own track:
+      #   :wear  -> wear:internal
+      #   :phone -> internal
+      #
+      # The loop publishes per module rather than duplicating the step, so a third form factor is a
+      # table entry. Each call carries its own --expected-version-code, which is what catches a
+      # bundle from a stale build: the modules draw from ONE shared counter (#211, epic D3), so the
+      # two numbers necessarily differ and a mix-up cannot look plausible.
+      - name: Publish each form factor to its own internal track
         if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish }}
         run: |
           set -euo pipefail
-          code="$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' wear/build.gradle.kts | head -1)"
-          name="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' wear/build.gradle.kts | head -1)"
-          python3 .github/scripts/play-publish.py \
-            --package io.github.sailordave17.racetimer \
-            --bundle wear/build/outputs/bundle/release/wear-release.aab \
-            --track 'wear:internal' \
-            --status "${PUBLISH_STATUS:-completed}" \
-            --expected-version-code "$code" \
-            --release-name "$code ($name) - $(git rev-parse --short HEAD)"
+          publish_one() {
+            local module="$1" track="$2"
+            local code name
+            code="$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' "$module/build.gradle.kts" | head -1)"
+            name="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' "$module/build.gradle.kts" | head -1)"
+            echo "::group::publishing $module (versionCode $code) to $track"
+            python3 .github/scripts/play-publish.py \
+              --package io.github.sailordave17.racetimer \
+              --bundle "$module/build/outputs/bundle/release/$module-release.aab" \
+              --track "$track" \
+              --status "${PUBLISH_STATUS:-completed}" \
+              --expected-version-code "$code" \
+              --release-name "$code ($name) - $(git rev-parse --short HEAD)"
+            echo "::endgroup::"
+          }
+          publish_one wear 'wear:internal'
+          publish_one phone 'internal'
         env:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           # A tag is already the explicit act #81 asked for ("trigger on tag push ... so a release
