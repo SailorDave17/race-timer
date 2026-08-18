@@ -16,6 +16,14 @@ shipped app: a Play policy violation, not a documentation bug.
     python3 .github/scripts/declared-surface.py --write     regenerate the lock file
     python3 .github/scripts/declared-surface.py --check      fail if the tree no longer matches it
 
+THE BINDING PYTHON VERSION IS THE CI RUNNER'S, NOT THE MAINTAINER'S. Nothing here pins an
+interpreter -- the workflow calls whatever `python3` ubuntu-latest provides, exactly as the privacy
+publish workflow does -- and that is older than the 3.13 on the maintainer's machine. Measured on
+this script's very first CI run: `Path.read_text(newline="")` is 3.13-only, so the step passed
+locally and died with a TypeError on the runner. Stick to long-stable APIs here, and treat a local
+green as saying nothing about the runner's interpreter. The step prints `python3 -V` before running,
+so the next failure of this class names its own cause in the log.
+
 THE MERGED MANIFEST IS THE SUBJECT, NOT THE SOURCE MANIFEST, and that is the whole reason this
 reads through Gradle instead of parsing wear/src/main/AndroidManifest.xml directly. #83 originally
 proposed the source file, reasoning that a standalone parser avoids needing a full Android build.
@@ -332,7 +340,12 @@ def check(content):
             f"{LOCK_PATH} does not exist. It is a committed artifact, not build output.\n"
             f"Generate it with:  {REGENERATE}"
         )
-    committed = LOCK.read_text(encoding="utf-8", newline="")
+    # read_bytes().decode(), not read_text(newline=""). The `newline` parameter on Path.read_text is
+    # Python 3.13 only; on an older interpreter it raises TypeError, which is what this step did on
+    # its first CI run while passing on the maintainer's 3.13 machine. Decoding bytes performs no
+    # newline translation on any version, which is the property actually wanted here -- the whole
+    # check is a byte comparison, so a reader that silently rewrites line endings would defeat it.
+    committed = LOCK.read_bytes().decode("utf-8")
     if committed == content:
         print(f"ok - {LOCK_PATH} matches the tree")
         return
