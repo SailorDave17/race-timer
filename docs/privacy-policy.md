@@ -252,6 +252,28 @@ MAINTAINER NOTES — remove this block before publishing.
    The publish-only branch replaces that blacklist with a whitelist: nothing can reach the site by
    being dropped into a folder, because only the build script writes the branch.
 
+   CHANGING THE PAGES SOURCE IS A TWO-CALL OPERATION AND THE SECOND CALL IS NOT OPTIONAL.
+   `PUT /repos/{owner}/{repo}/pages` writes the new source and queues NO BUILD. The config write is
+   real -- `GET .../pages` reads the new branch back at once -- but the site goes on serving the
+   PREVIOUS build indefinitely. So a source change is not finished until you have run
+
+       gh api -X POST repos/SailorDave17/race-timer/pages/builds
+
+   Measured 2026-08-12, repointing the source from `release` to `gh-pages`: `/` answered 200 for
+   five solid minutes while `/privacy-policy` answered 404, and `GET .../pages/builds/latest` still
+   named the old commit `27849a2` the whole time. That pairing is the trap -- a live site plus a
+   successful config write reads as "it worked", and the only contrary signal is a 404 on the path
+   you just created, which reads far more naturally as a wrong URL than as a site that never
+   rebuilt. Five minutes went into re-deriving the URL before anyone checked the build.
+
+   Then verify the SERVED BYTES rather than the configuration: check that `pages/builds/latest`
+   names the commit you pushed, curl the canonical path rather than `/`, and treat any content
+   assertion as conditional on having got a 200 first -- a 404 page satisfies "contains no secrets"
+   trivially. A push to the source branch does trigger a build the ordinary way; it is specifically
+   the configuration change that does not, which is why this is easy to go a long time without
+   meeting. (#175. Full write-up, with the two other Pages successes that are not successes, in
+   cairn `memory/reference/github-pages-publishing-surface-2026-08-12.md`.)
+
 5. The maintainer block you are reading is stripped at publish time and never reaches the web. The
    build script asserts the strip happened and refuses to publish otherwise -- an HTML comment
    renders as nothing, so a failed strip would look exactly like a successful one.

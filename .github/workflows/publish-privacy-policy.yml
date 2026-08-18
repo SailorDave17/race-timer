@@ -63,6 +63,16 @@ jobs:
           git push -q origin HEAD:gh-pages
           echo "published https://sailordave17.github.io/race-timer/privacy-policy"
 
+      # Deliberately NOT requesting a Pages build here, and #175 asked for the reason on the record.
+      # A source CONFIGURATION change (PUT .../pages) queues no build and the stale site goes on
+      # answering 200 - but this workflow never changes the source. It pushes to the branch Pages
+      # already serves, and a push triggers a build the ordinary way, so the hazard cannot arise on
+      # this path. Adding POST .../pages/builds defensively would also cost two things worth more
+      # than it: the step below fails the run when the page does not come up, which is what keeps a
+      # regression in the ordinary trigger loud rather than papered over, and the call needs
+      # `pages: write` on a job that today holds only `contents: write`. Owner decision 2026-08-17.
+      # The manual path - repointing the source by hand - is guarded by docs/privacy-policy.md
+      # section 4 instead, because that is the case a workflow cannot reach.
       # Publishing is not the same as being reachable, and the failure mode of a privacy policy URL
       # is that nobody notices until a Play review does. Pages needs a moment to build.
       - name: Confirm the page is actually served
