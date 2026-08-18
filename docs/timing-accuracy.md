@@ -166,6 +166,11 @@ starts. A cue deferred four seconds by a suspended CPU still reports a single-di
 
 Read `TimerService`'s line for timing-against-the-race, and `ToneManager`'s for timing-inside-a-cue.
 
+**For one question you need both, added together** — *how far from the mark did the sailor hear it?*
+See [*Cue accuracy against the mark*](#cue-accuracy-against-the-mark--the-82-measurement-2026-08-18)
+below. That is not a contradiction of the paragraph above: they are still different measurements with
+different baselines, which is exactly why the answer is their sum and not either one.
+
 ### Getting the screen actually off
 
 `ScreenPolicy.keepsScreenOn(RUNNING)` is `true`, so while the activity is in the foreground the
@@ -226,7 +231,9 @@ US Sailing 5-4-1-Go, first 75 s:
 | Sync — prep in 1 | 241000 | **2** | 0 | true | true |
 | Preparatory — P/I/Z/U flag up | 240000 | **2** | 0 | true | true |
 
-1–4 ms, consistent with the ±13 ms #58 established for the scheduled-cue path.
+1–4 ms, consistent with the ±13 ms #58 established for the scheduled-cue path. **That ±13 ms is a
+median from #58 and is no longer quoted as a current figure** — see *Cue accuracy against the mark*
+below for the measured worst cases that replaced it.
 
 **`wakeLock=false` on the first cue is expected, not a defect.** `onStartCommand` calls
 `engine.tick()` — which dispatches the first cue synchronously, because every sequence's first cue is
@@ -336,6 +343,108 @@ and the ongoing notification still re-posts once a second, so the count-up state
 device even without a lock. **That is a battery observation, not a correctness one**, and it is the
 opposite of a reason to hold a lock here: the state is already cheap on timing and already unbounded
 in length, which is exactly why #59 let it sleep.
+
+## Cue accuracy against the mark — the #82 measurement (2026-08-18)
+
+Everything above asks *did the cue fire at all, and did the watch sleep through it*. This section
+asks the different question [#82](https://github.com/SailorDave17/race-timer/issues/82) needed for a
+Play declaration: **how far from its scheduled offset did the sailor actually hear the cue?**
+
+### Why it takes two instruments, not one
+
+The section above warns that `TimerService`'s `cue errorMs=` and `ToneManager`'s `cue lateMs=` are
+different measurements. They are — and for this question you need **both, added together**:
+
+| | Baseline it measures from | Blind to |
+|---|---|---|
+| `TimerService` `errorMs` | the boundary the *sequence* put the cue on | everything after dispatch — a cue can fire on time and sound late |
+| `ToneManager` `lateMs` | the moment the tone was *due* (`baseMs + LEAD_IN_MS`) | everything before dispatch — its stopwatch starts inside `onCue` |
+
+Neither alone answers the question. `errorMs` describes a cue that fired; `lateMs` describes a cue
+that sounded. **Their sum is the miss of the audible start against the mark**, and that is the number
+a timing claim has to be built on.
+
+Add `LEAD_IN_MS` (40 ms) on top for tone *onset* from the mark. That 40 ms is deliberate — the tone is
+written late on purpose so it lands with the haptic rather than answering it — but a sailor hears one
+event, so an honest bound counts it.
+
+### Reproducing it
+
+```
+adb shell setprop log.tag.TimerService DEBUG
+adb shell setprop log.tag.ToneManager  DEBUG
+adb shell getprop log.tag.TimerService     # read it back — see below
+adb shell getprop log.tag.ToneManager
+adb logcat -c
+adb logcat -v time TimerService:D ToneManager:D '*:S' > run.log
+```
+
+Then run a full **US Sailing 5-4-1-Go** (30 cues — the most cues per five minutes, and the sequence
+every prior baseline used). Pair each `TimerService` line with the `ToneManager` line that follows it.
+
+Four things that will otherwise cost you a run:
+
+- **Read the property back.** `setprop` reports success without doing anything in more than one case,
+  and an unarmed run produces *zero* `ToneManager` lines — which is pixel-identical to the app running
+  vibration-only, i.e. to the #95 defect. Confirm the instrument emits before reading its silence.
+- **Disarm with `ASSERT`, never `""`.** `setprop log.tag.X ""` is rejected outright and leaves the old
+  value, so a run you believe is disarmed is still armed.
+- **Stop each capture before starting the next race.** A `logcat` left running silently appends the
+  next race to the previous race's file; a 60-cue file reads as one long race and every statistic
+  computed from it is wrong. Split on the `offsetMs=300000` warning cue and count the races.
+- **In the final ten seconds, `delivered` interleaves.** Cues come one per second there, so a cue's
+  `delivered` line can arrive after the *next* cue's dispatch line. Pair `delivered` with the nearest
+  **preceding** `samples=`, or you will manufacture truncations that did not happen.
+
+### What was measured
+
+Build `f1f3bf1` (post-#200, `:shared-android` in place), SM-R925U on Wear OS 6 / SDK 36, on charger,
+APK verified on-device by sha256 against the local build output. **Five full sequences, 150 cues**,
+covering cold and warm process and both audio routes — a silenced watch reroutes cues to
+`STREAM_MUSIC` under #95, and that route carried #114's worst outlier, so measuring only the normal
+route would have missed the harsher case:
+
+| Race | Route | Process | Cues | worst `errorMs` | worst `lateMs` | worst sum |
+|---|---|---|---|---|---|---|
+| 1 | MUSIC (vibrate) | cold | 30/30 | 15 | 34 | 37 ms |
+| 2 | MUSIC (vibrate) | warm | 30/30 | 29 | 51 | 53 ms |
+| 3 | ALARM (normal) | cold | 30/30 | 25 | 37 | 39 ms |
+| 4 | ALARM (normal) | warm | 30/30 | 10 | 48 | 49 ms |
+| 5 | MUSIC (vibrate) | cold, **worn and listened to** | 30/30 | **61** | 42 | **61 ms** |
+
+Across all 150 cues:
+
+| Axis | median | p90 | worst |
+|---|---|---|---|
+| Dispatch (`errorMs`) | 2 ms | 15 ms | **61 ms** |
+| Audible start vs. scheduled offset | 11 ms | 35 ms | **61 ms** |
+| Tone onset, incl. the 40 ms `LEAD_IN_MS` | — | — | **101 ms** |
+
+**150 of 150 cues dispatched. No cue delivered fewer frames than were loaded**, and the gun delivered
+144000 frames = 3000 ms exactly in all five races. `writeMs` stayed 0–8 ms, so #114's single-`play()`
+fix is holding; what lateness remains is `wakeMs` — the tone thread not being scheduled on time — and
+not audio-server cost.
+
+### The run that mattered most is the one that was worn
+
+**Race 5 is the worst of the five and the most realistic**, and those are the same fact. It is the run
+the owner picked the watch up for and listened to; the four untouched runs on the charger were quieter,
+peaking at 53 ms against its 61 ms. An instrument left alone measures a watch nobody is using. Weight
+the worn run when quoting a bound, and treat a clean untouched run as the optimistic end.
+
+Its verdict is the part no instrument here could supply: **buzz and blast arrived as one event**, owner,
+on the wrist, against this build.
+
+### What this still cannot see
+
+- **Sound leaving the speaker.** Every number here is taken inside the app. `ToneManager.logDispatch`'s
+  own docblock is explicit — *"Neither times when it emerged from the speaker, which only an ear
+  settles."* The third row is an estimate of tone onset, not an acoustic measurement, which is why the
+  by-ear check above is load-bearing rather than decorative.
+- **Any other watch.** One device, one OS version, as with everything else in this file.
+- **Screen off.** These five runs were screen-on with the app foregrounded; Run 2 further up is the
+  screen-off evidence, and it measured `errorMs` 1–4 ms — *better* than these, because nobody was
+  touching the watch.
 
 ## Battery saver and the battery-optimisation whitelist (#13)
 
