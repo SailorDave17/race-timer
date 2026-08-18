@@ -37,6 +37,28 @@ jobs:
           # published Gradle checksums on every run rather than trusting the blob.
           validate-wrappers: true
 
+      # #83. docs/privacy-policy.md is PUBLISHED and Play fetches it; it asserts no INTERNET
+      # permission, no third-party SDKs or analytics, a permission table that matches what ships,
+      # and which app disables Auto Backup. docs/play-store-fgs-justification.md argues at length
+      # that no standard foreground-service type applies. All of that was guarded by a COMMENT in
+      # each document, which only works if whoever adds a permission happens to open a file they had
+      # no reason to open - and the consequence of the miss is a live public policy that lies about
+      # the app, which is grounds for removal rather than a stale doc.
+      #
+      # First Gradle step on purpose. It reads the merged release manifests and the release runtime
+      # classpaths, so it needs nothing compiled and finishes long before the suites do - a policy
+      # violation should not wait behind R8.
+      # `python3 -V` first, because the runner's interpreter is the binding one and is older than a
+      # maintainer's. This step's first run died with a TypeError from a 3.13-only API that passed
+      # locally; printing the version makes the next instance of that class name its own cause
+      # instead of looking like a bug in the check.
+      - name: Check the declared-surface lock
+        env:
+          GRADLE_ARGS: -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
+        run: |
+          python3 -V
+          python3 .github/scripts/declared-surface.py --check
+
       # Point Gradle at the JDKs setup-java installed so the JVM 8 toolchain resolves
       # from disk. If this ever stops matching, the foojay resolver in settings.gradle.kts
       # downloads a JDK instead and the build still succeeds - just more slowly.

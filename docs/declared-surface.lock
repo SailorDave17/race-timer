@@ -1,0 +1,232 @@
+# The declared surface of Mad Cow Race Timer -- GENERATED, never hand-edited.
+#
+# Regenerate with:  python3 .github/scripts/declared-surface.py --write
+# Checked in CI by the same script with --check.
+#
+# This file exists so that adding a permission, an exported component or a dependency
+# cannot silently falsify the PUBLISHED privacy policy. Before updating it, re-check:
+#   docs/privacy-policy.md  (permission table, "no INTERNET", "no third-party SDKs", Device backup)
+#   docs/play-store-fgs-justification.md  (the why-no-standard-type argument, and the subtype string)
+#   docs/play-app-content-declarations.md  (Play Console > App content, incl. Data safety and Advertising ID)
+#
+# Read from each app's MERGED release manifest, not from its source manifest: a dependency
+# can inject a permission or an exported receiver the source never names, and two of the
+# entries below are exactly that. Dependencies are release-runtime only, so nothing
+# test-only appears; coordinates carry no version, so a version bump is silent and a new
+# dependency is not. See the script's docstring for what is deliberately absent.
+
+[manifest :wear]
+# wear/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml
+allow-backup true
+fgs-subtype com.racetimer.wear.TimerService = Racing timer — keeps the start-sequence running while the screen is off
+permission io.github.sailordave17.racetimer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION protectionLevel=signature
+provider androidx.startup.InitializationProvider exported=false
+receiver androidx.profileinstaller.ProfileInstallReceiver exported=true
+service com.racetimer.wear.TimerService exported=false foregroundServiceType=specialUse
+uses-feature android.hardware.audio.output required=false
+uses-feature android.hardware.type.watch required=true
+uses-permission android.permission.FOREGROUND_SERVICE
+uses-permission android.permission.FOREGROUND_SERVICE_SPECIAL_USE
+uses-permission android.permission.POST_NOTIFICATIONS
+uses-permission android.permission.VIBRATE
+uses-permission android.permission.WAKE_LOCK
+uses-permission io.github.sailordave17.racetimer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+
+[manifest :phone]
+# phone/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml
+allow-backup false
+fgs-subtype com.racetimer.phone.PhoneTimerService = Racing timer — keeps the start-sequence cueing while the screen is off
+permission io.github.sailordave17.racetimer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION protectionLevel=signature
+provider androidx.startup.InitializationProvider exported=false
+receiver androidx.profileinstaller.ProfileInstallReceiver exported=true
+service com.racetimer.phone.PhoneTimerService exported=false foregroundServiceType=specialUse
+uses-permission android.permission.FOREGROUND_SERVICE
+uses-permission android.permission.FOREGROUND_SERVICE_SPECIAL_USE
+uses-permission android.permission.POST_NOTIFICATIONS
+uses-permission android.permission.WAKE_LOCK
+uses-permission io.github.sailordave17.racetimer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+
+[dependencies :shared runtimeClasspath]
+org.jetbrains.kotlin:kotlin-stdlib
+org.jetbrains:annotations
+
+[dependencies :shared-android releaseRuntimeClasspath]
+org.jetbrains.kotlin:kotlin-stdlib
+org.jetbrains:annotations
+
+[dependencies :wear releaseRuntimeClasspath]
+androidx.activity:activity
+androidx.activity:activity-compose
+androidx.activity:activity-ktx
+androidx.annotation:annotation
+androidx.annotation:annotation-experimental
+androidx.annotation:annotation-jvm
+androidx.arch.core:core-common
+androidx.arch.core:core-runtime
+androidx.autofill:autofill
+androidx.collection:collection
+androidx.collection:collection-jvm
+androidx.collection:collection-ktx
+androidx.compose.animation:animation
+androidx.compose.animation:animation-android
+androidx.compose.animation:animation-core
+androidx.compose.animation:animation-core-android
+androidx.compose.foundation:foundation
+androidx.compose.foundation:foundation-android
+androidx.compose.foundation:foundation-layout
+androidx.compose.foundation:foundation-layout-android
+androidx.compose.material:material-icons-core
+androidx.compose.material:material-icons-core-android
+androidx.compose.material:material-ripple
+androidx.compose.material:material-ripple-android
+androidx.compose.runtime:runtime
+androidx.compose.runtime:runtime-android
+androidx.compose.runtime:runtime-saveable
+androidx.compose.runtime:runtime-saveable-android
+androidx.compose.ui:ui
+androidx.compose.ui:ui-android
+androidx.compose.ui:ui-geometry
+androidx.compose.ui:ui-geometry-android
+androidx.compose.ui:ui-graphics
+androidx.compose.ui:ui-graphics-android
+androidx.compose.ui:ui-text
+androidx.compose.ui:ui-text-android
+androidx.compose.ui:ui-unit
+androidx.compose.ui:ui-unit-android
+androidx.compose.ui:ui-util
+androidx.compose.ui:ui-util-android
+androidx.concurrent:concurrent-futures
+androidx.core:core
+androidx.core:core-ktx
+androidx.customview:customview
+androidx.customview:customview-poolingcontainer
+androidx.documentfile:documentfile
+androidx.dynamicanimation:dynamicanimation
+androidx.emoji2:emoji2
+androidx.fragment:fragment
+androidx.interpolator:interpolator
+androidx.legacy:legacy-support-core-utils
+androidx.lifecycle:lifecycle-common
+androidx.lifecycle:lifecycle-common-java8
+androidx.lifecycle:lifecycle-livedata
+androidx.lifecycle:lifecycle-livedata-core
+androidx.lifecycle:lifecycle-livedata-core-ktx
+androidx.lifecycle:lifecycle-process
+androidx.lifecycle:lifecycle-runtime
+androidx.lifecycle:lifecycle-runtime-ktx
+androidx.lifecycle:lifecycle-viewmodel
+androidx.lifecycle:lifecycle-viewmodel-compose
+androidx.lifecycle:lifecycle-viewmodel-ktx
+androidx.lifecycle:lifecycle-viewmodel-savedstate
+androidx.loader:loader
+androidx.localbroadcastmanager:localbroadcastmanager
+androidx.navigation:navigation-common
+androidx.navigation:navigation-common-ktx
+androidx.navigation:navigation-compose
+androidx.navigation:navigation-runtime
+androidx.navigation:navigation-runtime-ktx
+androidx.print:print
+androidx.profileinstaller:profileinstaller
+androidx.recyclerview:recyclerview
+androidx.savedstate:savedstate
+androidx.savedstate:savedstate-ktx
+androidx.startup:startup-runtime
+androidx.swiperefreshlayout:swiperefreshlayout
+androidx.tracing:tracing
+androidx.versionedparcelable:versionedparcelable
+androidx.viewpager:viewpager
+androidx.wear.compose:compose-foundation
+androidx.wear.compose:compose-material
+androidx.wear.compose:compose-material-core
+androidx.wear.compose:compose-navigation
+androidx.wear:wear
+androidx.wear:wear-ongoing
+com.google.guava:listenablefuture
+org.jetbrains.kotlin:kotlin-stdlib
+org.jetbrains.kotlin:kotlin-stdlib-common
+org.jetbrains.kotlin:kotlin-stdlib-jdk7
+org.jetbrains.kotlin:kotlin-stdlib-jdk8
+org.jetbrains.kotlinx:kotlinx-coroutines-android
+org.jetbrains.kotlinx:kotlinx-coroutines-bom
+org.jetbrains.kotlinx:kotlinx-coroutines-core
+org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm
+org.jetbrains:annotations
+
+[dependencies :phone releaseRuntimeClasspath]
+androidx.activity:activity
+androidx.activity:activity-compose
+androidx.activity:activity-ktx
+androidx.annotation:annotation
+androidx.annotation:annotation-experimental
+androidx.annotation:annotation-jvm
+androidx.arch.core:core-common
+androidx.arch.core:core-runtime
+androidx.autofill:autofill
+androidx.collection:collection
+androidx.collection:collection-jvm
+androidx.collection:collection-ktx
+androidx.compose.animation:animation
+androidx.compose.animation:animation-android
+androidx.compose.animation:animation-core
+androidx.compose.animation:animation-core-android
+androidx.compose.foundation:foundation
+androidx.compose.foundation:foundation-android
+androidx.compose.foundation:foundation-layout
+androidx.compose.foundation:foundation-layout-android
+androidx.compose.material3:material3
+androidx.compose.material3:material3-android
+androidx.compose.material:material-icons-core
+androidx.compose.material:material-icons-core-android
+androidx.compose.material:material-ripple
+androidx.compose.material:material-ripple-android
+androidx.compose.runtime:runtime
+androidx.compose.runtime:runtime-android
+androidx.compose.runtime:runtime-saveable
+androidx.compose.runtime:runtime-saveable-android
+androidx.compose.ui:ui
+androidx.compose.ui:ui-android
+androidx.compose.ui:ui-geometry
+androidx.compose.ui:ui-geometry-android
+androidx.compose.ui:ui-graphics
+androidx.compose.ui:ui-graphics-android
+androidx.compose.ui:ui-text
+androidx.compose.ui:ui-text-android
+androidx.compose.ui:ui-tooling-preview
+androidx.compose.ui:ui-tooling-preview-android
+androidx.compose.ui:ui-unit
+androidx.compose.ui:ui-unit-android
+androidx.compose.ui:ui-util
+androidx.compose.ui:ui-util-android
+androidx.compose:compose-bom
+androidx.concurrent:concurrent-futures
+androidx.core:core
+androidx.core:core-ktx
+androidx.customview:customview-poolingcontainer
+androidx.emoji2:emoji2
+androidx.interpolator:interpolator
+androidx.lifecycle:lifecycle-common
+androidx.lifecycle:lifecycle-common-java8
+androidx.lifecycle:lifecycle-livedata-core
+androidx.lifecycle:lifecycle-process
+androidx.lifecycle:lifecycle-runtime
+androidx.lifecycle:lifecycle-runtime-ktx
+androidx.lifecycle:lifecycle-viewmodel
+androidx.lifecycle:lifecycle-viewmodel-compose
+androidx.lifecycle:lifecycle-viewmodel-ktx
+androidx.lifecycle:lifecycle-viewmodel-savedstate
+androidx.profileinstaller:profileinstaller
+androidx.savedstate:savedstate
+androidx.savedstate:savedstate-ktx
+androidx.startup:startup-runtime
+androidx.tracing:tracing
+androidx.versionedparcelable:versionedparcelable
+com.google.guava:listenablefuture
+org.jetbrains.kotlin:kotlin-stdlib
+org.jetbrains.kotlin:kotlin-stdlib-common
+org.jetbrains.kotlin:kotlin-stdlib-jdk7
+org.jetbrains.kotlin:kotlin-stdlib-jdk8
+org.jetbrains.kotlinx:kotlinx-coroutines-android
+org.jetbrains.kotlinx:kotlinx-coroutines-bom
+org.jetbrains.kotlinx:kotlinx-coroutines-core
+org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm
+org.jetbrains:annotations

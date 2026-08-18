@@ -218,6 +218,29 @@ MAINTAINER NOTES — remove this block before publishing.
    module trees, this file is wrong the moment that change merges. Treat a manifest change in
    either module as requiring a matching edit here.
 
+   SINCE #83 THAT DEPENDENCY IS ENFORCED, AND THIS PARAGRAPH IS NO LONGER THE GUARD. The paragraph
+   you are reading only ever worked if whoever added a permission happened to open a file they had
+   no reason to open, and the consequence of the miss is a PUBLISHED policy that lies about the
+   shipped app. So the externally-visible surface of both apps is now snapshotted in
+   docs/declared-surface.lock and checked by .github/scripts/declared-surface.py, which runs as the
+   first Gradle step of .github/workflows/ci.yml. Adding a permission, an exported component or a
+   dependency fails that step, and the failure names this file as one of three to re-check before
+   the lock may be regenerated.
+
+   What the lock reads, so you know what it cannot tell you. It reads the MERGED release manifests
+   of :wear and :phone, not the source files -- which is what lets it see a permission or an
+   exported receiver injected by a dependency, the case note 2 above already treats as the real
+   check. It also reads the release-runtime dependency coordinates of all four modules, as
+   group:artifact with no version, so a version bump is silent and a NEW dependency is not. It
+   does NOT read test-only dependencies (they do not ship, so they cannot falsify anything here),
+   and it does not read uses-sdk -- so the targetSdk deadline recorded in
+   docs/play-app-content-declarations.md is still tracked only on the tracker.
+
+   The lock does not know what this document SAYS. It detects that the surface moved; deciding
+   which sentence above is now false is still a human reading this file. Regenerating the lock
+   without doing that reading defeats the whole mechanism, which is why the failure message says
+   so rather than just printing a diff.
+
    The two that will land next, and what each breaks:
    - #208 gives the phone haptics, which adds VIBRATE to the phone manifest. The permission
      table's "Watch app only" becomes wrong that day, and it is the only row that changes.
