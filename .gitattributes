@@ -25,3 +25,10 @@ gradlew.bat    text eol=crlf
 # .gitattributes governs checkout and so fixes the files in repos that carry it,
 # while the in-hook strip covers any clone or repo that does not.
 /githooks/*    text eol=lf
+
+# docs/declared-surface.lock is compared BYTE-FOR-BYTE against freshly generated output by
+# .github/scripts/declared-surface.py --check, so it must not change shape on the way through a
+# checkout. This machine has core.autocrlf=true: without this rule the committed copy checks out
+# CRLF, the generator writes LF, and the check fails on every run for a reason that has nothing to
+# do with the app's declared surface - which is how a guard gets disabled (#83 AC 3).
+*.lock         text eol=lf

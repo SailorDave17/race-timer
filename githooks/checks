@@ -39,6 +39,18 @@
 # as unfinished rather than considered.
 ./gradlew :wear:testDebugUnitTest --no-watch-fs --rerun-tasks
 #
+# #83. The declared-surface lock, and it is here for a different reason from the two above: those
+# are tests, this is a POLICY gate. A permission or dependency that contradicts
+# docs/privacy-policy.md is not a failing test, it is a published document that has stopped being
+# true about the shipped app - so the cheapest place to catch it is before the push rather than
+# after a CI round trip. Measured ~7 s: two manifest-merge tasks and four dependency reports, no
+# compilation. Same command string as the CI step in .github/workflows/ci.yml on purpose.
+#
+# No GRADLE_ARGS here, unlike CI. That flag points Gradle at setup-java's JDK 8 so :shared's
+# toolchain resolves from disk on the runner; locally the foojay resolver in settings.gradle.kts
+# handles it, which is why none of the other lines in this file pass it either.
+python3 .github/scripts/declared-surface.py --check
+#
 # :wear:assembleDebug is deliberately NOT here. CI runs it and it costs minutes;
 # a pre-push slow enough to be worth skipping gets skipped, and a gate that is
 # routinely bypassed protects nothing.

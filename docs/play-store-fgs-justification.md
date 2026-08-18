@@ -168,3 +168,30 @@ Two notes on strategy:
 
 If the app ever gains network access, a boot receiver, or a health-sensor read, this document is wrong
 and the declaration has to be rewritten before that version ships.
+
+**Since #83 that sentence is enforced rather than trusted, and it is worth knowing exactly which half.**
+The paragraph above was the only thing standing between a new permission and a Play declaration that
+had stopped being true — a guard that fires only if the person adding the permission happens to open
+this file. `docs/declared-surface.lock` now snapshots both apps' externally-visible surface and
+`.github/scripts/declared-surface.py` checks it as the first Gradle step in CI, naming this document
+as one of three to re-check before the lock may be regenerated.
+
+Three of this document's claims are now covered by that check, and one deliberately is not:
+
+- **Covered.** The permission list (`INTERNET`, location, body sensors), read from the **merged**
+  release manifests rather than the source ones, so a permission injected by a dependency is caught
+  too. The *"no boot-completed receiver"* claim, since every `<receiver>` and its exported state is
+  locked — and the merged manifests already carry an androidx receiver the source files never
+  mention, which is the case this claim was previously asserted against by inspection. And the
+  `specialUse` type together with the **subtype string** quoted verbatim in the *Manifest subtype
+  value* section above, so editing it in one place and not the other fails the build.
+- **Covered, and worth stating separately because it is the appeal argument.** *"No network access,
+  so it cannot transmit anything"* rests on the dependency graph as well as the manifest. The lock
+  records release-runtime coordinates for all four modules, so adding a networking or analytics SDK
+  fails CI — *measured 2026-08-18*, adding okhttp to `wear/build.gradle.kts` was refused and the
+  failure named okio's two transitives as well.
+- **NOT covered: the timing bullet.** The 100 ms and 150 ms bounds under *Why it must run in the
+  foreground* are a measurement, not a declaration, and nothing in a manifest or a dependency list
+  can falsify them. They are re-measured by a race on a wrist (#82) and by nothing else. A green
+  declared-surface check says nothing about them, and reading it as though it did would be worse
+  than having no check.
