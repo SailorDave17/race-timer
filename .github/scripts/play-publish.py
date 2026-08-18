@@ -103,6 +103,18 @@ def call(token: str, method: str, url: str, body=None, raw: bytes | None = None,
             return exc.code, {"raw": payload.decode("utf-8", "replace")[:400]}
 
 
+def ok(status: int) -> bool:
+    """Any 2xx. Not `status == 200`.
+
+    Measured 2026-08-18 against the live API: `PUT edits/{id}/tracks/{track}` answers **204** when
+    the track resource it would return is empty, and 200 otherwise — so an equality check on 200
+    fails a release for a call that succeeded. Every endpoint here is treated the same way rather
+    than special-casing the one that was caught, since the next one to do this would be silent in
+    exactly the same way.
+    """
+    return 200 <= status < 300
+
+
 def api_error(resp: dict) -> str:
     return resp.get("error", {}).get("message") or json.dumps(resp)[:300]
 
@@ -144,7 +156,7 @@ def main() -> None:
     base = f"{API}/applications/{args.package}"
 
     status, edit = call(token, "POST", f"{base}/edits")
-    if status != 200:
+    if not ok(status):
         # 401/403 here is the interesting one: it means the credential is valid but the Play
         # Console invitation is missing or carries the wrong permission.
         fail(f"could not open an edit: HTTP {status} — {api_error(edit)}")
@@ -161,7 +173,7 @@ def main() -> None:
             f"{UPLOAD}/applications/{args.package}/edits/{edit_id}/bundles?uploadType=media",
             raw=blob, content_type="application/octet-stream",
         )
-        if status != 200:
+        if not ok(status):
             fail(f"bundle upload rejected: HTTP {status} — {api_error(uploaded)}")
 
         version_code = int(uploaded["versionCode"])
@@ -185,12 +197,12 @@ def main() -> None:
             token, "PUT", f"{base}/edits/{edit_id}/tracks/{args.track}",
             body={"track": args.track, "releases": [release]},
         )
-        if status != 200:
+        if not ok(status):
             fail(f"could not assign to track {args.track}: HTTP {status}")
         print(f"assigned to track '{args.track}' with status '{args.status}'")
 
         status, validated = call(token, "POST", f"{base}/edits/{edit_id}:validate")
-        if status != 200:
+        if not ok(status):
             fail(f"Play rejected the edit at validation: HTTP {status} — {api_error(validated)}")
         print("edit validated by Play")
 
@@ -199,7 +211,7 @@ def main() -> None:
             return
 
         status, _ = call(token, "POST", f"{base}/edits/{edit_id}:commit")
-        if status != 200:
+        if not ok(status):
             fail(f"commit failed: HTTP {status}")
         committed = True
         print(f"::notice::Committed versionCode {version_code} to the {args.track} track "
