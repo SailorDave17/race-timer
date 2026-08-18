@@ -168,11 +168,23 @@ A fifth secret, `PLAY_SERVICE_ACCOUNT_JSON`, holds a Google Cloud service accoun
 track, validate, and commit. Nothing an edit contains is visible until the commit, so any failure
 before that point leaves the account untouched — and the script deletes the edit on the way out.
 
-**The track is `wear:internal`, not `internal`.** This is a standalone Wear OS app and Play keeps
-form-factor tracks separately. *Measured 2026-08-18 against the live account*: `wear:internal` holds
-the completed versionCode 1 release, and the plain `internal` track is **empty**. Publishing to
-`internal` would have succeeded, reported success, and reached nobody — the failure would have shown
-up as testers not receiving a build anyone could prove had shipped.
+**Tracks are per form factor, and the names are not interchangeable.** *Measured 2026-08-18 against
+the live account*: `wear:internal` holds the completed versionCode 1 release, and the plain
+`internal` track was **empty** — because it is the **non-Wear** form factor's internal track and no
+phone artifact had ever existed. Publishing the watch to `internal` would have succeeded, reported
+success, and reached nobody.
+
+Since #211 the workflow builds, signs, verifies and publishes **both** modules, each to its own
+track:
+
+| Module | Track | versionCode |
+|---|---|---|
+| `:wear` | `wear:internal` | 1 |
+| `:phone` | `internal` | 2 |
+
+Both carry `--expected-version-code`, so a bundle from a stale build is refused rather than uploaded.
+The two numbers necessarily differ (one shared counter, epic #196 D3), which is what makes a mix-up
+impossible to mistake for a correct upload.
 
 A **tag push rolls out** (`status: completed`); a **manual dispatch uploads as a draft**. The
 asymmetry is deliberate and is #81's own reasoning — the tag is the explicit act, so it is the one
@@ -305,9 +317,14 @@ Generalised into cairn as `running-a-procedure-finds-what-writing-it-cannot-2026
 
 ## Losing the upload key: which side of the line this project is on
 
-**Nothing has been uploaded to Play yet** — `versionCode` is still `1` and no track has received a
-bundle. That places this project on the **cheap** side of the line, and it is worth knowing the line
-moves permanently at the first upload:
+**This project crossed the line on 2026-08-13**, when `versionCode` 1 was accepted onto the
+`wear:internal` track. It sat on the cheap side of the line for as long as nothing had been
+uploaded; it does not any more, and the move is permanent:
+
+*(This paragraph read "Nothing has been uploaded to Play yet — `versionCode` is still `1` and no
+track has received a bundle" until #211. It was written true, and the upload falsified it the same
+week while the sentence went on describing the cheap case — which is the one a reader most wants to
+be true.)*
 
 - **Before the first upload** — losing the upload key costs a `keytool` run. Generate a new keystore,
   update `keystore.properties`, record the new fingerprint here. No one outside this repo has seen
@@ -338,7 +355,27 @@ or its fingerprint — stays available and was explicitly not ruled out.
 
 ## Version strategy
 
-Set in `wear/build.gradle.kts` `defaultConfig`, currently `versionCode = 1` / `versionName = "1.0"`.
+Set in each app module's `defaultConfig`. **One monotonic counter is shared across both form
+factors** (epic #196 decision D3) — not one counter per module.
+
+| Module | `versionCode` | `versionName` | Status |
+|---|---|---|---|
+| `:wear` | 1 | 1.0 | uploaded 2026-08-13, burned |
+| `:phone` | 2 | 1.0 | allocated by #211, not yet uploaded |
+
+**Why one counter and not one each.** Both modules declare the same `applicationId`
+(`io.github.sailordave17.racetimer`), so Play treats them as **one app** carrying two form-factor
+artifacts — and a `versionCode` is permanently unique *within an app*. Two modules each starting at 1
+is therefore not a tidy parallel scheme, it is an upload Play refuses.
+
+**The number is allocated, not derived.** Which module takes the next value depends on which one
+ships next, and no build can know that. `:phone` holds 2 because it is expected to ship next (#214);
+if `:wear` ships an update first it takes 3, and `docs/releases.md` records who took what.
+
+**The invariant is enforced, not remembered**: `./gradlew checkVersionCodeCollision` refuses two app
+modules declaring the same `versionCode` under one `applicationId`, and every `bundleRelease` depends
+on it. The identity it compares is the *(applicationId, versionCode)* pair — two modules under
+different applicationIds would be separate Play apps and may legitimately share a number.
 
 - **`versionCode`** is a monotonic integer, bumped by **+1 for every bundle uploaded to Play** —
   any track, including internal testing. Play rejects a duplicate `versionCode` permanently and a

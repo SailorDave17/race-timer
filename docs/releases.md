@@ -29,22 +29,38 @@ The log's original purpose is untouched: *which commit is on testers' watches?*
 
 ## The log
 
-| versionCode | versionName | Commit | Track | Uploaded | Notes |
-|---|---|---|---|---|---|
-| 1 | 1.0 | [`089f216`](https://github.com/SailorDave17/race-timer/commit/089f216) | `wear:internal` | 2026-08-13 | First build. Track cell read *"Internal testing"* — the Console's label — until 2026-08-18, when the Play API was asked directly and answered **`wear:internal`**, a Wear-form-factor track distinct from the plain `internal` track, which is empty. The label and the track id are not the same string, and #81's workflow publishes by id. Commit **re-taken a second time**: prepared from `cadaea9` on `develop`, then rebuilt from `release` at `089f216`, which is the artifact Play accepted. **Rolled out to internal testers** — owner-asserted 2026-08-17. This cell read *"sitting as a draft on the track — no tester has it yet"* until then: written true at upload time on 2026-08-13, and never revisited. |
+| versionCode | Form factor | versionName | Commit | Track | Uploaded | Notes |
+|---|---|---|---|---|---|---|
+| 1 | Wear | 1.0 | [`089f216`](https://github.com/SailorDave17/race-timer/commit/089f216) | `wear:internal` | 2026-08-13 | First build. Track cell read *"Internal testing"* — the Console's label — until 2026-08-18, when the Play API was asked directly and answered **`wear:internal`**, a Wear-form-factor track distinct from the plain `internal` track, which is empty. The label and the track id are not the same string, and #81's workflow publishes by id. Commit **re-taken a second time**: prepared from `cadaea9` on `develop`, then rebuilt from `release` at `089f216`, which is the artifact Play accepted. **Rolled out to internal testers** — owner-asserted 2026-08-17. This cell read *"sitting as a draft on the track — no tester has it yet"* until then: written true at upload time on 2026-08-13, and never revisited. |
+
+## One counter, two form factors (#211)
+
+`versionCode` is **one monotonic counter shared by both modules** (epic #196 decision D3), which is
+why this table has a **Form factor** column: the number alone no longer says which artifact took it.
+
+Both modules declare the same `applicationId`, so Play treats them as one app and a `versionCode` is
+permanently unique within it. `:wear` burned 1 on 2026-08-13; `:phone` holds 2, allocated by #211 and
+not yet uploaded. **The next upload takes the next free number whichever module ships it** — so if
+the watch ships an update before the phone does, the watch takes 3 and the phone's 2 waits.
+
+`./gradlew checkVersionCodeCollision` refuses two modules declaring the same number under one
+applicationId, and every `bundleRelease` depends on it — so this table records the allocation rather
+than being the only thing preventing a collision.
 
 ## Cutting a release from CI (#81)
 
-Since #81 the ordinary way to release is to bump `versionCode`/`versionName` in
-`wear/build.gradle.kts`, merge, then push a tag:
+Since #81 the ordinary way to release is to bump `versionCode`/`versionName` in the module being
+released — `wear/build.gradle.kts` or, since #211, `phone/build.gradle.kts` — merge, then push a tag:
 
 ```bash
 git tag v1.1 && git push origin v1.1
 ```
 
-`.github/workflows/release.yml` then signs, verifies the certificate against the recorded
-fingerprint, publishes to the **`wear:internal`** track, and attaches the `.aab` and `mapping.txt`
-to the run. The tag must match `versionName` or the workflow refuses before building.
+`.github/workflows/release.yml` then signs **both** modules, verifies each certificate against the
+recorded fingerprint, publishes each to its own track (`:wear` to **`wear:internal`**, `:phone` to
+**`internal`** — the non-Wear form factor's track, since #211), and attaches both `.aab` files and
+both `mapping.txt` files to the run. The tag must match the `versionName` of **both** modules or the
+workflow refuses before building.
 
 **A row is still written by hand, and it is still written when the upload happens.** CI does not
 touch this file. What changes is where the fields come from:
@@ -64,8 +80,9 @@ both paths and says which is which.
 Do not copy these from a previous row — every one of them is a measurement, and the point of the log
 is that it was taken rather than remembered.
 
-- **`versionCode` / `versionName`** — `wear/build.gradle.kts` `defaultConfig`, in the commit named in
-  the row. `versionCode` is bumped in the same commit as the release being cut; see
+- **`versionCode` / `versionName`** — the `defaultConfig` of **the module being released**
+  (`wear/build.gradle.kts` or `phone/build.gradle.kts`), in the commit named in the row. Since #211
+  the counter is shared across both, so the number also tells you which module *cannot* use it; see
   [`release-signing.md`](release-signing.md) §Version strategy for why a burned number can never be
   reclaimed.
 - **Commit** — `git rev-parse HEAD` on a **clean** tree at build time. A dirty tree makes the SHA a

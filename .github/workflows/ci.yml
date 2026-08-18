@@ -113,6 +113,17 @@ jobs:
       - name: Build wear release bundle (unsigned - this is where R8 runs)
         run: ./gradlew :wear:bundleRelease -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
 
+      # #211 AC 5. The phone joins the same guard for the same reason (#129): R8 runs on every push
+      # so a minification break cannot wait until somebody remembers to cut a release. Unsigned here
+      # exactly as :wear is - the shared racetimer.release-artifacts plugin creates the release
+      # signingConfig only when a keystore.properties exists, and this workflow writes none.
+      #
+      # It also exercises checkVersionCodeCollision, which every bundleRelease depends on: two app
+      # modules under one applicationId reusing a versionCode is a state Play refuses, and this is
+      # where it gets caught rather than at upload.
+      - name: Build phone release bundle (unsigned - R8 and the versionCode guard)
+        run: ./gradlew :phone:bundleRelease -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
+
       - name: Upload test reports
         # Failures are exactly when the report is worth reading.
         if: failure()
