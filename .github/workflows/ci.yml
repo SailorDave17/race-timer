@@ -104,8 +104,12 @@ jobs:
       # here fails the run.
       #
       # Unsigned by design, and no secret reaches the runner. wear/build.gradle.kts
-      # creates the release signingConfig only when a keystore.properties exists; CI
-      # has none, so the bundle builds unsigned. Signing in CI stays deferred to #81.
+      # creates the release signingConfig only when a keystore.properties exists; this
+      # workflow writes none, so the bundle builds unsigned.
+      #
+      # That is deliberate and stays deliberate now that #81 has shipped: signing lives in
+      # release.yml, which runs on a tag and is the only workflow the upload keystore secrets
+      # are exposed to. Every push and PR runs R8 here without ever touching a credential.
       - name: Build wear release bundle (unsigned - this is where R8 runs)
         run: ./gradlew :wear:bundleRelease -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
 

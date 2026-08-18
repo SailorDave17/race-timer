@@ -61,15 +61,17 @@ a message that reads as a bad backup and cost a wrong diagnosis before a `grep` 
 is scoped to release tasks, so an unfilled file never blocks `:shared:test` or a debug build, and CI
 has no such file at all so it can never fire there.
 
-The release `signingConfig` is only created when that file exists, so CI — which has no
-`keystore.properties` — still configures and builds. Signing is local-only by decision (#71): the
-move to CI signing is deferred as #81 until the release process is boring.
+The release `signingConfig` is only created when that file exists, so a workflow with no
+`keystore.properties` still configures and builds. Signing was local-only by decision (#71) until
+**#81 moved it into CI** — see *Signing in CI* below. Local signing still works exactly as described
+here and remains the fallback when GitHub is unavailable.
 
-One consequence worth stating, because it makes a local run of the CI gate misleading: **CI and this
-machine execute different task graphs for `:wear:bundleRelease`.** CI has no `keystore.properties`,
-so no release `signingConfig` exists and the bundle builds unsigned; locally the file exists and the
-build takes a signing path CI never runs. A `bundleRelease` failure here therefore does not imply a
-CI failure, and a pass here does not prove CI's path works. To reproduce CI's, move
+One consequence worth stating, because it makes a local run of the CI gate misleading: **the
+workflows execute different task graphs for `:wear:bundleRelease`, and there are now three of them.**
+`ci.yml` writes no `keystore.properties`, so no release `signingConfig` exists and its bundle builds
+unsigned; `release.yml` materialises one from secrets and signs; locally the file exists and signs. A
+`bundleRelease` failure here therefore does not imply a `ci.yml` failure, and a pass here does not
+prove either CI path works. To reproduce `ci.yml`'s, move
 `keystore.properties` **outside the repo** — never rename it in place, since a `.bak` beside it would
 hold both passwords in the repo root (the exact defect the #133 rehearsal found; `.gitignore` now
 globs `keystore.properties*`).
@@ -117,6 +119,70 @@ Two consequences worth stating rather than rediscovering:
 The APK also carries a cruder tell in its filename: `wear-release.apk` when signed,
 `wear-release-unsigned.apk` when not. That one needs no tooling, but it says only that *something*
 signed it, never *with what*.
+
+## Signing in CI (#81)
+
+`.github/workflows/release.yml` produces an uploadable, signed bundle without anyone opening a
+terminal. It runs on a **tag push** (`v*`), or by hand from the Actions tab.
+
+What it does, in order: refuse the run if the tag disagrees with `versionName`; decode the upload
+keystore from secrets into `RUNNER_TEMP`; build `:wear:bundleRelease` pointed at that keystore;
+**verify the resulting bundle's certificate against the fingerprint recorded above**; upload the
+`.aab` and `mapping.txt` as workflow artifacts; publish to Play; and shred the keystore in an
+`always()` step.
+
+### The four secrets
+
+| Secret | Holds |
+|---|---|
+| `UPLOAD_KEYSTORE_BASE64` | the `.jks`, base64 with no line wrapping |
+| `UPLOAD_KEYSTORE_STORE_PASSWORD` | store password |
+| `UPLOAD_KEYSTORE_KEY_ALIAS` | key alias |
+| `UPLOAD_KEYSTORE_KEY_PASSWORD` | key password |
+
+All four come from the same password-manager entry as the local config. Re-create the first with
+`base64 -w0 <the .jks>`; **`-w0` matters** — wrapped base64 decodes to a corrupt keystore, and the
+symptom is an unsigned bundle rather than an error.
+
+The keystore never lands in the workspace. It is written to `RUNNER_TEMP`, outside the checkout, so
+it cannot be picked up by an artifact glob or a later step, and `keystorePropertiesFile` is passed
+as a Gradle property pointing there.
+
+### Why the fingerprint check is the load-bearing step
+
+`BUILD SUCCESSFUL` does not mean signed — the whole of *Always check the bundle is actually signed*
+above applies just as much on a runner, where nobody is watching. The workflow therefore asserts the
+certificate itself, and it reads the expected value **out of this document** rather than carrying a
+second copy of it. If this file and the key ever disagree, that step is what says so.
+
+*Proven able to fail, 2026-08-18, three mutations each red as predicted*: an unsigned bundle (built
+by pointing `keystorePropertiesFile` at a path that does not exist) trips the `Not a signed jar file`
+branch; an altered fingerprint here trips the mismatch branch; a removed fingerprint trips the
+missing-value branch. Gradle exits 0 and `keytool` exits 0 in the first case — only the output
+differs, which is why the check reads output and never an exit code.
+
+### Publishing
+
+A fifth secret, `PLAY_SERVICE_ACCOUNT_JSON`, holds a Google Cloud service account key.
+`.github/scripts/play-publish.py` uses it to open a Play *edit*, upload the bundle, assign it to a
+track, validate, and commit. Nothing an edit contains is visible until the commit, so any failure
+before that point leaves the account untouched — and the script deletes the edit on the way out.
+
+**The track is `wear:internal`, not `internal`.** This is a standalone Wear OS app and Play keeps
+form-factor tracks separately. *Measured 2026-08-18 against the live account*: `wear:internal` holds
+the completed versionCode 1 release, and the plain `internal` track is **empty**. Publishing to
+`internal` would have succeeded, reported success, and reached nobody — the failure would have shown
+up as testers not receiving a build anyone could prove had shipped.
+
+A **tag push rolls out** (`status: completed`); a **manual dispatch uploads as a draft**. The
+asymmetry is deliberate and is #81's own reasoning — the tag is the explicit act, so it is the one
+allowed to reach testers; the manual path exists for rehearsal.
+
+The service account is `race-timer-play-publisher@race-timer-release.iam.gserviceaccount.com`, in
+the Google Cloud project `race-timer-release`. It holds **exactly one release permission — release
+to testing tracks** — and deliberately not production. It has no Cloud IAM role at all: its entire
+authority comes from the Play Console invitation, so revoking it is one action in *Users and
+permissions*.
 
 ## Release artefacts and crash reports
 

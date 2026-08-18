@@ -6,10 +6,15 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
-// Release signing reads a gitignored keystore.properties at the repo root. CI has no such file and
-// must still configure, so the release signingConfig only exists when the file does. CI *does* build
-// release since #129 — it builds it unsigned, which is the point of that gate (R8 runs on every
-// push); producing an uploadable bundle stays local-only by decision (#71).
+// Release signing reads a gitignored keystore.properties at the repo root. A build with no such
+// file must still configure, so the release signingConfig only exists when the file does. ci.yml
+// builds release on every push since #129 and writes no such file — it builds unsigned, which is
+// the point of that gate (R8 runs on every push).
+//
+// Since #81 an uploadable bundle is no longer local-only: release.yml materialises a keystore from
+// GitHub secrets and points `keystorePropertiesFile` at it, outside the checkout. So there are now
+// three graphs, not two — unsigned in ci.yml, signed in release.yml, signed locally — and the
+// property below is what the second one turns on.
 //
 // The path is a property only so the guard below can be proven without going near a real credential
 // file. Nothing in normal use passes it, and it defaults to the documented location.
