@@ -31,10 +31,10 @@ Two reasons, both about accuracy rather than convenience:
    is suspended when the display sleeps, the cues stop and the sailor misses the start.
 
 2. **The timing tolerance is tight.** Cues are scheduled against a monotonic clock rather than polled
-   for, and are dispatched within a few tens of milliseconds of their scheduled offsets — a tolerance
-   we measure on real hardware. A background-restricted or frozen process cannot hold that, and a gun
-   signal that arrives a second late is a wrong race result. Sub-second accuracy is the entire product,
-   not a nice-to-have.
+   for, and are dispatched within 100 ms of their scheduled offsets, with the audible tone following
+   within 150 ms — a tolerance measured across 150 cues in five full sequences on real hardware. A
+   background-restricted or frozen process cannot hold that, and a gun signal that arrives a second
+   late is a wrong race result. Sub-second accuracy is the entire product, not a nice-to-have.
 
 The service holds a `PARTIAL_WAKE_LOCK` sized to the remaining race time plus a small margin, and
 releases it as soon as the sequence ends. It does not hold a wake lock when no race is running.
@@ -97,6 +97,12 @@ Every claim above was checked against the tree on 2026-08-01, **re-checked on 20
 #113, #116 and #132 had merged, and **re-checked again on 2026-08-11** after #126, #13 and #72 moved
 `TimerService.kt`:
 
+**The 2026-08-18 pass (#82) re-measured the timing bullet only.** It did not re-verify the manifest,
+wake-lock or `START_NOT_STICKY` bullets, and the `TimerService.kt` line numbers below still date from
+2026-08-11 — #200 has moved the audio path to `:shared-android` since, so treat them as unverified
+rather than current. Saying which bullet a dated pass covered is the point: a re-check date attached
+to a whole document vouches for claims nobody looked at.
+
 - `wear/src/main/AndroidManifest.xml` declares exactly `FOREGROUND_SERVICE`,
   `FOREGROUND_SERVICE_SPECIAL_USE`, `WAKE_LOCK`, `POST_NOTIFICATIONS`, `VIBRATE`. No `INTERNET`, no
   location, no body sensors, no boot-completed receiver. The only manifest addition since the first
@@ -112,27 +118,45 @@ Every claim above was checked against the tree on 2026-08-01, **re-checked on 20
   one they now have. Neither claim in the declaration moves — the lock is still sized to the race
   actually left to run, and still released at teardown.
 - `OngoingActivity` is built and posted for the life of the service (`:769`).
-- The timing claim is deliberately phrased as "a few tens of milliseconds" rather than a hard number.
-  The measured figure is **±13 ms** for cue dispatch (hardware-measured, recorded in the cairn repo at
-  `memory/projects/race-timer-cue-audio-timing-2026-08-01.md`, down from ±200 ms when cues were polled
-  for every 50 ms), and mid-race cues measure 3–58 ms against their own deadlines. The **first cue of
-  every race** used to miss by **138–297 ms**, because the track was paused and flushed after each cue
-  and `play()` then re-paid `startOutput`. That was **#114**, and it **closed 2026-08-11**: the first
-  cue now measures **0–2 ms** across four full races, with **#98** closing behind it the same day.
+- The timing claim now states a measured bound on **two axes**, because the cue has two and they
+  differ. `TimerService`'s `errorMs` is how late the cue *fired* against the boundary the sequence put
+  it on; `ToneManager`'s `lateMs` is how late the **audible start** was against the moment the tone was
+  due. Neither alone answers "how far from the mark did the sailor hear it", and the sum does.
 
-  **The hedge stays anyway, and the reason has changed.** It is no longer that an open bug contradicts
-  the number — it is that ±13 ms is a *median-shaped* figure and a Play declaration is a **bound**.
-  The same #114 run recorded one cue at `lateMs=66` and documented a `queuedMs=10` ceiling for a cue
-  written while a heartbeat chunk is draining. A worst case in the tens of milliseconds is exactly
-  what "a few tens of milliseconds" already says, so the current wording is accurate as written;
-  replacing it with ±13 ms would make it false.
+  **Measured 2026-08-18 on build `f1f3bf1`** (SM-R925U, Wear OS 6 / SDK 36, `:shared-android` in place
+  after #200), **150 cues across five full US Sailing 5-4-1-Go sequences** — cold and warm process,
+  and both audio routes, since a silenced watch reroutes to `STREAM_MUSIC` under #95:
 
-  *Tightening this claim is still **#82**'s job, not this document's* — and #82 is now **startable**,
-  which it was not on 2026-08-09. It is worded "once #61 and #62 close"; both closed long ago, but the
-  hedge outlived them because #114 replaced their reason rather than removing it. #114 has now closed
-  too, so nothing blocks #82 but its own measurement. Note its ACs demand the **worst case** measured
-  on hardware from the **audible cue** — the 66 ms figure above is the candidate bound, not the 0–2 ms
-  headline.
+  | | median | p90 | worst |
+  |---|---|---|---|
+  | Cue dispatch (`errorMs`) | 2 ms | 15 ms | **61 ms** |
+  | Audible start vs. its scheduled offset (`errorMs` + `lateMs`) | 11 ms | 35 ms | **61 ms** |
+  | Tone onset, including the deliberate 40 ms `LEAD_IN_MS` | — | — | **101 ms** |
+
+  All 150 cues dispatched; **no cue delivered fewer frames than were loaded**, and the gun delivered
+  144000 frames = 3000 ms exactly in all five races. `writeMs` stayed 0–8 ms throughout, so #114's fix
+  is holding and the residual lateness is tone-thread scheduling contention (`wakeMs`), not audio-server
+  cost.
+
+  **The declaration's numbers are deliberately looser than the measurement** — 100 ms and 150 ms against
+  measured worsts of 61 ms and 101 ms. A bound quoted at the observed maximum is falsified by the next
+  device, which is the failure this whole story existed to avoid; the headroom is the point, and the
+  exact figures live here where a reviewer's own test can only confirm them.
+
+  **`LEAD_IN_MS` is a design offset, not an error.** The tone is written to sound 40 ms after the cue
+  fires so it lands *with* the haptic rather than answering it. It is counted into the third row anyway,
+  because a sailor hears one event and the honest bound is measured from the mark.
+
+  **What this still does not measure, and the hedge that survives because of it.** Nothing here times
+  sound leaving the speaker — `ToneManager.logDispatch`'s own docblock says so: *"Neither times when it
+  emerged from the speaker, which only an ear settles."* So the third row is an estimate of tone onset
+  inside the app, not an acoustic measurement. The owner listened to a full sequence on the wrist on
+  2026-08-18 against this build and reported buzz and blast arriving as **one event**, which is the only
+  instrument that reaches that last gap and is why the numbers above may be stated at all.
+
+  **The ±13 ms figure is retired as a claim about this app.** It was a median from #58's scheduled-cue
+  work, correct when taken and measured on a code path that no longer exists — before #114, before #200
+  moved the audio out of `wear/`. It is superseded by the table above rather than being wrong.
 
 Two notes on strategy:
 

@@ -217,14 +217,20 @@ proguard rule and start renaming frames out of crash reports.
 Kept here because the next person to edit the listing will be tempted by all three, and the reasons
 are not visible from the text itself.
 
-- **No timing figure.** The README and `docs/timing-accuracy.md` carry **±13 ms**, and the #126 run
-  measured median 2 ms / max 4 ms across 30 screen-off cues — but those are **median-shaped figures,
-  and a store listing is read as a bound**. The same #114 run recorded one cue at `lateMs=66`, with a
-  documented `queuedMs=10` ceiling on top, so the defensible bound is roughly **66 ms**, not 13. The
-  listing says **sub-second**, which is true with two decimal orders of margin and survives a bad cue.
-  This is the same reasoning [#82](https://github.com/SailorDave17/race-timer/issues/82) applies to
-  the Play FGS justification; if that story tightens its wording, it does not follow that this one
-  should.
+- **No timing figure.** The figures now live in `docs/timing-accuracy.md`: measured 2026-08-18 across
+  150 cues in five full sequences, dispatch is **median 2 ms, worst 61 ms**, and tone onset reaches
+  **101 ms** including the deliberate 40 ms lead-in. Those are real worst cases rather than the
+  median-shaped **±13 ms** this bullet used to cite — but a store listing is still read as a **bound**,
+  by a sailor, on one device they have not bought yet. The listing says **sub-second**, which is true
+  with an order of margin over the worst cue ever measured here and survives a bad one.
+
+  **[#82](https://github.com/SailorDave17/race-timer/issues/82) has since tightened the Play FGS
+  justification to explicit numbers (100 ms dispatch / 150 ms tone), and that does *not* propagate
+  here** — settled, not still open. The two documents have different readers and different failure
+  costs: a reviewer can check a declaration against a measurement, and a disappointed sailor cannot be
+  argued out of a number on a store page. This bullet previously stated that independence as a
+  prediction (*"if that story tightens its wording, it does not follow that this one should"*); it is
+  recorded as an outcome now, because a condition that has fired stops being a guess.
 - **No sun-legibility claim.** The listing says the app *drives the panel to maximum brightness*,
   which is a mechanism `shared/ScreenPolicy.kt` implements and a test asserts. It does not say the
   screen is readable in direct sun, because the contrast audit that would establish that is

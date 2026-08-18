@@ -125,13 +125,16 @@ an instruction as a signal.
   piece, so blast lengths are exactly what `CueTiming` states. The `ToneGenerator` path this replaced
   treated its duration as a *cap*: 500 ms delivered 512 ms five times and 520 ms once in the same race
 - **Scheduled cues, not polled** — cues are scheduled against the anchor rather than sampled by a
-  tick loop, which took cue accuracy from ±200 ms to ±13 ms on hardware. **±13 ms is a median, not a
-  bound** — the #114 run recorded one cue at `lateMs=66`, with a documented `queuedMs=10` ceiling on
-  top of it, so the defensible worst case is nearer **66 ms**. Anywhere the number is read as a
-  *guarantee* rather than a description — a Play declaration, the store listing, anything a reviewer
-  or a sailor sees — say **sub-second** instead of quoting this figure. That is the whole of
-  [#82](https://github.com/SailorDave17/race-timer/issues/82), and the reasoning is worked through in
-  [`docs/store/listing.md`](docs/store/listing.md)
+  tick loop, which took cue accuracy from ±200 ms to single-digit milliseconds at the median on
+  hardware. **Measured 2026-08-18 over 150 cues in five full sequences** ([#82](https://github.com/SailorDave17/race-timer/issues/82)):
+  dispatch median 2 ms and **worst 61 ms**; the audible start misses its mark by 11 ms at the median
+  and **61 ms at worst**; tone onset including the deliberate 40 ms lead-in reaches **101 ms**. Method
+  and full tables in [`docs/timing-accuracy.md`](docs/timing-accuracy.md)
+- **Never quote a median as a bound** — the ±13 ms this section used to carry was a *median* from #58,
+  and a Play declaration or a store listing is read as a **guarantee**. Quote a measured bound with
+  real headroom, or say **sub-second**. The FGS justification now does the former (100 ms / 150 ms,
+  against measured worsts of 61 ms and 101 ms); the store listing deliberately still does the latter,
+  and the reasoning for keeping them different is in [`docs/store/listing.md`](docs/store/listing.md)
 - **Foreground service + Ongoing Activity** — the countdown survives screen-off and backgrounding
 - **Screen policy is a table, not a habit** — keep-awake and max-brightness are two pure functions of
   timer state in `shared/ScreenPolicy.kt`, and they deliberately disagree on exactly one state so a
