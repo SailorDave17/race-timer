@@ -123,6 +123,27 @@ android {
         jvmTarget = "1.8"
     }
 
+    // #192. `bundleRelease` runs `lintVitalRelease`, so lint gates the release build even though
+    // this repo deliberately has no lint step of its own (2026-08-02). AGP 8.13's lint fails that
+    // task with 70 instances of exactly one check.
+    //
+    // Measured on the bump: `androidx.wear:wear:1.3.0` drags `androidx.fragment:fragment:1.2.4`,
+    // and the check fires because `registerForActivityResult` is used while the resolved Fragment
+    // is below 1.3.0. The combination it guards -- activity-result plumbing hosted in a Fragment --
+    // CANNOT occur here: nothing under `wear/src` references Fragment at all, and `:phone`, which
+    // has no fragment on its classpath, passes the same task untouched.
+    //
+    // Scoped to this one check on this one module on purpose. A lint baseline would absorb future
+    // instances of the same id for genuinely different reasons, and forcing Fragment up seven
+    // minors on a library this app never calls would change runtime bytes on the hardware-verified
+    // cue path to fix a report rather than a fault.
+    //
+    // REVISIT IF A FRAGMENT IS EVER INTRODUCED HERE -- at that point the check stops being a
+    // false positive and the right move becomes raising the dependency.
+    lint {
+        disable += "InvalidFragmentVersionForActivityResult"
+    }
+
     testOptions {
         unitTests {
             // Robolectric resolves the merged manifest and this module's resources from the built
