@@ -1,0 +1,255 @@
+name: Release
+
+# #81. Cutting a release used to be entirely hand-work on one laptop: the upload key lives in a
+# gitignored keystore.properties, so only that machine could produce an uploadable bundle, and the
+# only evidence it had done so correctly was somebody remembering to run keytool.
+#
+# This workflow makes a release an explicit act (a tag), and — the half that matters — it *proves*
+# the artifact is signed with the expected key before anyone uploads it. The deferral in #81 was
+# argued on "a rejected upload and a broken CI signing step present identically from the Console
+# side"; the fingerprint assertion below is what separates those two, on the runner, before Play is
+# involved at all.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # A dry run cuts no release: it builds and verifies the signature and stops before publishing.
+  # This is how the signing path is exercised without burning a versionCode.
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the bundle to the Play internal testing track'
+        type: boolean
+        default: false
+
+# Never cancel a release in flight. This deliberately differs from ci.yml, where a superseded push
+# should die immediately: there, the run is disposable; here it may already have uploaded.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build, verify signature, publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same two-JDK arrangement as ci.yml, and for the same reason: AGP refuses to run below 17,
+      # :shared declares jvmToolchain(8). 17 is listed last so it becomes JAVA_HOME.
+      - name: Set up JDK 8 and 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            8
+            17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          validate-wrappers: true
+
+      # A tag is a claim about which version is being released, and it is made by hand. The commit
+      # it points at carries the versionName independently, so the two can disagree — and the way
+      # they disagree in practice is that somebody tags a commit whose versionCode was never
+      # bumped, which Play then rejects for a reason that reads nothing like "you forgot to bump".
+      # Cheaper to refuse here.
+      - name: Check the tag matches the version being built
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/v}"
+          name="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' wear/build.gradle.kts | head -1)"
+          code="$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' wear/build.gradle.kts | head -1)"
+          echo "tag=$tag  versionName=$name  versionCode=$code"
+          if [ "$tag" != "$name" ]; then
+            echo "::error::Tag v$tag does not match versionName $name in wear/build.gradle.kts."
+            echo "::error::Either the tag is wrong or the version was never bumped. Refusing."
+            exit 1
+          fi
+
+      # The keystore lands in RUNNER_TEMP, never in the workspace: a file inside the checkout could
+      # be picked up by a later step, an artifact glob, or a docker context. RUNNER_TEMP is outside
+      # all of those and is wiped with the runner.
+      #
+      # No secret is echoed. `base64 -d` writes binary straight to a file, and the properties file
+      # is written with a quoted heredoc so the shell never expands — and never traces — the values.
+      # GitHub masks registered secrets in logs, but masking is a backstop, not the design.
+      - name: Materialise the upload keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.UPLOAD_KEYSTORE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            echo "::error::UPLOAD_KEYSTORE_BASE64 is not set. This workflow cannot sign without it."
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          # Prove the decode produced a keystore rather than 0 bytes of nothing. A truncated or
+          # mangled secret would otherwise surface much later as an unsigned bundle.
+          bytes=$(stat -c%s "$RUNNER_TEMP/upload.jks")
+          echo "decoded keystore: $bytes bytes"
+          if [ "$bytes" -lt 1000 ]; then
+            echo "::error::Decoded keystore is $bytes bytes — that is not a keystore."
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/keystore.properties" <<'PROPS'
+          storeFile=__STORE_FILE__
+          storePassword=__STORE_PASSWORD__
+          keyAlias=__KEY_ALIAS__
+          keyPassword=__KEY_PASSWORD__
+          PROPS
+          # Substituted with python rather than sed so a password containing sed metacharacters
+          # (&, /, \) cannot corrupt the file or, worse, half-corrupt it into a valid-looking one.
+          python3 - "$RUNNER_TEMP/keystore.properties" <<'PY'
+          import os, sys
+          p = sys.argv[1]
+          text = open(p, encoding='utf-8').read()
+          for token, var in (
+              ('__STORE_FILE__', None),
+              ('__STORE_PASSWORD__', 'STORE_PASSWORD'),
+              ('__KEY_ALIAS__', 'KEY_ALIAS'),
+              ('__KEY_PASSWORD__', 'KEY_PASSWORD'),
+          ):
+              value = os.path.join(os.environ['RUNNER_TEMP'], 'upload.jks') if var is None else os.environ[var]
+              if not value:
+                  sys.exit(f'::error::{var} is empty')
+              text = text.replace(token, value)
+          open(p, 'w', encoding='utf-8').write(text)
+          PY
+          # Names only. This is the one line that reports what was written, and it must never grow
+          # a value: `cut -d= -f1` is what keeps it honest.
+          echo "wrote keystore.properties with keys: $(cut -d= -f1 "$RUNNER_TEMP/keystore.properties" | tr '\n' ' ')"
+
+      # wear/build.gradle.kts reads -PkeystorePropertiesFile, defaulting to keystore.properties at
+      # the repo root. Pointing it outside the checkout is what lets the credential stay out of the
+      # workspace while the release signingConfig still gets created.
+      - name: Build the signed release bundle
+        run: |
+          set -euo pipefail
+          ./gradlew :wear:bundleRelease \
+            -PkeystorePropertiesFile="$RUNNER_TEMP/keystore.properties" \
+            -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
+
+      # The whole point of the workflow. BUILD SUCCESSFUL does not mean signed — the signingConfig
+      # is conditional, so a missing or unreadable keystore yields an unsigned bundle and a green
+      # build (measured 2026-08-06, #127).
+      #
+      # The expected fingerprint is READ OUT OF docs/release-signing.md rather than pasted here.
+      # That is deliberate: a second copy of a value that something else already records is the
+      # most recurring documentation defect in this workspace, and it decays silently. This way the
+      # published document is load-bearing — if the doc and the key ever disagree, this step is what
+      # says so.
+      - name: Verify the bundle carries the expected upload certificate
+        run: |
+          set -euo pipefail
+          aab=wear/build/outputs/bundle/release/wear-release.aab
+          test -f "$aab" || { echo "::error::No bundle at $aab"; exit 1; }
+
+          expected="$(grep -oE '([0-9A-F]{2}:){31}[0-9A-F]{2}' docs/release-signing.md | head -1)"
+          if [ -z "$expected" ]; then
+            echo "::error::No SHA-256 fingerprint found in docs/release-signing.md."
+            echo "::error::This check reads the expected key from that document; it cannot run without it."
+            exit 1
+          fi
+
+          # Never test keytool's exit code: on an unsigned artifact it prints the failure and exits
+          # 0 (measured 2026-08-10, #127). The output is the only answer it gives.
+          out="$(keytool -printcert -jarfile "$aab" 2>&1 || true)"
+          if printf '%s' "$out" | grep -q 'Not a signed jar file'; then
+            echo "::error::The bundle is UNSIGNED. The keystore did not reach the signingConfig."
+            exit 1
+          fi
+
+          actual="$(printf '%s' "$out" | grep -oE 'SHA256: ([0-9A-F]{2}:){31}[0-9A-F]{2}' | head -1 | sed 's/^SHA256: //')"
+          if [ -z "$actual" ]; then
+            echo "::error::Could not read a SHA-256 fingerprint out of keytool's output."
+            printf '%s\n' "$out"
+            exit 1
+          fi
+
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::Signed with the WRONG KEY. Play would reject this bundle."
+            exit 1
+          fi
+          echo "Bundle is signed with the recorded upload key."
+
+      # mapping.txt is not a nice-to-have. Without it a crash report from this build deobfuscates
+      # to nothing, and until the bundle is uploaded Play holds no copy — docs/releases.md records
+      # that the mapping for build 1 existed on exactly one machine.
+      - name: Upload the bundle and the R8 mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.ref_name }}
+          path: |
+            wear/build/outputs/bundle/release/wear-release.aab
+            wear/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      # google-auth is the only dependency, and only for RSA signing — see the header of
+      # play-publish.py for why the API calls are hand-written rather than delegated to an action
+      # that would hold this credential.
+      - name: Install the publisher's one dependency
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish }}
+        run: pip install --disable-pip-version-check 'google-auth==2.*'
+
+      # Publishing is a separate credential from signing, deliberately (#81: "a service account with
+      # release permissions is a meaningful credential"). The step fails loudly rather than skipping
+      # when the secret is missing: a release job that quietly published nothing is the failure this
+      # whole workflow is meant to remove.
+      #
+      # THE TRACK IS `wear:internal`, NOT `internal`. This app is a standalone Wear OS app, and Play
+      # keeps form-factor tracks separately — measured 2026-08-18 against the live account, where
+      # `wear:internal` holds the completed versionCode 1 release and the plain `internal` track is
+      # EMPTY. Publishing to `internal` would succeed, report success, and reach nobody.
+      - name: Publish to the Wear internal testing track
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish }}
+        run: |
+          set -euo pipefail
+          code="$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' wear/build.gradle.kts | head -1)"
+          name="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' wear/build.gradle.kts | head -1)"
+          python3 .github/scripts/play-publish.py \
+            --package io.github.sailordave17.racetimer \
+            --bundle wear/build/outputs/bundle/release/wear-release.aab \
+            --track 'wear:internal' \
+            --status "${PUBLISH_STATUS:-completed}" \
+            --expected-version-code "$code" \
+            --release-name "$code ($name) - $(git rev-parse --short HEAD)"
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          # A tag is already the explicit act #81 asked for ("trigger on tag push ... so a release
+          # is an explicit act"), so a tagged run rolls out. A manual dispatch is the rehearsal
+          # path and stays a draft unless asked otherwise.
+          PUBLISH_STATUS: ${{ startsWith(github.ref, 'refs/tags/v') && 'completed' || 'draft' }}
+
+      # The keystore is removed whatever happened above, including a cancelled or failed build.
+      # `always()` is the load-bearing part: the failure modes worth worrying about are the ones
+      # where the build died holding a decrypted key.
+      - name: Shred the keystore
+        if: always()
+        run: |
+          set -euo pipefail
+          for f in "$RUNNER_TEMP/upload.jks" "$RUNNER_TEMP/keystore.properties"; do
+            if [ -f "$f" ]; then
+              shred -u "$f" 2>/dev/null || rm -f "$f"
+              echo "removed $(basename "$f")"
+            fi
+          done
+          # Assert, do not assume. A cleanup step that silently did nothing looks exactly like one
+          # that worked.
+          for f in "$RUNNER_TEMP/upload.jks" "$RUNNER_TEMP/keystore.properties"; do
+            if [ -f "$f" ]; then echo "::error::$f survived cleanup"; exit 1; fi
+          done
