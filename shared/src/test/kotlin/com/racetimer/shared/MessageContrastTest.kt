@@ -40,6 +40,17 @@ class MessageContrastTest {
             .flatMap { state -> remainingSamples.map { backgroundArgbFor(it, state) } }
             .toSet()
 
+    /**
+     * The same set, expanded to what is actually **rendered** (#12).
+     *
+     * [backgroundsWhen] answers which colour each state maps to; once the final-ten state gained a
+     * pulse that stopped being the same question as which colours reach the panel. Driving
+     * [renderedBackgroundsFor] rather than adding the trough colour by hand here is what keeps this
+     * honest the next time a state learns to animate.
+     */
+    private fun renderedBackgroundsWhen(statePredicate: (TimerState) -> Boolean): Set<Long> =
+        backgroundsWhen(statePredicate).flatMap(::renderedBackgroundsFor).toSet()
+
     private fun assertLegible(name: String, text: Long, scrim: Long?, backgrounds: Set<Long>) {
         for (bg in backgrounds) {
             val ratio = effectiveContrast(text, scrim, bg)
@@ -73,6 +84,9 @@ class MessageContrastTest {
     @Test fun `a running race reaches navy amber and red but never the finished green`() {
         // The re-sync prompt's whole exposure follows from this: MainActivity gates it on
         // `engine.currentState == RUNNING`, and green needs FINISHED or RACE_ENDED.
+        // Deliberately the raw set, not the rendered one: this test is about which colours
+        // [backgroundArgbFor] maps a running race to. What those then render as is the next test's
+        // question, and collapsing the two would leave neither asserted.
         assertEquals(
             setOf(BG_NORMAL_ARGB, BG_ONE_MINUTE_ARGB, BG_FINAL_TEN_ARGB),
             backgroundsWhen { it == TimerState.RUNNING },
@@ -91,7 +105,7 @@ class MessageContrastTest {
         // No state gate at all: the clock-adjustment notice fires mid-race, so all four are live.
         assertLegible(
             "Tier 1 banner", TIER1_TEXT_ARGB, TIER1_SCRIM_ARGB,
-            backgroundsWhen { true },
+            renderedBackgroundsWhen { true },
         )
     }
 
@@ -99,7 +113,7 @@ class MessageContrastTest {
         // The criterion #123 exists for. Un-scrimmed this failed on amber at 2.93 : 1.
         assertLegible(
             "Tier 3 re-sync prompt", TIER3_TEXT_ARGB, TIER3_SCRIM_ARGB,
-            backgroundsWhen { it == TimerState.RUNNING },
+            renderedBackgroundsWhen { it == TimerState.RUNNING },
         )
     }
 
@@ -255,5 +269,69 @@ class MessageContrastTest {
         assertFalse(
             BG_FINISHED_ARGB in backgroundsWhen { it in statesTheArmedNoticeSpeaksIn() },
         )
+    }
+
+    // --- The countdown itself, which had no guard at all until #12 -----------------------------
+
+    @Test fun `the countdown digits are legible on every background they can render on`() {
+        // The element the whole app exists to display, and until #12 the only text on the screen
+        // this file did not measure. Amber is the tight one at 4.77 : 1.
+        assertLegible(
+            "countdown digits", COUNTDOWN_DIGIT_ARGB, null,
+            renderedBackgroundsWhen { true },
+        )
+    }
+
+    @Test fun `the flash the digits used to carry failed the bar at its trough`() {
+        // The #12 defect, asserted as a failure so this cannot be read as a rubber stamp — the same
+        // move the Tier 3 un-scrimmed prompt makes above.
+        //
+        // `CountdownText` animated the numerals to `alpha = 0.3` through the final ten seconds. That
+        // is 2.01 : 1 against the red background **in a dark room** — it fails the bar outright,
+        // before sunlight is anywhere in the picture, and sunlight then took it to roughly 1.07 : 1.
+        // Issue #12's own AC 3 asked exactly this question ("flashing must not obscure the numbers")
+        // and nothing could answer it, because no test measured the digits.
+        // 0x4D is `alpha = 0.3f` quantised to the 8-bit channel this file's arithmetic works in.
+        val trough = compositeOver(0x4DFFFFFFL, BG_FINAL_TEN_ARGB)
+        val ratio = contrastRatio(trough, BG_FINAL_TEN_ARGB)
+        assertEquals(2.02, ratio, 0.01)
+        assertFalse(
+            "the old digit flash trough is %.2f : 1, which must stay below the %.1f : 1 bar this test records"
+                .format(ratio, WCAG_NORMAL_TEXT_MIN),
+            ratio >= WCAG_NORMAL_TEXT_MIN,
+        )
+    }
+
+    @Test fun `moving the flash to the background raises the digits instead of sinking them`() {
+        // The property that makes #12's fix a fix rather than a rearrangement: at the trough the
+        // digits are *better* off than at the peak, where before they were far worse.
+        val atPeak = contrastRatio(COUNTDOWN_DIGIT_ARGB, BG_FINAL_TEN_ARGB)
+        val atTrough = contrastRatio(COUNTDOWN_DIGIT_ARGB, BG_FINAL_TEN_FLASH_ARGB)
+        assertEquals(11.40, atPeak, 0.01)
+        assertEquals(19.04, atTrough, 0.01)
+        assertTrue("the flash must never cost the digits contrast", atTrough > atPeak)
+    }
+
+    @Test fun `only the final ten background expands to a flash trough`() {
+        assertEquals(
+            listOf(BG_FINAL_TEN_ARGB, BG_FINAL_TEN_FLASH_ARGB),
+            renderedBackgroundsFor(BG_FINAL_TEN_ARGB),
+        )
+        for (bg in listOf(BG_NORMAL_ARGB, BG_ONE_MINUTE_ARGB, BG_FINISHED_ARGB)) {
+            assertEquals(listOf(bg), renderedBackgroundsFor(bg))
+        }
+    }
+
+    @Test fun `the flash runs through the final ten seconds and stops at the gun`() {
+        // Deliberately not `backgroundArgbFor(...) == BG_FINAL_TEN_ARGB`, which stays true past zero
+        // while the readout already says "GO!". The flash has always stopped at the gun.
+        assertTrue(isFinalTenFlash(TimerState.RUNNING, 10_000L))
+        assertTrue(isFinalTenFlash(TimerState.RUNNING, 1L))
+        assertFalse(isFinalTenFlash(TimerState.RUNNING, 10_001L))
+        assertFalse(isFinalTenFlash(TimerState.RUNNING, 0L))
+        assertFalse(isFinalTenFlash(TimerState.RUNNING, -1L))
+        for (state in TimerState.values().filter { it != TimerState.RUNNING }) {
+            assertFalse("$state is not a countdown", isFinalTenFlash(state, 5_000L))
+        }
     }
 }
