@@ -77,4 +77,55 @@ class ScreenPolicyTest {
         val differing = TimerState.entries.filter { keepsScreenOn(it) != forcesMaxBrightness(it) }
         assertEquals(listOf(TimerState.FINISHED), differing)
     }
+
+    // --- The ambient gate (#12) -----------------------------------------------
+
+    @Test fun `bright sun releases the override and indoor light keeps it`() {
+        // The whole point of the gate, and it reads backwards until you know why: forcing the panel
+        // to "maximum" *disables* the automatic strategy and pins 600 nits, while automatic reaches
+        // 1000 in bright light. Direct sun is 10,000-100,000 lux, so up there the override is a
+        // downgrade — and there is no API to ask for the panel's sunlight range, only the option to
+        // stop suppressing the strategy that can reach it.
+        assertFalse("direct sun", ambientPermitsOverride(50_000f, currentlyPermitted = true))
+        assertTrue("indoors, where the override is worth up to 8.6x", ambientPermitsOverride(50f, currentlyPermitted = false))
+    }
+
+    @Test fun `a watch with no light sensor keeps the shipped behaviour`() {
+        // Null is "no reading yet", which is also every sample before the first one arrives. It must
+        // answer true: a missing sensor cannot be allowed to cost the large indoor win.
+        assertTrue(ambientPermitsOverride(null, currentlyPermitted = true))
+        assertTrue(ambientPermitsOverride(null, currentlyPermitted = false))
+    }
+
+    @Test fun `the band between the thresholds holds whichever way the gate last went`() {
+        // Hysteresis, and the reason the two constants are not one. A sailor standing at the
+        // threshold would otherwise oscillate, and every flip is a visible brightness step on a
+        // screen someone is reading a clock off.
+        val midBand = (OVERRIDE_ENGAGE_LUX + OVERRIDE_RELEASE_LUX) / 2f
+        assertTrue("was permitted, stays permitted", ambientPermitsOverride(midBand, currentlyPermitted = true))
+        assertFalse("was released, stays released", ambientPermitsOverride(midBand, currentlyPermitted = false))
+    }
+
+    @Test fun `the engage threshold sits below the release threshold`() {
+        // If these ever cross or meet, the band above is empty and the hysteresis is gone without
+        // any test above failing — each of them still passes on its own side.
+        assertTrue(
+            "engage ($OVERRIDE_ENGAGE_LUX) must stay below release ($OVERRIDE_RELEASE_LUX)",
+            OVERRIDE_ENGAGE_LUX < OVERRIDE_RELEASE_LUX,
+        )
+    }
+
+    @Test fun `both thresholds are decided at their own boundary`() {
+        assertFalse("at the release threshold", ambientPermitsOverride(OVERRIDE_RELEASE_LUX, currentlyPermitted = true))
+        assertTrue("at the engage threshold", ambientPermitsOverride(OVERRIDE_ENGAGE_LUX, currentlyPermitted = false))
+    }
+
+    @Test fun `the ambient gate cannot brighten a state the race says is dark`() {
+        // The applied value is the conjunction of the two gates, so permissive ambient must never
+        // resurrect a state forcesMaxBrightness excludes. Asserts the composition MainActivity does.
+        for (state in TimerState.entries) {
+            val applied = forcesMaxBrightness(state) && ambientPermitsOverride(10f, currentlyPermitted = true)
+            assertEquals("$state under permissive ambient", forcesMaxBrightness(state), applied)
+        }
+    }
 }

@@ -49,6 +49,8 @@ import com.racetimer.shared.MessageSurface
 import com.racetimer.shared.STATUS_LINE_MAX_WIDTH_FRACTION
 import com.racetimer.shared.STATUS_LINE_TEXT_SP
 import com.racetimer.shared.BG_FINAL_TEN_ARGB
+import com.racetimer.shared.BG_FINAL_TEN_FLASH_ARGB
+import com.racetimer.shared.COUNTDOWN_DIGIT_ARGB
 import com.racetimer.shared.NoticeTier
 import com.racetimer.shared.StartNotice
 import com.racetimer.shared.StartRemedy
@@ -63,6 +65,7 @@ import com.racetimer.shared.TimerState
 import com.racetimer.shared.backgroundArgbFor
 import com.racetimer.shared.bannerFitsRoundScreen
 import com.racetimer.shared.formatCountdown
+import com.racetimer.shared.isFinalTenFlash
 import com.racetimer.shared.formatElapsed
 import com.racetimer.shared.NEUTRAL_BUTTON_ARGB
 import com.racetimer.shared.ON_ACCENT_ARGB
@@ -92,6 +95,9 @@ private const val BLOCKED_READOUT_ALPHA = 0.4f
 // `shared/MessageContrast.kt` — the contrast guard has to measure the same values the screen
 // renders, so there is one definition and this file reads it (#123).
 private val BG_FINAL_TEN = Color(BG_FINAL_TEN_ARGB)
+
+/** The trough the final-ten background pulses down to — see `BG_FINAL_TEN_FLASH_ARGB` (#12). */
+private val BG_FINAL_TEN_FLASH = Color(BG_FINAL_TEN_FLASH_ARGB)
 
 /** Pick the background colour for the given [remainingMs] and [state]. */
 private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
@@ -188,10 +194,34 @@ fun TimerScreen(
         label = "bgColor"
     )
 
+    // The final-ten flash (#12). It lives on the background rather than on the digits, because in
+    // sunlight dimming the glyph is the one thing that cannot be afforded — the reasoning, and the
+    // measured ratios, are on `BG_FINAL_TEN_FLASH_ARGB`.
+    //
+    // Modulated *after* the 300 ms state tween rather than fed through it: `animateColorAsState`
+    // exists to smooth navy → amber → red, and pushing a 400 ms pulse through a 300 ms tween would
+    // smear the pulse into a wash. The two animations compose here instead of fighting.
+    val flashFraction = if (isFinalTenFlash(state, remainingMs)) {
+        val flashTransition = rememberInfiniteTransition(label = "finalTenFlash")
+        val fraction by flashTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 400, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "finalTenFlashFraction",
+        )
+        fraction
+    } else {
+        0f
+    }
+    val renderedBg = lerp(animatedBg, BG_FINAL_TEN_FLASH, flashFraction)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(animatedBg),
+            .background(renderedBg),
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -447,7 +477,6 @@ private fun CountdownText(
     previewElapsed: Boolean = false,
     dimAlpha: Float = 1f,
 ) {
-    val isFinalTen = state == TimerState.RUNNING && remainingMs in 1..10_000L
     val isFinished = state == TimerState.FINISHED
     // Same elapsed-time display in all three: live while COUNTING_UP, frozen once RACE_ENDED
     // (elapsedMs itself carries that distinction — see the frozen-getter note on
@@ -463,29 +492,15 @@ private fun CountdownText(
         else -> formatCountdown(remainingMs)
     }
 
-    // Only the alpha differs between flashing and steady, so the branch decides that one value and
-    // the countdown itself is written once.
-    val flashAlpha = if (isFinalTen) {
-        val infiniteTransition = rememberInfiniteTransition(label = "flash")
-        val flashAlpha by infiniteTransition.animateFloat(
-            initialValue = 1f,
-            targetValue = 0.3f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 400, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse,
-            ),
-            label = "flashAlpha",
-        )
-        flashAlpha
-    } else {
-        1f
-    }
-
-    // Multiplied rather than replaced, so the two reasons to dim compose instead of one silently
-    // winning. They cannot currently co-occur — [dimAlpha] is only below 1 under a blocking notice,
-    // which is pre-start, and the flash needs RUNNING — but a branch that picks one of the two would
-    // be wrong the first time that stops being true, and nothing would report it (#13).
-    val alpha = flashAlpha * dimAlpha
+    // [dimAlpha] is the only thing that may fade these digits, and it is a pre-start concern — the
+    // blocking notice dimming what it covers (#13).
+    //
+    // The final-ten flash used to be multiplied in here as well, animating the numerals to
+    // `alpha = 0.3`. #12 moved it to the background: in sun the digits' emitted luminance is the
+    // whole budget, and spending 70 % of it twice a second took the readout to about 1.07 : 1 at
+    // the trough — unreadable, in the last ten seconds before the gun. The pulse is still there,
+    // and it is now the thing *behind* the numbers that moves.
+    val alpha = dimAlpha
 
     // Smaller than the countdown's 52 sp: formatElapsed grows an extra "H:" group past an hour,
     // and sizing for that up front keeps the readout a constant size rather than shrinking the
@@ -494,7 +509,7 @@ private fun CountdownText(
         text = displayText,
         fontSize = if (showsElapsed) 40.sp else 52.sp,
         fontWeight = FontWeight.Bold,
-        color = Color.White.copy(alpha = alpha),
+        color = Color(COUNTDOWN_DIGIT_ARGB).copy(alpha = alpha),
         textAlign = TextAlign.Center,
     )
 }

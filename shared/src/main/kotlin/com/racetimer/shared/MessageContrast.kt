@@ -36,6 +36,23 @@ const val BG_ONE_MINUTE_ARGB = 0xFFA0660AL
 /** Dark red — running, final 10 s. */
 const val BG_FINAL_TEN_ARGB = 0xFF7B0000L
 
+/**
+ * The trough of the final-ten flash — the darker red the background pulses down to (#12).
+ *
+ * The flash used to be applied to the **digits**, animating them to `alpha = 0.3`. In direct
+ * sunlight that is the worst thing this screen can do. Perceived luminance is emitted + reflected,
+ * so bright sun puts a reflection floor of several hundred nits under the glyph *and* the
+ * background alike; dimming the glyph to 30 % collapsed the digits to about **1.07 : 1** — gone,
+ * twice a second, through the last ten seconds before the gun. That is the one moment of the
+ * sequence nobody can afford to re-read.
+ *
+ * Moving the flash to the background inverts it: the digits hold full white and their contrast
+ * *rises* at the trough (11.40 : 1 against [BG_FINAL_TEN_ARGB], 19.04 : 1 here), while a
+ * whole-screen luminance pulse is a far stronger peripheral cue than a thin-stroke one ever was.
+ * Still unmistakably red, so the state reads the same.
+ */
+const val BG_FINAL_TEN_FLASH_ARGB = 0xFF2B0000L
+
 /** Dark green — the gun has fired. */
 const val BG_FINISHED_ARGB = 0xFF005000L
 
@@ -56,6 +73,50 @@ fun backgroundArgbFor(remainingMs: Long, state: TimerState): Long = when {
     remainingMs <= 60_000L       -> BG_ONE_MINUTE_ARGB
     else                         -> BG_NORMAL_ARGB
 }
+
+/**
+ * Is the countdown inside the flashing final ten seconds?
+ *
+ * One definition, because two things need to agree about it: `TimerScreen` drives the background
+ * pulse from it, and the contrast guard expands its reachable-background set from it. It is
+ * deliberately *not* derived from [backgroundArgbFor] returning [BG_FINAL_TEN_ARGB] — that stays
+ * true through `remainingMs <= 0` while the readout has already switched to "GO!", and the flash
+ * has always stopped at the gun rather than running into it.
+ */
+fun isFinalTenFlash(state: TimerState, remainingMs: Long): Boolean =
+    state == TimerState.RUNNING && remainingMs in 1..10_000L
+
+/**
+ * Every background a given state background can actually be **rendered** as.
+ *
+ * [backgroundArgbFor] answers which colour a state maps to; this answers what reaches the panel,
+ * and the two stopped being the same thing when the final-ten state gained a pulse. A guard that
+ * measured only [BG_FINAL_TEN_ARGB] would be blind to half the frames it exists to cover — the
+ * shape `a-guard-stays-where-the-hazard-was` records, where the check keeps passing while its
+ * *extension* quietly narrows.
+ *
+ * Lives here rather than in the test so the screen and the guard expand identically: the guard
+ * derives its background set by **driving** these functions, never by restating their branches.
+ */
+fun renderedBackgroundsFor(stateBackgroundArgb: Long): List<Long> =
+    if (stateBackgroundArgb == BG_FINAL_TEN_ARGB) {
+        listOf(BG_FINAL_TEN_ARGB, BG_FINAL_TEN_FLASH_ARGB)
+    } else {
+        listOf(stateBackgroundArgb)
+    }
+
+// --- The countdown readout --------------------------------------------------
+
+/**
+ * The countdown digits. Opaque white, and the opacity is load-bearing (#12).
+ *
+ * This is the one element the app exists to display, and until #12 it was the only text on the
+ * screen with **no contrast guard at all** — `MessageContrastTest` covered all three message tiers
+ * and never the numerals. Amber is the tight background at 4.77 : 1, which clears the bar with
+ * little enough room that a future retune of [BG_ONE_MINUTE_ARGB] could take it under without
+ * anything reporting so; that is what the digit test now stands in front of.
+ */
+const val COUNTDOWN_DIGIT_ARGB = 0xFFFFFFFFL
 
 // --- Message surfaces -------------------------------------------------------
 
