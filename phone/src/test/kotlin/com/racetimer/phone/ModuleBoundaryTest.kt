@@ -149,8 +149,9 @@ class ModuleBoundaryTest {
 
         assertEquals(
             "TimerState reaching the phone display path (#199 AC 4). The two window properties are " +
-                "the officer's choice (#225), not a function of where the countdown is — the whole " +
-                "reason this file is separate from the watch's state-driven table.",
+                "the officer's choice (#225), and where #279 lets a count-up narrow that choice it " +
+                "does so in the app, resolving to two booleans before this file is reached — which " +
+                "is the whole reason it is separate from the watch's state-driven table.",
             emptyList<String>(),
             source.lines().withIndex()
                 .filter { (_, line) -> line.contains("TimerState") }

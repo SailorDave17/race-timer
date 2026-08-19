@@ -16,12 +16,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.racetimer.shared.TimerState
 import kotlin.math.min
+
+/**
+ * Test tags for the count-up brightness prompt (#279), so its assertions find the two controls by
+ * identity rather than by display text.
+ */
+const val TAG_KEEP_BRIGHT = "count-up-keep-bright"
+const val TAG_DIM_COUNT_UP = "count-up-dim"
 
 /**
  * How much of the shorter screen dimension the readout may occupy vertically.
@@ -73,6 +81,16 @@ private const val GLYPH_WIDTH_FRACTION = 0.68f
  *                      the engine refuses everywhere else anyway.
  * @param notice        A line the officer is owed under the sequence name — a degraded restore's
  *                      re-sync advice (#205) — or null for the ordinary nothing.
+ * @param brightnessPrompt Whether to ask, this once, whether an unbounded count-up may keep the
+ *                      officer's full brightness (#279). Above the readout rather than beside End
+ *                      Race, deliberately: the control an officer reaches for past the gun is End
+ *                      Race, and a mis-tap that answered a display question instead of ending the
+ *                      race — or ended the race instead of answering it — is the worse of the two
+ *                      layouts in both directions.
+ * @param onKeepBright  Tapped to keep the panel at full brightness through count-ups. Asked once
+ *                      per launch, so this answer stands for the rest of the session.
+ * @param onDimCountUp  Tapped to let count-ups drop back to system brightness. The countdown is
+ *                      untouched — it is the state with a gun to justify the cost.
  * @param resumeOffer   The saved race's remaining time as display text, when a killed race is
  *                      waiting to be taken back (#205); null when there is nothing to offer. While
  *                      non-null and the race is not running, the controls become Resume and
@@ -90,6 +108,9 @@ fun TimerScreen(
     onSync: () -> Unit,
     onEndRace: () -> Unit = {},
     notice: String? = null,
+    brightnessPrompt: Boolean = false,
+    onKeepBright: () -> Unit = {},
+    onDimCountUp: () -> Unit = {},
     resumeOffer: String? = null,
     onResume: () -> Unit = {},
     onStartOver: () -> Unit = {},
@@ -130,6 +151,10 @@ fun TimerScreen(
                     fontSize = 16.sp,
                     textAlign = TextAlign.Center,
                 )
+            }
+
+            if (brightnessPrompt) {
+                CountUpBrightnessPrompt(onKeepBright = onKeepBright, onDim = onDimCountUp)
             }
 
             Text(
@@ -229,6 +254,55 @@ fun TimerScreen(
                 ) {
                     Text(text = "Start", fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * The one question a count-up asks, and only when there is something to release (#279).
+ *
+ * A committee count-up has no bound — an hour is ordinary — and no gun left to justify burning the
+ * panel for it, which is why the watch's own state table excludes it. The phone does not inherit
+ * that rule, because on a console the battery-against-legibility trade belongs to the officer and
+ * the day (#225). This is the middle: the officer is asked at the one moment the trade changes, in
+ * one tap, once per launch, and their answer stands.
+ *
+ * Left unanswered it answers itself — see `COUNT_UP_PROMPT_DWELL_MS`, and the reason silence dims
+ * rather than keeps.
+ */
+@Composable
+private fun CountUpBrightnessPrompt(onKeepBright: () -> Unit, onDim: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = "Keep the screen bright?",
+            color = Color.White,
+            fontSize = 16.sp,
+            textAlign = TextAlign.Center,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(0.9f).padding(top = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            Button(
+                onClick = onKeepBright,
+                colors = ButtonDefaults.buttonColors(),
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+                    .testTag(TAG_KEEP_BRIGHT),
+            ) {
+                Text(text = "Keep bright", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+            Button(
+                onClick = onDim,
+                colors = ButtonDefaults.buttonColors(),
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 8.dp)
+                    .testTag(TAG_DIM_COUNT_UP),
+            ) {
+                Text(text = "Dim", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
