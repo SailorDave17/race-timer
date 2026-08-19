@@ -23,7 +23,10 @@ android {
     // it — see cairn `android-applicationid-vs-namespace`. `com.racetimer.wear` is the watch's and
     // nothing here may reference it (asserted by ModuleBoundaryTest).
     namespace = "com.racetimer.phone"
-    compileSdk = 35
+    // API 36 since #261. Play requires it of a PHONE artifact after 2026-08-31; the Wear
+    // carve-out that keeps :wear at 35 does not cover this module. AGP 8.9.1 is the documented
+    // minimum for API 36 (8.13.0 for 36.1), which #192 delivered — attempting this on 8.6.1 fails.
+    compileSdk = 36
 
     defaultConfig {
         // The SAME identity as :wear, on purpose: one Play listing carrying both form factors, which
@@ -34,11 +37,15 @@ android {
         // Epic #196 decision D4. Matches :wear and :shared-android, so the FGS and notification
         // behaviour matrix is one matrix rather than one per form factor.
         minSdk = 30
-        // API 35 for now, per epic decision D7: this module is scaffolded on the toolchain the repo
-        // already runs (AGP 8.6.1 / SDK 35) rather than waiting for #191's AGP 9 crossing. The
-        // Wear carve-out does NOT cover a phone artifact — Play requires API 36 for phone uploads
-        // after 2026-08-31 — so #192 gates the first upload (#214), not this scaffold.
-        targetSdk = 35
+        // API 36 since #261. The scaffold shipped at 35 under epic decision D7, deliberately, on
+        // the toolchain the repo ran at the time; #192 delivered AGP 8.13 and this is the bump that
+        // D7 deferred. The Wear carve-out does NOT cover a phone artifact: Play requires API 36 for
+        // phone uploads after 2026-08-31, and since #211 a tag publishes this module, so a tag after
+        // that date would fail at the phone publish step rather than merely being unwise.
+        //
+        // :wear and :shared-android stay at 35 on purpose — moving them buys nothing and would push
+        // the hardware-verified cue path back through #201-class re-verification.
+        targetSdk = 36
         // Epic #196 decision D3: ONE monotonic counter across both form factors, not one per
         // module. :wear took 1 and burned it at the 2026-08-13 upload, so the next upload — this
         // one, #214 — takes 2. Both modules ship under the same applicationId, so Play would reject
