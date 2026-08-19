@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import com.racetimer.phone.ui.PhoneReadout
 import com.racetimer.phone.ui.TAG_CONTINUE
+import com.racetimer.phone.ui.TAG_FULL_BRIGHTNESS
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.MonotonicClock
 import com.racetimer.shared.RaceSequence
@@ -46,16 +47,32 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
     /** The runner the app is driven through, so a test can assert engine state as well as screen. */
     val runner = PhoneRaceRunner(clock)
 
-    /** Compose the whole app and answer the display surface, leaving the sequence picker up. */
-    fun launch() {
+    /**
+     * Compose the whole app and answer the display surface, leaving the sequence picker up.
+     *
+     * [fullBrightness] answers the launch surface's second switch, and [applyDisplay] records what
+     * reaches the display mechanism — both defaulted, so every test that does not care about the
+     * screen reads exactly as it did before #279. A test that *does* care has to be able to open on
+     * the officer having asked for the panel, because that is the only condition under which a
+     * count-up has anything to release.
+     */
+    fun launch(
+        fullBrightness: Boolean = DisplayChoice.INITIAL.fullBrightness,
+        applyDisplay: (DisplayChoice) -> Unit = {},
+    ) {
         compose.setContent {
             // The #239 flush loop rides the same frame pump that would otherwise spin forever —
             // see GlobalSnapshotFlushLoop for the measured mechanism. Composed before the app so
             // it exists from the first composition, which is where the hang bites.
             GlobalSnapshotFlushLoop()
-            RaceTimerApp(applyDisplay = {}, runner = runner)
+            RaceTimerApp(applyDisplay = applyDisplay, runner = runner)
+        }
+        if (fullBrightness != DisplayChoice.INITIAL.fullBrightness) {
+            compose.onNodeWithTag(TAG_FULL_BRIGHTNESS).performClick()
         }
         compose.onNodeWithTag(TAG_CONTINUE).performClick()
+        // The choice is applied from a LaunchedEffect, so the tap alone does not land it.
+        compose.waitForIdle()
     }
 
     /**
@@ -136,7 +153,10 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
         override fun elapsedMs(): Long = nowMs
     }
 
-    private companion object {
+    // Not private since #279: a test that has to land *inside* a timed window needs to know how
+    // much of it [runPastTheGun] has already spent, and re-stating the number in the test is the
+    // duplication that makes the window drift out from under it.
+    companion object {
         const val STEP_MS = 250L
 
         /** How far past the gun [runPastTheGun] lands — a few whole seconds of count-up. */

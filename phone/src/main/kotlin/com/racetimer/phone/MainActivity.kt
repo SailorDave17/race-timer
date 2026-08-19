@@ -242,16 +242,6 @@ internal fun RaceTimerApp(
         state = runner.engine.currentState
     }
 
-    // Keyed on the choice as well as on having been answered, so a later surface that lets the
-    // officer change their mind mid-day applies without anyone remembering to add a call here.
-    // Nothing is applied before the surface is answered: until then the phone behaves as an
-    // unmodified one, which is also what makes the choice screen itself an honest preview.
-    LaunchedEffect(displayChoice.answered, displayChoice.choice) {
-        if (displayChoice.answered) {
-            applyDisplay(displayChoice.choice)
-        }
-    }
-
     // A saved race walks the officer straight to it: the offer lands on the timer screen, not
     // behind a picker tap they have no reason to make (#205). The activity already selected the
     // saved sequence in the runner before handing the offer over.
@@ -289,6 +279,50 @@ internal fun RaceTimerApp(
     // which is just as much a race in progress even though the clock changed direction. RACE_ENDED
     // is deliberately not here: a frozen summary is finished, and Back dismissing it is right.
     val raceActive = state == TimerState.RUNNING || state == TimerState.COUNTING_UP
+
+    // #279. Where the race is reaches the *app* here and stops here: what crosses into the display
+    // mechanism is still two booleans, computed by `displayChoiceInEffect` and asserted by
+    // `ModuleBoundaryTest` to be all that path can see.
+    val countingUp = state == TimerState.COUNTING_UP
+
+    // The one moment worth interrupting an officer for, and only where there is something to
+    // release: someone who declined full brightness has nothing this can take away, so asking would
+    // be noise on the screen that most needs to stay legible. `countUpKeepsBrightness` is null until
+    // the question is *answered* — by a tap or by the dwell elapsing — so a count-up ended inside
+    // the dwell leaves the ask unspent and the next gun offers it again.
+    val brightnessPrompt = displayChoice.answered &&
+        countingUp &&
+        displayChoice.choice.fullBrightness &&
+        displayChoice.countUpKeepsBrightness == null
+
+    // Silence dims (#279). Keyed on the prompt, so it is cancelled by an answer, by End Race, and by
+    // the app going to the background — in each case the question stopped being on screen, and a
+    // timer that outlived the question would dim a panel nobody was asked about.
+    LaunchedEffect(brightnessPrompt) {
+        if (brightnessPrompt) {
+            delay(COUNT_UP_PROMPT_DWELL_MS)
+            displayChoice.answerCountUpBrightness(keepBright = false)
+        }
+    }
+
+    val displayInEffect = displayChoiceInEffect(
+        chosen = displayChoice.choice,
+        countingUp = countingUp,
+        countUpKeepsBrightness = displayChoice.countUpKeepsBrightness,
+    )
+
+    // Keyed on what is *in effect* rather than on what was chosen, so the count-up rule above
+    // applies through the same one call site — the seam #225 left open for exactly this ("a later
+    // surface that lets the officer change their mind mid-day applies without anyone remembering to
+    // add a call here"). Nothing is applied before the launch surface is answered: until then the
+    // phone behaves as an unmodified one, which is also what makes the choice screen an honest
+    // preview. A pass where the effective value has not changed re-applies nothing, which is what
+    // keeps "the display was decided once" true of a race nobody was asked about.
+    LaunchedEffect(displayChoice.answered, displayInEffect) {
+        if (displayChoice.answered) {
+            applyDisplay(displayInEffect)
+        }
+    }
 
     /**
      * Select [sequence], remember it, and open the timer screen — the one path both entries take.
@@ -358,6 +392,9 @@ internal fun RaceTimerApp(
                 refresh()
             },
             notice = restoreNotice,
+            brightnessPrompt = brightnessPrompt,
+            onKeepBright = { displayChoice.answerCountUpBrightness(keepBright = true) },
+            onDimCountUp = { displayChoice.answerCountUpBrightness(keepBright = false) },
             resumeOffer = if (offerConsumed) null else resumeOffer,
             onResume = {
                 offerConsumed = true
