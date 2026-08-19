@@ -19,8 +19,10 @@ junit = "4.13.2"
 # Robolectric runs :phone's unit tests against a real Context on the JVM. Scoped deliberately: the
 # audio and haptic path is a firm NO (a shadow AudioTrack is a fourth instrument of the class that
 # reported success through #61 while the watch was silent), and #160's scoped yes covers the
-# non-audio surfaces only. 4.14.1 is the floor for API 35, which is :phone's compileSdk/targetSdk.
-robolectric = "4.14.1"
+# non-audio surfaces only. 4.16.1 is the floor for API 36, :phone's compileSdk/targetSdk since #261
+# (4.14.1 caps at 35 outright: "Package targetSdkVersion=36 > maxSdkVersion=35"). The SDK 36 sandbox
+# also demands a Java 21 test JVM, which :phone's build script provides by toolchain (#275).
+robolectric = "4.16.1"
 junitExt = "1.1.5"
 espressoCore = "3.5.1"
 watchfaceComplications = "1.2.1"

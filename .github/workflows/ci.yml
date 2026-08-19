@@ -19,15 +19,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Two JDKs are genuinely needed: AGP 8.2 refuses to run on anything below 17,
-      # while :shared declares jvmToolchain(8). 17 is listed last so it becomes
-      # JAVA_HOME and runs Gradle itself.
-      - name: Set up JDK 8 and 17
+      # Three JDKs are genuinely needed, and each belongs to a different module (#275):
+      #   8  — :shared declares jvmToolchain(8) on purpose; its bytecode target is the contract.
+      #   17 — AGP's floor, and what runs Gradle itself. Listed LAST so it becomes JAVA_HOME.
+      #   21 — :phone's unit test launcher only. Robolectric cannot build an SDK 36 sandbox on
+      #        anything below 21, and :phone targets 36 (#261); the toolchain is declared in
+      #        phone/build.gradle.kts, this step just puts the JDK on disk so the foojay
+      #        resolver does not have to download it.
+      - name: Set up JDK 8, 17 and 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: |
             8
+            21
             17
 
       - name: Set up Gradle
@@ -91,8 +96,11 @@ jobs:
       # here since the start and had no test source set for four months; :phone gets both on day
       # one, so its orchestration cannot become hardware-verified-or-nothing the way #160 records
       # the watch's having done.
+      #
+      # JAVA_HOME_21_X64 joins the lookup here and only here: this is the one step that executes
+      # the task whose launcher is the Java 21 toolchain (#275).
       - name: Run phone unit tests
-        run: ./gradlew :phone:testDebugUnitTest -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
+        run: ./gradlew :phone:testDebugUnitTest -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64,JAVA_HOME_21_X64
 
       - name: Assemble phone debug APK
         run: ./gradlew :phone:assembleDebug -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
