@@ -59,9 +59,10 @@ class PhoneReadoutTest {
 
     @Test
     fun `the race-manager states read as elapsed time, not as a countdown`() {
-        // No sequence this module offers reaches these yet (#206). Asserted anyway, because the
-        // engine can produce them and a readout that answered by falling through would draw a
-        // countdown over a running race.
+        // Written before any sequence this module offered could reach these states, on the
+        // argument that the engine can produce them and a readout answering by falling through
+        // would draw a countdown over a running race. #206 made them reachable — the race-manager
+        // pair is on the picker — and this test needed no edit, which is the argument paying out.
         val counting = PhoneReadout.of(TimerState.COUNTING_UP, remainingMs = -95_000L, elapsedMs = 95_000L)
         assertEquals("1:35", counting.text)
 

@@ -7,6 +7,7 @@ import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.racetimer.phone.ui.PhoneReadout
 import com.racetimer.phone.ui.TAG_CONTINUE
 import com.racetimer.shared.BuiltInSequences
@@ -65,7 +66,10 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
      * it every assertion downstream would hold just as well on a countdown that never started.
      */
     fun startRace(sequence: RaceSequence = BuiltInSequences.usSailing) {
-        compose.onNodeWithText(sequence.name).performClick()
+        // Scrolled to first. Since #206 the picker offers five sequences rather than three, so an
+        // entry low in the list sits below the fold on a small phone and a bare click lands on
+        // nothing — the same thing `CustomSequenceRoutingTest` measured for the Custom entry.
+        compose.onNodeWithText(sequence.name).performScrollTo().performClick()
         compose.onNodeWithText("Start").performClick()
         compose.onNodeWithText("Stop").assertIsDisplayed()
     }
@@ -78,15 +82,32 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
      * and a slice well under one second guarantees the display poll runs several times per displayed
      * second rather than once per assertion.
      */
-    fun advance(totalMs: Long) {
-        require(totalMs > 0 && totalMs % STEP_MS == 0L) {
-            "advance() takes a positive whole multiple of $STEP_MS ms, got $totalMs"
+    fun advance(totalMs: Long, stepMs: Long = STEP_MS) {
+        require(stepMs > 0 && totalMs > 0 && totalMs % stepMs == 0L) {
+            "advance() takes a positive whole multiple of its step ($stepMs ms), got $totalMs"
         }
-        repeat((totalMs / STEP_MS).toInt()) {
-            clock.nowMs += STEP_MS
-            compose.mainClock.advanceTimeBy(STEP_MS)
+        repeat((totalMs / stepMs).toInt()) {
+            clock.nowMs += stepMs
+            compose.mainClock.advanceTimeBy(stepMs)
         }
         compose.waitForIdle()
+    }
+
+    /**
+     * Run the clock from the top of a sequence to just past its gun, in whole seconds (#206).
+     *
+     * A coarser step than [advance]'s default, and safe to be coarse for one reason worth stating:
+     * `TimerEngine.tick` drains **every** cue whose boundary has passed on the tick that crosses
+     * it, so a stride cannot step over the gun — it can only make the display change in bigger
+     * jumps on the way there, which no assertion here is about. The fine slice still matters where
+     * the readout itself is under test, and that is what [advance]'s default is for.
+     *
+     * Deliberately overshoots by [PAST_GUN_MS] rather than landing exactly on zero: a race-manager
+     * sequence's whole subject is what happens *after* the gun, and an assertion taken at the
+     * instant of it would be reading the boundary rather than the state it opens.
+     */
+    fun runPastTheGun(sequence: RaceSequence) {
+        advance(sequence.totalMs + PAST_GUN_MS, stepMs = 1_000L)
     }
 
     /**
@@ -117,6 +138,10 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
 
     private companion object {
         const val STEP_MS = 250L
+
+        /** How far past the gun [runPastTheGun] lands — a few whole seconds of count-up. */
+        const val PAST_GUN_MS = 4_000L
+
         val READOUT_SHAPE = Regex("""\d+:\d{2}""")
     }
 }

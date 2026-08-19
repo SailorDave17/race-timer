@@ -38,10 +38,11 @@ data class PhoneReadout(
         fun of(state: TimerState, remainingMs: Long, elapsedMs: Long): PhoneReadout = PhoneReadout(
             text = when (state) {
                 TimerState.FINISHED -> GUN_LABEL
-                // The two race-manager states. No sequence this module can currently select reaches
-                // them — #206 brings count-up and End Race to the phone, along with the screen
-                // furniture they need — but the engine has them, and a readout that answered a
-                // state by omission would draw a countdown over a running race.
+                // The two race-manager states: live elapsed while the committee races, frozen once
+                // End Race is tapped. Both were written here before any sequence this module
+                // offered could reach them, on the argument that a readout answering a state by
+                // omission would draw a countdown over a running race — and #206, which brought the
+                // race-manager modes to the picker, needed no edit to this `when` as a result.
                 TimerState.COUNTING_UP, TimerState.RACE_ENDED -> formatElapsed(elapsedMs)
                 else -> formatCountdown(remainingMs)
             },

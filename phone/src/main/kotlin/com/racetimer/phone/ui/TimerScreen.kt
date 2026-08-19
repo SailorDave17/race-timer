@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.racetimer.shared.TimerState
 import kotlin.math.min
 
 /**
@@ -51,9 +52,21 @@ private const val GLYPH_WIDTH_FRACTION = 0.68f
  *                      ([PhoneReadout.of]); this composable computes neither.
  * @param sequenceName  The loaded sequence, small, above the readout — the officer's confirmation
  *                      that the phone is running the race they think it is.
- * @param running       True while the engine is in a state Stop applies to.
+ * @param state         Where the engine is. The control row is a function of this and nothing else,
+ *                      which is why #206 replaced the `running: Boolean` this took until then: a
+ *                      race-manager race has *three* live states after Start — counting down,
+ *                      counting up, and a frozen summary — and each offers a different control. A
+ *                      second boolean beside the first would have been one state table written out
+ *                      twice, which is the shape the watch's own display rules warn about in as
+ *                      many words. (Named by description rather than by symbol on purpose: this
+ *                      module asserts in a test that it never reaches for that file, and the
+ *                      assertion reads source text, so a mention in a comment trips it — which is
+ *                      exactly what it did on the first run of this story.)
  * @param onStart       Tapped to start the sequence.
- * @param onStop        Tapped to abandon the run and return to the top of the same sequence.
+ * @param onStop        Tapped to abandon the run and return to the top of the same sequence — and
+ *                      the same control, labelled Done, that dismisses a finished race's summary.
+ * @param onEndRace     Tapped to end a race-manager count-up (#206), freezing the elapsed time for
+ *                      the committee to read.
  * @param onSync        Tapped to snap the countdown to a whole minute (#204) — the officer who
  *                      missed the exact flag bringing the phone back into step with it. Only
  *                      offered while running: before the start there is nothing to correct, and
@@ -71,10 +84,11 @@ private const val GLYPH_WIDTH_FRACTION = 0.68f
 fun TimerScreen(
     readout: PhoneReadout,
     sequenceName: String,
-    running: Boolean,
+    state: TimerState,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onSync: () -> Unit,
+    onEndRace: () -> Unit = {},
     notice: String? = null,
     resumeOffer: String? = null,
     onResume: () -> Unit = {},
@@ -130,7 +144,30 @@ fun TimerScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            if (!running && resumeOffer != null) {
+            if (state == TimerState.COUNTING_UP) {
+                // The sole control, full width like Start: past the gun there is exactly one thing
+                // left to do to this race, and the officer doing it is watching the water rather
+                // than the phone. Nothing to sync to and nothing to abandon — Stop is deliberately
+                // absent, because a mis-tap that discarded a race in progress has no undo.
+                Button(
+                    onClick = onEndRace,
+                    colors = ButtonDefaults.buttonColors(),
+                    modifier = Modifier.fillMaxWidth(0.6f),
+                ) {
+                    Text(text = "End Race", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                }
+            } else if (state == TimerState.RACE_ENDED) {
+                // The final time is on screen to be read, not acted on, so Done is the only way out
+                // — and it is the same callback as Stop, because dismissing a summary and
+                // abandoning a run are one thing to the engine: return to the top of the sequence.
+                Button(
+                    onClick = onStop,
+                    colors = ButtonDefaults.buttonColors(),
+                    modifier = Modifier.fillMaxWidth(0.6f),
+                ) {
+                    Text(text = "Done", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                }
+            } else if (state != TimerState.RUNNING && resumeOffer != null) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     // The number is what resuming will actually put on the clock, so the officer
                     // decides against the truth — the watch learned that an offer showing the full
@@ -161,7 +198,7 @@ fun TimerScreen(
                         }
                     }
                 }
-            } else if (running) {
+            } else if (state == TimerState.RUNNING) {
                 // Sync first, Stop second: sync is the control an officer reaches for mid-race at
                 // a flag, stop is the one that ends everything — the destructive control goes
                 // furthest from where an urgent thumb lands.

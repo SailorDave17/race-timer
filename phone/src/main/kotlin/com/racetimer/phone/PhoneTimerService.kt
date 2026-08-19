@@ -153,7 +153,12 @@ class PhoneTimerService : Service() {
         override fun run() {
             val readout = runner.tick()
             when (runner.engine.currentState) {
-                TimerState.RUNNING -> {
+                // COUNTING_UP rides the same loop as RUNNING (#206): a race-manager sequence's
+                // work is not finished at the gun, and the notification has a live elapsed time to
+                // show for as long as the committee is racing. Nothing here ends it — the loop
+                // stops when End Race tears the foreground down, which is an officer's tap and not
+                // a timer, because a count-up has no bound to schedule against.
+                TimerState.RUNNING, TimerState.COUNTING_UP -> {
                     updateNotification(readout.text)
                     handler.postDelayed(this, TICK_INTERVAL_MS)
                 }
@@ -185,6 +190,26 @@ class PhoneTimerService : Service() {
         }
 
         override fun onGun() {
+            if (runner.engine.loadedSequence?.countUpAfterFinish == true) {
+                // Race-manager mode (#206): the engine has gone straight to COUNTING_UP rather than
+                // FINISHED, so there is no teardown to schedule — the service and its notification
+                // stay up until End Race. Two things deliberately do NOT happen here:
+                //
+                //  - **The snapshot is not cleared.** Past the gun is where a count-up race lives,
+                //    and the shared recoverability rule says so in as many words — a
+                //    `countUpAfterFinish` race with a passed gun is still recoverable, where a
+                //    countdown would be spent. Clearing at the gun would make the one race long
+                //    enough to outlive a process the one race that could not be restored.
+                //  - **The wake lock is not held.** Its job was to keep cue timing steady through
+                //    the countdown and there are no cues left to protect; elapsed time is read from
+                //    the monotonic gun anchor on every tick rather than accumulated, so however
+                //    coarsely Doze defers this loop the number stays correct. Holding a
+                //    PARTIAL_WAKE_LOCK across an unbounded count-up is the battery cost the epic's
+                //    "lasts the start day" condition is about, and the watch released it here for
+                //    the same reason.
+                releaseWakeLock()
+                return
+            }
             // Hold the service open for the gun cue's own length plus the linger, rather than a
             // flat constant: the gun is a three-second sustained cue and a hardcoded delay that
             // happens to match it today would cut a longer one short (watch lesson, #61).
@@ -266,6 +291,21 @@ class PhoneTimerService : Service() {
                 // from what is remaining *now*; unconditional within RUNNING because the engine
                 // refuses a sync on its own terms and a redundant re-acquire costs one release.
                 if (runner.engine.currentState == TimerState.RUNNING) acquireWakeLock()
+            }
+            ACTION_END_RACE -> {
+                // Freezes the elapsed time into RACE_ENDED (see TimerEngine.endRace) — the engine
+                // is left holding the final race time so the bound activity keeps showing it, and
+                // it is the officer's Done tap, not this, that returns to the top.
+                //
+                // What ends here is the *foreground-ness*. There is no cue left to protect, no
+                // countdown to keep the CPU awake for, and the frozen number needs neither: the
+                // teardown releases the lock, leaves the foreground, and clears the snapshot. That
+                // last one is the shared rule doing real work rather than tidying — the
+                // recoverability rule would happily restore a `countUpAfterFinish` race past its
+                // gun, so a snapshot surviving End Race would come back as a *running* count-up and
+                // un-freeze the very race the committee just closed.
+                runner.endRace()
+                stopForegroundAndCleanup()
             }
             ACTION_STOP -> {
                 runner.stop()
@@ -391,6 +431,7 @@ class PhoneTimerService : Service() {
 
         const val ACTION_START = "com.racetimer.phone.ACTION_START"
         const val ACTION_SYNC = "com.racetimer.phone.ACTION_SYNC"
+        const val ACTION_END_RACE = "com.racetimer.phone.ACTION_END_RACE"
         const val ACTION_STOP = "com.racetimer.phone.ACTION_STOP"
 
         /** Set on [ACTION_START] to discard the saved race and run from the top (#205). */
@@ -411,6 +452,18 @@ class PhoneTimerService : Service() {
                 Intent(context, PhoneTimerService::class.java)
                     .setAction(ACTION_START)
                     .putExtra(EXTRA_FRESH_START, freshStart),
+            )
+        }
+
+        /**
+         * End a race-manager count-up, freezing the final time on screen (#206).
+         *
+         * `startService`, not `startForegroundService`: by the time this is tapped the service is
+         * already started and foreground, and this intent is what takes it *out* of that state.
+         */
+        fun endRace(context: Context) {
+            context.startService(
+                Intent(context, PhoneTimerService::class.java).setAction(ACTION_END_RACE),
             )
         }
 
