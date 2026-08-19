@@ -76,3 +76,60 @@ fun forcesMaxBrightness(state: TimerState): Boolean = when (state) {
     TimerState.PAUSED,
     TimerState.COUNTING_UP -> false
 }
+
+// ---------------------------------------------------------------------------
+// The ambient half of the same decision (#12)
+// ---------------------------------------------------------------------------
+
+/**
+ * Illuminance at or above which the brightness override is **released**, in lux.
+ *
+ * The counter-intuitive half of #65, and the reason this file gained a second input. A window
+ * brightness override does not merely outvote the automatic strategy — it switches it off
+ * (`lux=-1.0`, `rcmdBrt=NaN`, `hbmMode=off` in `dumpsys display`) and pins the panel at the top of
+ * its *normal* range. On the SM-R925U that is **600 nits**, while the automatic strategy driven from
+ * the light sensor reaches the high-brightness range and was measured at **1000 nits at 7033 lux**.
+ * The crossover is around 3000 lux.
+ *
+ * Direct sunlight is 10,000–100,000 lux. So above the crossover, forcing "maximum" brightness makes
+ * the screen **dimmer than doing nothing**, in precisely the conditions the override was written
+ * for — and every instrument reports success while it happens, because `brt=1.0 (100.0%)` is 100 %
+ * of a range that stops at 60 % of the hardware.
+ *
+ * No app API can request the high-brightness range: `screenBrightness` is documented `0..1` and
+ * `BRIGHTNESS_OVERRIDE_FULL` is `1.0f`. An app cannot ask for sunlight mode. It can only stop
+ * suppressing it, which is what releasing the override does.
+ *
+ * Below the crossover the override remains a large win — up to **8.6×** at indoor levels (49 nits
+ * automatic against 600 forced at 11 lux) — so this releases rather than abandons it.
+ */
+const val OVERRIDE_RELEASE_LUX = 3_000f
+
+/**
+ * Illuminance at or below which the override is **re-engaged**, in lux.
+ *
+ * Deliberately below [OVERRIDE_RELEASE_LUX] rather than equal to it. A single threshold oscillates
+ * for any sailor standing near it, and each flip is a visible brightness step on a screen someone
+ * is trying to read a clock off. The band between the two is held by whichever way the gate last
+ * went, which is what [ambientPermitsOverride] takes its `currentlyPermitted` argument for.
+ */
+const val OVERRIDE_ENGAGE_LUX = 2_000f
+
+/**
+ * Does the ambient light permit forcing the panel, given the last answer?
+ *
+ * Split from [forcesMaxBrightness] rather than folded into it because the two gates answer
+ * different questions and fail differently. The state gate is a fact about the race; this is a fact
+ * about the weather, and only this one has hysteresis. The applied value is the conjunction — see
+ * `MainActivity.applyDisplayPolicy`.
+ *
+ * A null [lux] means no reading yet, or no light sensor on this device. That answers **true**: the
+ * pre-#12 behaviour, which is right at every illuminance below the crossover and no worse than
+ * shipped above it. A missing sensor must not cost the indoor 8.6×.
+ */
+fun ambientPermitsOverride(lux: Float?, currentlyPermitted: Boolean): Boolean = when {
+    lux == null -> true
+    lux >= OVERRIDE_RELEASE_LUX -> false
+    lux <= OVERRIDE_ENGAGE_LUX -> true
+    else -> currentlyPermitted
+}

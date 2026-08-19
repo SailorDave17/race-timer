@@ -6,6 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -42,6 +46,7 @@ import com.racetimer.shared.StartRemedy
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.ambientPermitsOverride
 import com.racetimer.shared.armedNotice
 import com.racetimer.shared.cueLossNotice
 import com.racetimer.shared.discardedOnStartRemainingMs
@@ -273,6 +278,42 @@ class MainActivity : ComponentActivity() {
     private var screenOnActive = false
     private var maxBrightnessActive = false
 
+    // --- The ambient half of the brightness rule (#12) --------------------------
+    //
+    // #65 forces the panel to "maximum" during the sequence. Measured on this watch, that override
+    // switches the automatic strategy off entirely and pins 600 nits, while automatic reaches
+    // 1000 nits in bright light — so above roughly 3000 lux the override is a *downgrade*, in the
+    // exact conditions it exists for. There is no API to ask for the panel's sunlight range; the
+    // only way to reach it is to stop suppressing the strategy that can. See `ambientPermitsOverride`.
+
+    private val lightSensor: Sensor? by lazy {
+        (getSystemService(Context.SENSOR_SERVICE) as? SensorManager)
+            ?.getDefaultSensor(Sensor.TYPE_LIGHT)
+    }
+
+    /** Latest illuminance, or null until the first sample — and forever on a watch with no sensor. */
+    private var latestLux: Float? = null
+
+    /**
+     * The ambient gate's own answer, carried between readings.
+     *
+     * Separate from [maxBrightnessActive] on purpose. That field is the *applied* value, which the
+     * state gate can hold false for reasons that have nothing to do with the weather; feeding it
+     * back as the hysteresis input would let a spell of IDLE decide what the light was doing.
+     */
+    private var ambientPermitsBrightness = true
+
+    private val lightListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            latestLux = event.values.firstOrNull() ?: return
+            // Cheap to call on every sample: both setters below are idempotence-guarded, so this
+            // does nothing at all until the gate actually crosses a threshold.
+            applyDisplayPolicy(uiTimerState)
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
+
     /**
      * Apply both display rules for [state] together, from the one place that knows the state.
      *
@@ -282,7 +323,11 @@ class MainActivity : ComponentActivity() {
      */
     private fun applyDisplayPolicy(state: TimerState) {
         setScreenOn(keepsScreenOn(state))
-        setMaxBrightness(forcesMaxBrightness(state))
+        // Two independent gates, and the conjunction is the applied value: the state gate is a fact
+        // about the race, the ambient gate a fact about the light. Only the second has hysteresis,
+        // which is why it keeps its answer in a field rather than being recomputed from lux alone.
+        ambientPermitsBrightness = ambientPermitsOverride(latestLux, ambientPermitsBrightness)
+        setMaxBrightness(forcesMaxBrightness(state) && ambientPermitsBrightness)
     }
 
     private fun setScreenOn(on: Boolean) {
@@ -434,12 +479,24 @@ class MainActivity : ComponentActivity() {
         // than one that never appeared (#13).
         requestNotificationPermissionOnce()
         refreshStartNotice()
+        // Scoped to the visible window, exactly like the override it feeds — a brightness override
+        // applies only while this window is showing, so there is nothing for a reading to decide
+        // outside that. SENSOR_DELAY_NORMAL is ~200 ms, which is far finer than sunlight changes and
+        // negligible beside a screen that is being held awake anyway.
+        lightSensor?.let {
+            (getSystemService(Context.SENSOR_SERVICE) as? SensorManager)
+                ?.registerListener(lightListener, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
         uiHandler.post(uiRefreshRunnable)
     }
 
     override fun onStop() {
         super.onStop()
         uiHandler.removeCallbacks(uiRefreshRunnable)
+        (getSystemService(Context.SENSOR_SERVICE) as? SensorManager)
+            ?.unregisterListener(lightListener)
+        // Deliberately *not* reset: the light outside has not changed because the app was
+        // backgrounded, and a stale reading is a better first answer on return than none.
         if (serviceBound) {
             timerService?.engine?.removeListener(engineListener)
             unbindService(serviceConnection)
