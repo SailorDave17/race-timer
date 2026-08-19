@@ -189,6 +189,44 @@ class ModuleBoundaryTest {
         )
     }
 
+    /**
+     * #206 AC 3: the two-audience voicing is shared/'s, not re-declared here.
+     *
+     * The race-manager modes are the first sequences on the phone whose *voicing* differs from the
+     * sailor sequences — `raceManagerTail` doubles the three flag marks where `finalMinuteTail`
+     * does not — so this is the first story where a phone-local copy of a cue list would be a
+     * plausible thing to write and an invisible thing to get wrong. A drifted copy does not fail
+     * anything: the countdown still runs, the gun still fires, and the committee simply hears the
+     * wrong blasts at 3:00 on the one device the officer is holding.
+     *
+     * The scan reads comments as well as code, deliberately, for the reason the colour scan does:
+     * its subject is a **textual** reference, so a copied cue list pasted into a docstring as
+     * "documentation" is exactly the drift this exists to catch. That is also why the constructor
+     * names below are assembled rather than written whole — this file would otherwise fail itself,
+     * the hazard cairn's `a-guard-that-reads-source-must-survive-its-own-docs` records fixing here
+     * twice already.
+     */
+    @Test
+    fun `the phone declares no sequence or cue of its own`() {
+        val sources = kotlinSourcesIn("phone")
+        assertTrue("no phone sources were scanned", sources.size >= 7)
+
+        val constructors = listOf("RaceSequence", "SequenceCue").map { "$it(" }
+        val offenders = sources.flatMap { file ->
+            file.readLines().withIndex()
+                .filter { (_, line) -> constructors.any { line.contains(it) } }
+                .map { (index, line) -> "${file.name}:${index + 1}: ${line.trim()}" }
+        }
+        assertEquals(
+            "The phone is building a sequence or a cue of its own. Every sequence it offers comes " +
+                "from shared/RaceSequence.kt — including the race-manager pair, whose committee " +
+                "voicing (#206) differs from the sailor sequences' below the minute. A local copy " +
+                "would not fail: the race would run and the committee would hear the wrong blasts.",
+            emptyList<String>(),
+            offenders,
+        )
+    }
+
     @Test
     fun `the display choice is written to no persistent store`() {
         val sources = kotlinSourcesIn("phone")

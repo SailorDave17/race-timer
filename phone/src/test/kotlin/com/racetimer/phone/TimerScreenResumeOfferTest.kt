@@ -29,12 +29,12 @@ class TimerScreenResumeOfferTest {
 
     private val taps = mutableListOf<String>()
 
-    private fun render(running: Boolean, resumeOffer: String?, notice: String? = null) {
+    private fun render(state: TimerState, resumeOffer: String?, notice: String? = null) {
         compose.setContent {
             TimerScreen(
                 readout = PhoneReadout.of(TimerState.IDLE, 180_000L, 0L),
                 sequenceName = "Scholastic (ICSA)",
-                running = running,
+                state = state,
                 onStart = { taps += "start" },
                 onStop = { taps += "stop" },
                 onSync = { taps += "sync" },
@@ -48,7 +48,7 @@ class TimerScreenResumeOfferTest {
 
     @Test
     fun `the offer shows the number resuming will actually give, and Resume fires its callback`() {
-        render(running = false, resumeOffer = "2:14")
+        render(state = TimerState.IDLE, resumeOffer = "2:14")
         compose.onNodeWithText("Race under way — 2:14 left").assertIsDisplayed()
         compose.onNodeWithText("Resume").performClick()
         assertEquals(listOf("resume"), taps)
@@ -56,7 +56,7 @@ class TimerScreenResumeOfferTest {
 
     @Test
     fun `Start over fires its own callback, not Resume's and not Start's`() {
-        render(running = false, resumeOffer = "2:14")
+        render(state = TimerState.IDLE, resumeOffer = "2:14")
         compose.onNodeWithText("Start over").performClick()
         assertEquals(listOf("startOver"), taps)
         // The plain Start control is absent while the offer stands: two different starts on one
@@ -66,14 +66,14 @@ class TimerScreenResumeOfferTest {
 
     @Test
     fun `a running race shows no offer whatever persistence claims`() {
-        render(running = true, resumeOffer = "2:14")
+        render(state = TimerState.RUNNING, resumeOffer = "2:14")
         compose.onAllNodesWithText("Resume").assertCountEquals(0)
         compose.onNodeWithText("Stop").assertIsDisplayed()
     }
 
     @Test
     fun `the degraded-restore notice is on screen when owed`() {
-        render(running = false, resumeOffer = null, notice = "Restored after a reboot — re-sync at the next flag")
+        render(state = TimerState.IDLE, resumeOffer = null, notice = "Restored after a reboot — re-sync at the next flag")
         compose.onNodeWithText("Restored after a reboot — re-sync at the next flag").assertIsDisplayed()
     }
 }

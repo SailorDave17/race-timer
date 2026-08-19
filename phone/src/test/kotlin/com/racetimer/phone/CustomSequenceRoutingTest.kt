@@ -62,8 +62,9 @@ class CustomSequenceRoutingTest {
         // would pass a test that only looked for Custom.
         compose.onNodeWithText(BuiltInSequences.usSailing.name).assertIsDisplayed()
         // Scrolled to first, and that is a fact about the screen rather than test ceremony: with
-        // three sequences above it the Custom entry sits below the fold on a small phone, so the
-        // picker's `verticalScroll` is load-bearing and a tap has to reach it the way a thumb does.
+        // the built-in sequences above it — five since #206 added the race-manager pair — the
+        // Custom entry sits below the fold on a small phone, so the picker's `verticalScroll` is
+        // load-bearing and a tap has to reach it the way a thumb does.
         // Measured — without this the click lands on nothing and the callback never fires.
         compose.onNodeWithTag(TAG_CUSTOM_ENTRY).performScrollTo().performClick()
         assertEquals(listOf("custom-tapped"), picked)

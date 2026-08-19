@@ -34,9 +34,10 @@ const val TAG_CUSTOM_ENTRY = "custom_entry"
  * Choose the race to run.
  *
  * One tap per sequence, and one more for a length the club made up: this is the only decision the
- * officer makes before the countdown owns the display. There is still no race-manager variant,
- * because their defining behaviour is the count-up after the gun (#206), which is why the list comes
- * from the caller rather than from `BuiltInSequences.all`.
+ * officer makes before the countdown owns the display. The list comes from the caller rather than
+ * from `BuiltInSequences.all` directly — that seam existed to withhold the race-manager variants
+ * until their post-gun half was built (#206), and it stays because *what this screen offers* is the
+ * caller's business, not this composable's.
  *
  * Custom is deliberately **not** in that list. It is not one sequence but a family — the duration is
  * inside the id (`custom_8m`) and `BuiltInSequences.custom` builds the race from it — so it needs a

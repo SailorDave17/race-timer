@@ -59,9 +59,12 @@ private const val UI_REFRESH_MS = 50L
  * deliberately — the watch's activity-side twin of that flag is a one-way latch whose own remedy
  * cannot clear it (#165), and the phone declines to inherit the pattern.
  *
- * What it deliberately does not do yet, with the story that brings it: count up after the gun
- * (#206). (Restore after a kill was listed here until #209 noticed the line had outlived #205,
- * which shipped it — `offerSavedRace` below is that work.)
+ * What it deliberately does not do yet, with the story that brings it: the two-stage signal-box
+ * lead-in (#207) and cue haptics (#208). (Restore after a kill was listed here until #209 noticed
+ * the line had outlived #205, which shipped it — `offerSavedRace` below is that work. Count-up
+ * after the gun was listed until #206, which is the same lesson landing a second time: a line
+ * naming a *future* story number is correct when written and false the moment that story merges,
+ * and no grep aimed at the change will find it, because the change is not what it names.)
  *
  * The known gap that remains is **position**: which *screen* is showing is `remember`ed rather than
  * saved, so rotating mid-race returns to the picker. It belongs to a story of its own. Its other
@@ -149,6 +152,7 @@ class MainActivity : ComponentActivity() {
                     onStartRace = { PhoneTimerService.start(this) },
                     onStopRace = { PhoneTimerService.stop(this) },
                     onSyncRace = { PhoneTimerService.sync(this) },
+                    onEndRace = { PhoneTimerService.endRace(this) },
                     resumeOffer = resumeOfferState.value,
                     onStartOverRace = { PhoneTimerService.start(this, freshStart = true) },
                     collectRestoreNotice = { boundService?.consumeRestoreNotice() },
@@ -204,6 +208,7 @@ internal fun RaceTimerApp(
     onStartRace: (() -> Unit)? = null,
     onStopRace: (() -> Unit)? = null,
     onSyncRace: (() -> Unit)? = null,
+    onEndRace: (() -> Unit)? = null,
     resumeOffer: String? = null,
     onStartOverRace: (() -> Unit)? = null,
     collectRestoreNotice: (() -> RestoreOutcome?)? = null,
@@ -223,6 +228,7 @@ internal fun RaceTimerApp(
     val startRace = onStartRace ?: { runner?.start() }
     val stopRace = onStopRace ?: { runner?.stop() }
     val syncRace = onSyncRace ?: { runner?.sync() }
+    val endRaceNow = onEndRace ?: { runner?.endRace() }
     val startOverRace = onStartOverRace ?: { runner?.start() }
 
     // Consumed once either offer control is tapped (or Back declines it); the snapshot on disk
@@ -279,7 +285,10 @@ internal fun RaceTimerApp(
         }
     }
 
-    val running = state == TimerState.RUNNING
+    // A race the officer is actively running — the countdown, and (#206) the count-up past the gun,
+    // which is just as much a race in progress even though the clock changed direction. RACE_ENDED
+    // is deliberately not here: a frozen summary is finished, and Back dismissing it is right.
+    val raceActive = state == TimerState.RUNNING || state == TimerState.COUNTING_UP
 
     /**
      * Select [sequence], remember it, and open the timer screen — the one path both entries take.
@@ -302,9 +311,9 @@ internal fun RaceTimerApp(
     BackHandler(enabled = onCustomScreen) { onCustomScreen = false }
 
     // Back returns to the picker, but never mid-race: the gesture is one an officer makes without
-    // looking, and it must not be able to end a start sequence. While running it falls through to
-    // the system, which backgrounds the app with the race still in the service.
-    BackHandler(enabled = onTimerScreen && !running) {
+    // looking, and it must not be able to end a start sequence. While a race is on it falls through
+    // to the system, which backgrounds the app with the race still in the service.
+    BackHandler(enabled = onTimerScreen && !raceActive) {
         // Backing out of the offer declines it for this sitting without discarding the snapshot;
         // stopping an idle engine is a no-op beyond returning the screen to the top.
         offerConsumed = true
@@ -328,7 +337,7 @@ internal fun RaceTimerApp(
         TimerScreen(
             readout = readout,
             sequenceName = runner?.selected?.name ?: "",
-            running = running,
+            state = state,
             onStart = {
                 startRace()
                 refresh()
@@ -342,6 +351,10 @@ internal fun RaceTimerApp(
                 // whole minute is visible in a way a wrist needed a beep for. The engine's own
                 // double-tap guard makes a nervous second tap harmless.
                 syncRace()
+                refresh()
+            },
+            onEndRace = {
+                endRaceNow()
                 refresh()
             },
             notice = restoreNotice,

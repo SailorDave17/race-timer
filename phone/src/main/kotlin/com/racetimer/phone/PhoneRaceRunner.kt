@@ -116,11 +116,31 @@ class PhoneRaceRunner(
     }
 
     /**
+     * End a race-manager count-up, freezing the elapsed time for the committee to read (#206).
+     *
+     * Delegates the whole rule to [TimerEngine.endRace], which refuses outside
+     * [TimerState.COUNTING_UP] — so this is unconditional for the same reason [sync] is: the engine
+     * owns when it applies, and a second copy of that condition here is the duplicated-rule defect
+     * this module keeps out of its own code.
+     *
+     * The re-arm is not ceremony. After the gun there is nothing left in the queue, so it disarms
+     * the scheduler rather than aiming it — which is exactly what must happen, because a pending
+     * dispatch surviving into a frozen summary would sound a cue into a race that is over.
+     */
+    fun endRace() {
+        engine.endRace()
+        armCueDispatch()
+    }
+
+    /**
      * Abandon the run and return to a fresh copy of the same sequence.
      *
      * `stop()` alone leaves the engine IDLE with a zeroed readout; reloading is what puts the full
      * duration back on screen, so a stopped race and a not-yet-started one look the same — which is
      * what they are.
+     *
+     * Also the way out of a [TimerState.RACE_ENDED] summary the committee has finished reading —
+     * the Done control — which is why it is reachable from more than the running states.
      */
     fun stop() {
         engine.stop()
@@ -218,19 +238,18 @@ class PhoneRaceRunner(
 
     companion object {
         /**
-         * The sailor sequences the console clock offers.
+         * The sequences the console clock offers: [BuiltInSequences.all], in the shared order.
          *
-         * Not [BuiltInSequences.all]: that list also carries the two race-manager variants, whose
-         * defining behaviour is counting *up* after the gun (#206), and a mode listed before its
-         * post-gun half exists would look shipped and end the race at the gun.
+         * This was a curated three-entry list until #206, holding the two race-manager variants
+         * back because a mode listed before its post-gun half exists would look shipped and end the
+         * race at the gun. #206 *is* that post-gun half, so the reason to curate is spent and the
+         * list defers to shared — which is the point worth keeping: an enumeration here would be a
+         * second copy of the sequence set, free to drift from the one the watch offers, on an epic
+         * whose product *is* the two devices never disagreeing.
          *
          * A companion rather than instance-only state so the picker can render before the service
          * binding lands — the list is a fact about the app, not about a particular race.
          */
-        val CONSOLE_SEQUENCES: List<RaceSequence> = listOf(
-            BuiltInSequences.usSailing,
-            BuiltInSequences.scholastic,
-            BuiltInSequences.club,
-        )
+        val CONSOLE_SEQUENCES: List<RaceSequence> = BuiltInSequences.all
     }
 }
