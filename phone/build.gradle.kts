@@ -104,6 +104,21 @@ android {
     }
 }
 
+// #275. Robolectric refuses to build an SDK 36 sandbox on anything below Java 21
+// ("Android SDK 36 requires Java 21"), and targetSdk 36 is what these tests run against now that
+// the #261 pin is gone. Only the test LAUNCHER moves: compilation stays at the 1.8 target above,
+// :shared keeps its JVM 8 toolchain, and Gradle itself keeps running on 17 (AGP's floor). Declared
+// as a toolchain rather than inherited from JAVA_HOME so the suite fails the same way on every
+// machine instead of passing wherever someone happens to have 21 first on PATH.
+val javaToolchains = project.extensions.getByType<JavaToolchainService>()
+tasks.withType<Test>().configureEach {
+    javaLauncher.set(
+        javaToolchains.launcherFor {
+            languageVersion.set(JavaLanguageVersion.of(21))
+        }
+    )
+}
+
 dependencies {
     // The timer core, and the Android leaf managers that carry it onto a device. `:shared-android`
     // re-exports `:shared` via `api`, so the first line is redundant on the classpath and kept

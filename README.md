@@ -219,8 +219,9 @@ default, so a second form factor is made to measure its own rather than inherit 
 ### Requirements
 
 - Android Studio Hedgehog (2023.1) or newer, **or** VS Code with the Gradle for Java extension
-- JDK 17 (AGP 8.x refuses anything lower); `:shared` declares a JVM 8 toolchain, which
-  `settings.gradle.kts` resolves via the Foojay plugin rather than requiring a local install
+- JDK 17 (AGP 8.x refuses anything lower); `:shared` declares a JVM 8 toolchain and `:phone`'s
+  unit tests a Java 21 launcher (Robolectric refuses an SDK 36 sandbox on anything lower — #275),
+  both resolved via `settings.gradle.kts`'s Foojay plugin rather than requiring a local install
 - Android SDK with a Wear OS emulator image (API 30 / Wear OS 3.5+) and Build-tools 34
 
 ### After cloning
