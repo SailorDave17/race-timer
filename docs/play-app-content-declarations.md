@@ -30,19 +30,24 @@ Two boundaries worth stating up front:
 |---|---|---|
 | Package | `io.github.sailordave17.racetimer` | the **same** `applicationId`, deliberately — one listing, two form factors |
 | Declared in | `wear/build.gradle.kts` | `phone/build.gradle.kts` |
-| `versionCode` / `versionName` | `1` / `1.0` | `1` / `1.0` — **not an upload candidate.** Both modules currently read `1`, which cannot both go to Play; allocating from the shared counter ratified as epic #196 decision D3 is [#211](https://github.com/SailorDave17/race-timer/issues/211)'s job |
-| `minSdk` / `targetSdk` / `compileSdk` | `30` / `35` / `35` | `30` / `35` / `35` |
-| Verified against | `develop` at `f953e97`, 2026-08-17 | same |
+| `versionCode` / `versionName` | `1` / `1.0` — uploaded 2026-08-13 | `2` / `1.0` — allocated by [#211](https://github.com/SailorDave17/race-timer/issues/211) from the one monotonic counter both form factors share (epic #196 decision D3). Not yet uploaded. `checkVersionCodeCollision` refuses two modules reusing a number under this one `applicationId` |
+| `minSdk` / `targetSdk` / `compileSdk` | `30` / `35` / `35` — the Wear carve-out | `30` / **`36`** / **`36`** — raised by [#261](https://github.com/SailorDave17/race-timer/issues/261) for the 2026-08-31 phone deadline |
+| Verified against | `develop` at `d3156e4`, 2026-08-18 | same |
 
 An answer below is true of *those* builds. A later `versionCode` inherits nothing automatically.
 
-**The phone's `targetSdk` is the one field here with a deadline against it.** Play requires API 36
-of a phone artifact after **2026-08-31** and the Wear carve-out does not cover it, so the row above
-is correct today and blocks the phone upload the moment that date passes. That bump is
-[#261](https://github.com/SailorDave17/race-timer/issues/261), which needs
-[#192](https://github.com/SailorDave17/race-timer/issues/192) first. It is recorded in this table
-rather than only on the tracker because this document is the diff base somebody reads at upload
-time, and `targetSdk 35` on a phone bundle is a rejection rather than a warning.
+**The phone's `targetSdk` had the one deadline against it, and it is discharged.** Play requires API
+36 of a phone artifact after **2026-08-31** and the Wear carve-out does not cover it.
+[#261](https://github.com/SailorDave17/race-timer/issues/261) raised `:phone` to
+`compileSdk`/`targetSdk` **36** on 2026-08-18, thirteen days ahead of that date, after
+[#192](https://github.com/SailorDave17/race-timer/issues/192) delivered the AGP 8.13 it needed.
+
+`:wear` stays at **35** on the Wear carve-out, deliberately — the two form factors carry different
+target levels and that is correct, not drift.
+
+It is recorded in this table rather than only on the tracker because this document is the diff base
+somebody reads at upload time, and `targetSdk 35` on a phone bundle is a rejection rather than a
+warning.
 
 ## The declarations
 
