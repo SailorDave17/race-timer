@@ -20,8 +20,12 @@ import org.junit.Test
  *    of its input in all 24.
  *  - **`null` keeps.** Unanswered is a third state, not a synonym for "dim" — the question is on
  *    screen at that moment, and a rule that dimmed while still asking would have answered itself.
- *    Writing the predicate as `!= true` instead of `== false` passes every row where the officer
- *    answered and reddens exactly the eight where they have not yet.
+ *    Writing the predicate as `!= true` instead of `== false` changes the *output* of exactly
+ *    **two** of the 24 rows — *measured*, not counted by eye. Eight rows have an unanswered
+ *    officer, but the released branch only shows where `fullBrightness` is true as well, and on the
+ *    other six `copy(fullBrightness = false)` is identity. The first draft of this line said eight,
+ *    which would have had the next mutation pass predict eight, measure two, and have to decide
+ *    whether the test had decayed or the harness lied.
  */
 class CountUpBrightnessRuleTest {
 
@@ -101,8 +105,13 @@ class CountUpBrightnessRuleTest {
         // seconds the officer glancing up from the water has no chance to answer, and the question
         // becomes decoration on the path it was written for. Above about a minute an unattended
         // count-up burns the panel for a material part of a race, which is the cost the whole
-        // story exists to bound. Fifteen sits between them; a change that leaves the band is a
-        // product decision and should have to move this line to say so.
+        // story exists to bound. A change that leaves the band is a product decision and should
+        // have to move this line to say so.
+        //
+        // The current value is deliberately not written here, or anywhere else in prose: it would
+        // be a second copy that a legitimate in-band change silently falsifies, which is this
+        // repo's most recurring documentation defect. The band is the claim; the constant is the
+        // value; the assertion below is the only place they meet.
         assertTrue(
             "the count-up question's dwell is $COUNT_UP_PROMPT_DWELL_MS ms, outside the 5 s-60 s " +
                 "band: too short to answer from the water, or long enough that an unattended " +

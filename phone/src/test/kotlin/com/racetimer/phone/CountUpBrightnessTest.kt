@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.racetimer.phone.ui.TAG_DIM_COUNT_UP
 import com.racetimer.phone.ui.TAG_KEEP_BRIGHT
 import com.racetimer.shared.BuiltInSequences
@@ -60,7 +61,8 @@ class CountUpBrightnessTest {
      * Open with full brightness chosen, and run a race-manager sequence to just past its gun.
      *
      * Returns with the engine in `COUNTING_UP` and the question on screen, well inside the dwell —
-     * [RaceTimerAppHarness.runPastTheGun] lands a few seconds past the gun and the dwell is fifteen.
+     * [RaceTimerAppHarness.runPastTheGun] lands a few seconds past the gun, which the band on
+     * [COUNT_UP_PROMPT_DWELL_MS] keeps well inside the dwell.
      */
     private fun runToTheGun() {
         app.launch(fullBrightness = true, applyDisplay = { applied += it })
@@ -82,6 +84,14 @@ class CountUpBrightnessTest {
         compose.onNodeWithText("Keep the screen bright?").assertIsDisplayed()
         compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertIsDisplayed()
         compose.onNodeWithTag(TAG_DIM_COUNT_UP).assertIsDisplayed()
+
+        // The question shares the screen with the only control a count-up has, and the prompt is a
+        // third child in a column whose readout takes a fixed fraction of the whole box — so "the
+        // prompt is displayed" and "End Race is still displayed" are two claims, and this story
+        // only ever asserted the first. Every other test here taps End Race *after* answering, with
+        // the prompt already gone, so without this line the one layout state the story creates is
+        // asserted by nothing.
+        compose.onNodeWithText("End Race").assertIsDisplayed()
 
         // Asking is not answering. The panel is still doing what the officer asked for while the
         // question is on screen — a prompt that dimmed on appearing would have answered itself.
@@ -112,16 +122,20 @@ class CountUpBrightnessTest {
         runToTheGun()
 
         // Straddling the boundary rather than clearing it by a mile, which is what makes the
-        // *effect's* delay and the constant the same quantity: a `delay` of twice the constant, or
-        // half it, passes the coarse test above and fails one of the two assertions here. The spent
-        // part of the window is read off the harness rather than restated, so the arithmetic cannot
-        // drift out from under the assertions.
+        // *effect's* delay and the constant the same quantity. Precisely: a `delay` of **half** the
+        // constant is caught here and nowhere else, since the coarse test above waits long enough to
+        // see an early dim as a correct one. Doubling is caught by both, so this test is not what
+        // holds that case — said exactly, because the loose version of this sentence is the argument
+        // somebody would use to delete the coarse test as redundant. The spent part of the window is
+        // read off the harness rather than restated, so the arithmetic cannot drift.
         //
         // [MARGIN_MS] is why this is a band and not a knife edge. *Measured 2026-08-19*: with the
         // dwell at 15 s the effect fired at gun **+ 14** harness-seconds — `advance` pumps frames
         // to settle the composition and that costs virtual time the requested advances do not
-        // account for, about a second across the ~19 calls this test makes. Three seconds absorbs
-        // that with room, and is still an order tighter than any wrong delay worth catching.
+        // account for, about a second across the ~19 calls this test makes. So the lower assertion
+        // has **two** seconds of real margin rather than three, and the slop grows with the number
+        // of advance calls rather than with wall time — which is why a much larger dwell reddens
+        // this test as well as the band. Still an order tighter than any wrong delay worth catching.
         app.advance(
             COUNT_UP_PROMPT_DWELL_MS - RaceTimerAppHarness.PAST_GUN_MS - MARGIN_MS,
             stepMs = 1_000L,
@@ -147,8 +161,8 @@ class CountUpBrightnessTest {
         assertEquals("keeping it bright re-applies nothing", listOf(bright), applied)
 
         // The assertion that needed the clock: the dwell was armed when the question appeared, and
-        // an answer that failed to cancel it would dim the panel fifteen seconds later. Without
-        // this advance the two builds are indistinguishable.
+        // an answer that failed to cancel it would dim the panel once the dwell elapsed.
+        // Without this advance the two builds are indistinguishable.
         advancePastTheDwell()
         assertEquals("the answer survived the dwell", listOf(bright), applied)
         assertEquals(TimerState.COUNTING_UP, app.runner.engine.currentState)
@@ -161,8 +175,8 @@ class CountUpBrightnessTest {
         compose.waitForIdle()
 
         // No advance before this one on purpose: tapping Dim must not wait out the dwell, so the
-        // assertion is taken at a moment when the automatic path demonstrably has not fired — the
-        // test above proves it needs fifteen seconds to.
+        // assertion is taken at a moment when the automatic path demonstrably has not fired —
+        // the boundary test above proves it needs the whole dwell to.
         assertEquals("Dim releases the override on the tap", listOf(bright, dimmed), applied)
         compose.onNodeWithTag(TAG_DIM_COUNT_UP).assertDoesNotExist()
     }
@@ -224,6 +238,66 @@ class CountUpBrightnessTest {
     }
 
     @Test
+    fun `a count-up the officer cannot see never spends the question`() {
+        // The state an activity recreation lands in, arranged rather than caused: the engine is
+        // counting up, and the fresh composition opens on the **picker**, because which screen is
+        // showing is remembered and not saved. A rotation of the propped console phone is the
+        // ordinary way there; #281 tracks the navigation half.
+        app.runnerAlreadyCountingUp()
+        app.launch(fullBrightness = true, applyDisplay = { applied += it })
+
+        assertEquals(TimerState.COUNTING_UP, app.runner.engine.currentState)
+        // Positive control on the arrangement: the picker really is what is on screen, so what
+        // follows is a claim about a count-up the officer cannot see rather than about a race that
+        // never started.
+        // Scrolled to first: since #206 the picker offers five sequences and this entry sits
+        // below the fold on a small phone, which is the same reason the harness scrolls.
+        compose.onNodeWithText(raceManager.name).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertDoesNotExist()
+
+        advancePastTheDwell()
+
+        // The whole point: silence is only an answer if the question was askable. A dwell armed by
+        // engine state alone would fire here, drop the panel the officer asked for, and spend the
+        // one question of the session on a screen that never showed it.
+        assertEquals(
+            "a question that was never on screen answered itself",
+            listOf(bright),
+            applied,
+        )
+        compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertDoesNotExist()
+    }
+
+    @Test
+    fun `a count-up ended inside the dwell leaves the question unspent`() {
+        // Stated twice in production comments — "the ask is consumed by an answer, never by having
+        // been shown" — and guarded by nothing until this test. Every other case here reaches its
+        // second count-up with the question already answered, so a change making the prompt
+        // one-shot per process would have reddened none of them.
+        runToTheGun()
+        compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertIsDisplayed()
+
+        // End Race well inside the dwell, so the question leaves the screen unanswered.
+        compose.onNodeWithText("End Race").performClick()
+        compose.waitForIdle()
+        assertEquals(TimerState.RACE_ENDED, app.runner.engine.currentState)
+
+        // And the dwell must not fire behind the summary either — the same claim as the test above,
+        // reached by the other route off the timer screen's count-up branch.
+        advancePastTheDwell()
+        assertEquals("the ended race's dwell answered anyway", listOf(bright), applied)
+
+        compose.onNodeWithText("Done").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Start").performClick()
+        app.runPastTheGun(raceManager)
+        assertEquals(TimerState.COUNTING_UP, app.runner.engine.currentState)
+
+        compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertIsDisplayed()
+        assertEquals("the second gun re-offers an unspent question", listOf(bright), applied)
+    }
+
+    @Test
     fun `an officer who declined full brightness is never asked`() {
         // Nothing to release, so the question would be noise on the one screen that has to stay
         // legible. This is also the case that keeps `RaceManagerVoicingAndDisplayTest` — which runs
@@ -238,11 +312,19 @@ class CountUpBrightnessTest {
         compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertDoesNotExist()
         compose.onNodeWithTag(TAG_DIM_COUNT_UP).assertDoesNotExist()
 
-        // Past the dwell, so "nothing happened" is a statement about a build that had every chance
-        // to act rather than about a test that stopped watching too early.
+        // The two assertions above are this test's content, and they redden: dropping the
+        // brightness precondition from the prompt's predicate turns them red (measured, 1/1).
+        //
+        // The advance and the assertion below are **not** doing the work the first draft of this
+        // comment claimed. With brightness declined, the rule's only possible act is setting
+        // `fullBrightness = false` on a choice that already has it false — an identical object, so
+        // the effect's key never moves and `applied` cannot grow whatever the rule does. *Measured*:
+        // mutating the rule to release unconditionally left this test green. They are kept as a
+        // cheap statement that the run reached the end in the expected state, and they are not
+        // evidence about #279; the claim that they were is what would stop anyone re-reading them.
         advancePastTheDwell()
         assertEquals(
-            "nothing was applied to a display with no override on it",
+            "the run ended with the officer's declined choice still the only thing applied",
             listOf(DisplayChoice.INITIAL),
             applied,
         )

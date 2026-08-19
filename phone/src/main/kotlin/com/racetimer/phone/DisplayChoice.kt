@@ -33,14 +33,17 @@ data class DisplayChoice(val keepScreenOn: Boolean, val fullBrightness: Boolean)
  * **Reasoned, not measured.** The officer at a gun is looking at the water, which is the whole
  * reason the question can be asked there at all — so it has to survive long enough for a glance
  * down and a tap, while every second it stands is a second of the panel cost it exists to stop.
- * Fifteen seconds is long enough to notice and act on a console phone at arm's length, and short
- * enough that a count-up nobody is watching costs a quarter of a minute of full brightness rather
- * than the hour an unbounded one can run to.
+ * The value sits inside a band `CountUpBrightnessRuleTest` asserts rather than being argued for
+ * here in words: a number restated in prose is this workspace's most recurring documentation
+ * defect, and a dwell moved inside the band would leave any sentence naming it false while every
+ * test stayed green.
  *
  * A count-up ended before this elapses leaves the question *unanswered*, not silently spent: the
- * ask is consumed by an answer, never by having been shown. Backgrounding the app has the same
- * effect — the composition goes and the dwell restarts on return — which is right for the same
- * reason.
+ * ask is consumed by an answer, never by having been shown. The same rule is why the prompt's own
+ * predicate requires the timer screen — silence is only an answer if the question was askable, and
+ * an activity recreation mid-count-up lands on the picker with the engine still counting up.
+ * Backgrounding cancels the dwell as well; `MainActivity` carries the mechanism, which is **not**
+ * the composition being disposed.
  */
 internal const val COUNT_UP_PROMPT_DWELL_MS = 15_000L
 

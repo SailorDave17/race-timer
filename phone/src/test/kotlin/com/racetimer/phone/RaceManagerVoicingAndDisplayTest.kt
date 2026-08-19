@@ -93,8 +93,15 @@ class RaceManagerVoicingAndDisplayTest {
      * One of them since has, and the boundary held: #279 lets a count-up release the brightness
      * override, but only on the officer's answer to a question asked at the gun, and only where
      * they asked for the override in the first place. This test runs on the initial choice, which
-     * declines it — so what is asserted below is unchanged, and is now also the negative control
-     * for that story.
+     * declines it, so what is asserted below is unchanged.
+     *
+     * **It is not a control for #279, and the first version of this paragraph said it was.**
+     * *Measured*: with the rule mutated to release unconditionally in count-up, five tests reddened
+     * and this one stayed green — because on a choice that already declines brightness the rule's
+     * only possible act is `copy(fullBrightness = false)`, which returns an equal object, so the
+     * display effect's key cannot move whatever the rule does. The constrained and the
+     * unconstrained rule agree on this fixture by construction. `CountUpBrightnessTest` is where
+     * #279 is held; this test's subject is still #206's, and that is all it certifies.
      */
     @Test
     fun `a whole race-manager race applies the officer's choice once and never re-decides`() {
@@ -130,8 +137,11 @@ class RaceManagerVoicingAndDisplayTest {
         // about. `CountUpBrightnessTest` is that story's half, and its last case is this one from
         // the other side.
         assertEquals(
-            "the display was re-decided during the race; count-up must inherit the officer's " +
-                "choice, not derive one from engine state (#199, #225)",
+            "the display was re-decided during the race. On a choice that declines full " +
+                "brightness nothing may re-apply: the officer's screen-on answer is not a " +
+                "function of where the countdown is (#199, #225). A count-up may release the " +
+                "override since #279, but only where one was asked for and only on the " +
+                "officer's answer — neither holds here",
             listOf(DisplayChoice.INITIAL),
             applied,
         )

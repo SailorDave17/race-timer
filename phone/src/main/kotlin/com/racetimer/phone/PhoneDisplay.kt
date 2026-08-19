@@ -22,6 +22,17 @@ import android.view.WindowManager
  * sun, this boat, this much racing left — which is why the officer makes it and this path applies it
  * without re-deciding. The wear app and the shared table are untouched by this story.
  *
+ * **Amended by #279, and the amendment is smaller than it sounds.** An unbounded count-up is the one
+ * state where "a race is on screen" and "burn the panel" come apart — an hour of it is ordinary and
+ * there is no gun left to justify the cost — so the officer is now asked once, at the gun, whether
+ * to keep the brightness they chose, and their answer narrows the standing choice for count-ups
+ * only. Every countdown still gets exactly what they asked for. **None of that happens here.** The
+ * question, the answer and the rule that combines them live in the app (`DisplayChoice.kt` and
+ * `MainActivity`), and what crosses into this file is still two booleans with nothing about the race
+ * in them — which is what `ModuleBoundaryTest` asserts and why the amendment costs this file no new
+ * knowledge. Said in band because this file is cited elsewhere as the account of *why* the two form
+ * factors diverge, so a reader arriving on that pointer would otherwise get the pre-#279 story.
+ *
  * *(The shared file is named nowhere in `phone/src/main` on purpose: `ModuleBoundaryTest` reads this
  * module's source text to assert exactly that, and a guard whose subject is source text fires on the
  * prose explaining it — cairn `a-guard-that-reads-source-must-survive-its-own-docs`. Describe it,

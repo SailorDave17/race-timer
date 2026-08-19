@@ -290,14 +290,31 @@ internal fun RaceTimerApp(
     // be noise on the screen that most needs to stay legible. `countUpKeepsBrightness` is null until
     // the question is *answered* — by a tap or by the dwell elapsing — so a count-up ended inside
     // the dwell leaves the ask unspent and the next gun offers it again.
+    //
+    // **`onTimerScreen` is in this predicate because silence is only an answer if the question was
+    // askable.** It is the difference between "a count-up is running" and "the officer is looking at
+    // the question", and the two come apart on an ordinary path: the prompt renders only inside
+    // `TimerScreen`, `onTimerScreen` is `remember`ed rather than saved, and an activity recreation
+    // mid-count-up therefore lands on the picker with the engine still counting up (the known gap
+    // this file records above, measured as #281). Without this clause the dwell would arm behind the
+    // picker and spend the one question the officer never saw — which is the invariant
+    // `COUNT_UP_PROMPT_DWELL_MS` states, broken by the very state the view-model exists to survive.
     val brightnessPrompt = displayChoice.answered &&
+        onTimerScreen &&
         countingUp &&
         displayChoice.choice.fullBrightness &&
         displayChoice.countUpKeepsBrightness == null
 
-    // Silence dims (#279). Keyed on the prompt, so it is cancelled by an answer, by End Race, and by
-    // the app going to the background — in each case the question stopped being on screen, and a
-    // timer that outlived the question would dim a panel nobody was asked about.
+    // Silence dims (#279). Keyed on the prompt, so any change that takes the question off screen —
+    // an answer, End Race, leaving the timer screen — cancels it, and a timer that outlived the
+    // question would dim a panel nobody was asked about.
+    //
+    // Backgrounding cancels it too, and **not** because the composition goes: a `setContent`
+    // composition survives `onStop`. It is `onStop` clearing `runnerState` that re-keys `state` to
+    // IDLE and drops `countingUp`. That is a real dependency on another lifecycle callback rather
+    // than a property of Compose, so a change that keeps the binding across `onStop` — plausible
+    // for #216's all-day run — would leave this running unattended. Stated because the earlier
+    // wording here credited the composition and would have made that change look safe.
     LaunchedEffect(brightnessPrompt) {
         if (brightnessPrompt) {
             delay(COUNT_UP_PROMPT_DWELL_MS)

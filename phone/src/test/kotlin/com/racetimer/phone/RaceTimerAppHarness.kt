@@ -76,6 +76,24 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
     }
 
     /**
+     * Put the runner past the gun **before anything is composed** (#279).
+     *
+     * This is the state an activity recreation lands in, reproduced without one: the engine is
+     * counting up in the service, and the fresh composition opens on the picker because
+     * `onTimerScreen` is `remember`ed rather than saved. Robolectric's compose rule cannot recreate
+     * an activity, so the state is arranged rather than caused — the part under test is what the
+     * app does *given* that state, which is identical either way.
+     *
+     * Deliberately does not touch the composition clock: there is no composition yet.
+     */
+    fun runnerAlreadyCountingUp(sequence: RaceSequence = BuiltInSequences.scholasticRaceManager) {
+        runner.select(sequence)
+        runner.start()
+        clock.nowMs += sequence.totalMs + PAST_GUN_MS
+        runner.tick()
+    }
+
+    /**
      * Pick [sequence] and tap Start, then confirm the race is really on before returning.
      *
      * The Stop assertion is a positive control, not decoration: the controls are a function of
