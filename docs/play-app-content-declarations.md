@@ -271,14 +271,12 @@ to each other, each storing its own state locally. The row had conflated *a seco
 with *a link between them*, and only the second one carries the consequence. Split above so the
 shipped half stops implying a re-answer nobody owes.
 
-The common shape: **a permission added to either manifest invalidates a declaration in Play Console,
-and nothing in the build fails when it does.** Turning that dependency into an enforced check rather
-than a paragraph is [#83](https://github.com/SailorDave17/race-timer/issues/83) — which now has
-**two** manifests to read rather than one. That is not a detail: a check written against
-`wear/`'s merged manifest alone would pass while the phone gained a permission, which is the exact
-failure mode #83 exists to remove, arriving through the module list rather than through the
-permission list. Noted here rather than filed separately because #83 is open and this extends its
-input, not its purpose.
+The common shape: **a permission added to either manifest invalidates a declaration in Play Console.**
+Nothing in the build failed when it did until [#83](https://github.com/SailorDave17/race-timer/issues/83)
+shipped that check (PR [#269](https://github.com/SailorDave17/race-timer/pull/269), 2026-08-18):
+`.github/scripts/declared-surface.py` locks `docs/declared-surface.lock` in CI, read from each app's
+merged release manifest — both `:wear` and `:phone` — so a permission gained by either module fails
+the gate rather than silently falsifying a declaration.
 
 ---
 

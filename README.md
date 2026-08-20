@@ -111,7 +111,7 @@ an instruction as a signal.
 
 ### Haptics-first watch UI
 
-- Big high-contrast MM:SS readout, driven to **maximum panel brightness** while a race is on screen
+- Big high-contrast MM:SS readout, driven to maximum panel brightness while a race is on screen — released above ~3000 lux so automatic brightness can reach the panel's sunlight range, which the forced maximum cannot (#12; `OVERRIDE_RELEASE_LUX` in ScreenPolicy.kt)
 - Colour-state background: navy → amber (last minute) → red flash (final 10 s) → green (gun)
 - Distinct haptic patterns per signal, per the voice table above
 - Large **Sync** / **Stop** buttons, **End Race** in race-manager count-up; one swipe to the picker
@@ -283,7 +283,7 @@ permanently manual — is in [`docs/dnd-haptics-recheck.md`](docs/dnd-haptics-re
 | Layer | Technology |
 |-------|-----------|
 | Language | Kotlin 1.9.22 |
-| Build | Gradle 8.9 / AGP 8.6.1 |
+| Build | Gradle 8.13 / AGP 8.13.2 |
 | Watch UI | Jetpack Compose for Wear OS 1.3 |
 | Navigation | Wear Compose Navigation |
 | Timing | `SystemClock.elapsedRealtimeNanos()` (monotonic) |
@@ -291,7 +291,7 @@ permanently manual — is in [`docs/dnd-haptics-recheck.md`](docs/dnd-haptics-re
 | Background | Android `ForegroundService` (`specialUse`) + Wear `OngoingActivity` |
 | State | `SharedPreferences` (boot-anchored gun snapshot) |
 | Min SDK | 30 (Wear OS 3.5 / Android 11) |
-| Compile / Target SDK | 35 |
+| Compile / Target SDK | 35 (wear, shared-android) / 36 (phone, #261) |
 
 ## Status and roadmap
 
