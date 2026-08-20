@@ -446,6 +446,18 @@ on the wrist, against this build.
   screen-off evidence, and it measured `errorMs` 1–4 ms — *better* than these, because nobody was
   touching the watch.
 
+### Re-confirmed on a later build (#201, 2026-08-20)
+
+The figures above were measured on `f1f3bf1`. [#201](https://github.com/SailorDave17/race-timer/issues/201)
+re-ran a single worn 5-4-1-Go on **`25fc2d0`** — 29 commits later, past AGP 8.13 (#192) and the
+sunlight brightness work (#12) — and found **30 of 30 cues dispatched, none delivered short, and the
+gun again at 144000 frames = 3000 ms**. Worst audible miss was 66 ms against this section's 61 ms, and
+the single `writeMs` above 8 ms (15 ms) shared a cue with it, on the dense final-ten transition.
+
+**One race is a confirmation, not a new baseline** — the table above stays the figure to quote. What
+makes it decisive is not the numbers: every file on the cue path is byte-identical between the two
+builds, so the differences are scheduling variance on unchanged code.
+
 ## Battery saver and the battery-optimisation whitelist (#13)
 
 Everything above is about **doze** — the platform suspending an idle device. This section is about
