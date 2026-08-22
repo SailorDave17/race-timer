@@ -35,8 +35,27 @@ class RaceTimerPhoneApplication : Application(), ViewModelStoreOwner {
 
     override val viewModelStore: ViewModelStore = ViewModelStore()
 
+    /**
+     * The start-day recorder (#216), or [DayJournal.OFF] on every build nobody armed.
+     *
+     * Here because the process is the right lifetime for it: the day is four processes (see
+     * `docs/start-day-battery.md`), the battery broadcast arrives whether or not a race is running,
+     * and a journal owned by the service would have a hole in it across exactly the gaps between
+     * races that the day is mostly made of.
+     */
+    val journal: DayJournal by lazy { DayJournal.forProcess(this) }
+
     override fun onCreate() {
         super.onCreate()
+
+        // Before anything the journal could be asked to record, so a run's first line always names
+        // the artefact it was taken on. An unarmed build pays one `Log.isLoggable` and registers
+        // no receiver.
+        if (journal.isArmed) {
+            journal.recordSession(this)
+            BatteryJournalReceiver(journal).register(this)
+        }
+
         val channel = NotificationChannel(
             TIMER_CHANNEL_ID,
             getString(R.string.notification_channel_name),

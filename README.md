@@ -278,6 +278,13 @@ is in [`docs/watch-setup.md`](docs/watch-setup.md). Proving that a race killed m
 Not Disturb — the two-arm race procedure, its triggers, the measured baseline, and why that check is
 permanently manual — is in [`docs/dnd-haptics-recheck.md`](docs/dnd-haptics-recheck.md).
 
+Proving the console phone lasts a whole scholastic start day on one charge — the scenario, which was
+authored before the instrument existed, the on-device journal that records the day without an adb
+session attached, and what the measurement cannot see — is in
+[`docs/start-day-battery.md`](docs/start-day-battery.md). The run itself has not happened yet; the
+journal is armed with `adb shell setprop log.tag.RaceDayJournal DEBUG` and read back with
+`python .github/scripts/parse-start-day.py`, whose `--selftest` runs in CI.
+
 ## Tech stack
 
 | Layer | Technology |

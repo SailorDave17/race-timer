@@ -83,18 +83,32 @@ dims, by design. Both are the same answer and the instrument records which one a
 
 ### The configuration to record (AC 2)
 
-The claim is only reproducible if the conditions are on the record with the numbers, so the
-instrument writes all of these itself rather than relying on anyone's memory:
+The claim is only reproducible if the conditions are on the record with the numbers. **Written by the
+instrument**, so no memory is involved:
 
-- phone model, Android release and SDK level;
-- the app's `versionName`, `versionCode` and build type, so the artefact under test is named;
-- the launch **Screen for today** answers — screen-on and full-brightness, independently;
-- the count-up brightness answer for each block, and whether it was tapped or timed out;
-- whether the pair link was up (recorded as *no link* until the Data Layer story lands, which is what
-  it will be on this run);
-- the sequence loaded for every race;
-- battery status at every sample, so a charger plugged in by accident is visible rather than silently
-  flattering the result.
+- phone model, device name, Android release and SDK level;
+- the app's `versionName` and `versionCode`, so the artefact under test is named;
+- the display properties **as applied to the window** — screen-on and full-brightness, independently,
+  re-recorded every time either changes;
+- the sequence loaded for every race, and the cue schedule that race was going to fire;
+- battery status and plug state at every sample, so a charger plugged in by accident is visible
+  rather than silently flattering the result.
+
+**Derived by the parse rather than recorded**: each block's count-up brightness arm. The instrument
+writes what was applied, not what was answered, and during a count-up those are the same fact — a
+count-up running with brightness off is a `Dim` answer. That is deliberate: the applied value is what
+a µAh figure has to be attributed to, and recording the answer as well would put two spellings of one
+thing in the file, free to disagree.
+
+**Not recorded at all**, and named here so the list is not read as complete:
+
+- *whether the answer was tapped or timed out* — the two are one answer by #279's design and the
+  instrument cannot tell them apart. If that distinction ever matters it is a new record, not an
+  inference from this one.
+- *whether the pair link was up* — there is no link to report. The Data Layer story has not landed,
+  so this run is unpaired by construction rather than by observation.
+- *build type* — the `versionName`/`versionCode` pair names the artefact; whether it was assembled
+  debug or release is the runner's note in the Results row.
 
 Two things the app cannot read and the owner writes down by hand, per block: **sky** (overcast /
 bright / direct sun) and rough **air temperature**. Both matter to an OLED and both are named in *What
@@ -111,8 +125,8 @@ inert unless armed.
 |---|---|---|
 | `session` | process start | Names the phone, the build and the journal's own version — the artefact under test |
 | `battery` | every `ACTION_BATTERY_CHANGED` | Level, scale, **charge counter in µAh**, status, temperature |
-| `display` | the effective display properties change | Screen-on and brightness as applied, and the count-up answer that narrowed them |
-| `race` | load, start, gun, end race, stop | With the sequence id, and at start the **whole expected cue schedule** |
+| `display` | the effective display properties change | Screen-on and brightness **as applied to the window** — including the narrowing a count-up answer causes |
+| `race_load` / `race_start` / `race_end` / `race_stop` | each, as it happens | The sequence id, and at start the **whole expected cue schedule** |
 | `cue` | every cue the engine fires | Its label, its intended offset, and how late it actually landed |
 
 **The charge counter is the reason this story is worth instrumenting at all.**
@@ -159,7 +173,7 @@ the instrument has been seen to work:
 adb shell setprop log.tag.RaceDayJournal DEBUG
 adb shell am force-stop io.github.sailordave17.racetimer
 # launch the app, tap through the display surface, start and stop one race
-python tools/parse-start-day.py --preflight
+python .github/scripts/parse-start-day.py --preflight
 ```
 
 `--preflight` pulls the journal, refuses an empty or stale one, and prints the session record it
@@ -182,7 +196,7 @@ also works. Note the path is the **applicationId**, which the phone shares with 
 ### The parse
 
 ```
-python tools/parse-start-day.py race-day-journal.log --floor-pct 20 --sequences 14 --hours 6
+python .github/scripts/parse-start-day.py race-day-journal.log --floor-pct 20 --sequences 14 --hours 6
 ```
 
 The scenario's three numbers are **arguments, not defaults**: the script hard-codes none of them, so
@@ -191,7 +205,7 @@ reports the configuration, the drain and its rate, the µAh per minute attribute
 bright-versus-dim count-up comparison, every cue against the schedule recorded at that race's start,
 and whether the floor held. It exits non-zero if the scenario was not met.
 
-`python tools/parse-start-day.py --selftest` runs its known-answer cases and is wired into CI, so the
+`python .github/scripts/parse-start-day.py --selftest` runs its known-answer cases and is wired into CI, so the
 arithmetic above is not trusted on the strength of having been read.
 
 ## What this cannot see
