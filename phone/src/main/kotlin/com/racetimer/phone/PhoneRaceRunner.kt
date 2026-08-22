@@ -93,8 +93,72 @@ class PhoneRaceRunner(
         cueSounder.warmUp(selected.cues.map { it.signal })
     }
 
-    /** Choose the sequence to run. Loading it is what puts its full duration on the idle screen. */
-    fun select(sequence: RaceSequence) {
+    /**
+     * True while a select would destroy a race the officer is running (#281).
+     *
+     * RUNNING and COUNTING_UP and no other state. FINISHED and RACE_ENDED are races that are over —
+     * a frozen summary is something to read, not something to lose — and PAUSED has no route to it
+     * in this app. This is the whole difference between choosing the *next* race and discarding the
+     * current one, and nothing else in the module may re-derive it.
+     */
+    val raceInProgress: Boolean
+        get() = engine.currentState == TimerState.RUNNING ||
+            engine.currentState == TimerState.COUNTING_UP
+
+    /**
+     * Choose the sequence to run, and report whether it was taken (#281 AC 4).
+     *
+     * Loading a sequence is what puts its full duration on the idle screen — and [TimerEngine.load]
+     * sets the engine IDLE whatever it was doing, so the same call that picks the next race also
+     * discards one in progress. That is what #281 measured: the officer's only obvious tap after a
+     * recreated activity killed the running race and its cue queue.
+     *
+     * A `false` return means **nothing moved**. The caller owes the officer a question rather than a
+     * silent loss, and [endRaceAndSelect] is what to call when the answer is yes.
+     *
+     * Deliberately **not** a guard inside [TimerEngine.load]: the watch loads through that same call
+     * (`TimerService`'s ACTION_START, twice), it is the product already on Play with its cue
+     * delivery re-verified on hardware in #201, and #281 is a defect in what the phone's UI does
+     * with the engine rather than in the engine. #281 AC 4 authorises the caller explicitly.
+     */
+    fun select(sequence: RaceSequence): Boolean {
+        if (raceInProgress) return false
+        applySelection(sequence)
+        return true
+    }
+
+    /**
+     * Abandon the race in progress and select [sequence] — the officer confirmed (#281 AC 4).
+     *
+     * The one sanctioned way past [select]'s refusal, and it exists so the destructive path has a
+     * name a reader can grep for.
+     *
+     * **There is no `engine.stop()` here, and that is deliberate.** [TimerEngine.load] — which
+     * [applySelection] calls — sets the engine IDLE unconditionally, which is the very property
+     * [select] exists to guard against; here it is the wanted behaviour, so ending the race and
+     * choosing the next one are one call rather than two. A `stop()` first was written, and
+     * *measured indistinguishable*: removing it reddened **0 of 132**, because both paths leave the
+     * engine IDLE with the new sequence's full duration on the clock. A line no observation can
+     * separate from its own absence cannot be guarded by any test, so it is not kept as
+     * belt-and-braces. What is guarded is the outcome —
+     * `SelectGuardsLiveRaceTest#endRaceAndSelect abandons the running race and takes the selection`
+     * asserts the IDLE state directly, so a future `load` that stopped resetting would redden there
+     * rather than fail silently here.
+     *
+     * The re-arm is load-bearing and is not redundant: it disarms the pending cue dispatch, so
+     * nothing queued for the abandoned race can sound into the one being chosen. Deleting it
+     * reddens its own test.
+     */
+    fun endRaceAndSelect(sequence: RaceSequence) {
+        applySelection(sequence)
+        armCueDispatch()
+    }
+
+    /**
+     * Load [sequence] and get its cues rendered — what both selection paths do once the decision
+     * about any race in progress has been taken.
+     */
+    private fun applySelection(sequence: RaceSequence) {
         selected = sequence
         engine.load(sequence)
         // Render the new pick now, seconds ahead of any Start — the head start #98 measured the
