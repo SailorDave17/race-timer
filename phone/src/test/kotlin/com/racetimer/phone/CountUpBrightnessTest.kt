@@ -238,33 +238,46 @@ class CountUpBrightnessTest {
     }
 
     @Test
-    fun `a count-up the officer cannot see never spends the question`() {
-        // The state an activity recreation lands in, arranged rather than caused: the engine is
-        // counting up, and the fresh composition opens on the **picker**, because which screen is
-        // showing is remembered and not saved. A rotation of the propped console phone is the
-        // ordinary way there; #281 tracks the navigation half.
-        app.runnerAlreadyCountingUp()
-        app.launch(fullBrightness = true, applyDisplay = { applied += it })
+    fun `a count-up rejoined after a recreation still has its question, unspent`() {
+        // **This replaced a test #281 made unaskable, and the measurement is the keeper.**
+        //
+        // It used to arrange a count-up behind the **picker** — the state a recreated activity
+        // landed in before #281 — and assert the dwell did not fire there. #281 abolished that
+        // state: a composition that finds a live race opens the timer screen.
+        //
+        // A first rewrite tried to reach it anyway, by starting the race *after* the composition
+        // already had its runner. That was **measured vacuous**: the composition's `state` is
+        // refreshed by the display poll, which runs on the timer screen alone, so `countingUp` was
+        // false in the composition and the assertion held for a reason with nothing to do with the
+        // clause it claimed to prove. Deleting `onTimerScreen` from the predicate reddened it
+        // **zero** — predicted 3 red across the pass, actual 2.
+        //
+        // There is no screen-level arrangement that separates them any more: the reattach sets
+        // `onTimerScreen` and refreshes `state` in the same effect, so `countingUp && !onTimerScreen`
+        // is unreachable through the UI by construction. The clause is therefore proven where it
+        // can be — `CountUpBrightnessRuleTest`, exhaustively over all 48 combinations — and this
+        // test asserts the reachable thing #281 actually created, which nothing else covers.
+        runToTheGun()
+        compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertIsDisplayed()
 
-        assertEquals(TimerState.COUNTING_UP, app.runner.engine.currentState)
-        // Positive control on the arrangement: the picker really is what is on screen, so what
-        // follows is a claim about a count-up the officer cannot see rather than about a race that
-        // never started.
-        // Scrolled to first: since #206 the picker offers five sequences and this entry sits
-        // below the fold on a small phone, which is the same reason the harness scrolls.
-        compose.onNodeWithText(raceManager.name).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertDoesNotExist()
+        // The officer has not answered. Before #281 this is where the question was lost: the
+        // recreated activity ran the launch flow from the top and the count-up was nowhere.
+        app.recreateActivity()
 
-        advancePastTheDwell()
-
-        // The whole point: silence is only an answer if the question was askable. A dwell armed by
-        // engine state alone would fire here, drop the panel the officer asked for, and spend the
-        // one question of the session on a screen that never showed it.
+        // Rejoined on the timer screen, with the question still standing — the ask is consumed by
+        // an answer, never by having been shown, and a recreation is not an answer.
+        compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertIsDisplayed()
         assertEquals(
-            "a question that was never on screen answered itself",
-            listOf(bright),
-            applied,
+            "the recreation spent the question and dropped the panel the officer asked for",
+            emptyList<DisplayChoice>(),
+            applied.filter { it == dimmed },
         )
+
+        // And the rebuilt composition carries its own dwell: silence still dims, from the new one.
+        // Without this the test would assert only that a question *appeared*, and a prompt that
+        // could never answer itself would pass it.
+        advancePastTheDwell()
+        assertEquals("the rejoined question never answered itself", dimmed, applied.last())
         compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertDoesNotExist()
     }
 

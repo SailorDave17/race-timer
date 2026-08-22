@@ -4,6 +4,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshots.Snapshot
 import kotlinx.coroutines.delay
+import org.junit.rules.TestRule
+import org.junit.runner.Description
+import org.junit.runners.model.Statement
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 
 /**
  * The #239 fix: a flush loop composed alongside the app under test, doing the job of a flusher
@@ -57,6 +62,69 @@ internal fun GlobalSnapshotFlushLoop() {
             delay(FLUSH_INTERVAL_MS)
         }
     }
+}
+
+/**
+ * The same #239 remedy for a test class that has no `setContent` to compose [GlobalSnapshotFlushLoop]
+ * into — a `createAndroidComposeRule` class, whose content comes from the real activity.
+ *
+ * ```
+ * @get:Rule
+ * val rules: RuleChain = RuleChain.outerRule(GlobalSnapshotFlushRule()).around(compose)
+ * ```
+ *
+ * ## Why this exists, and what it says about the first fix
+ *
+ * #239's fix was applied where the tests compose their own content, which is every class in this
+ * module **except** `DisplayChoiceSurfaceTest`: it launches the real `MainActivity` through
+ * `createAndroidComposeRule`, so there is no lambda to put a composable in. That class was therefore
+ * never covered by the fix and has been relying on being the **first** compose class the JVM runs —
+ * the one position in which the `GlobalSnapshotManager`'s collector is still alive.
+ *
+ * *Measured 2026-08-21, on #281:* adding four unrelated test classes moved it out of that position
+ * and all **5 of 5** failed with `AppNotIdleException` after ~3M attempts; run with `--tests` alone,
+ * the same 5 pass. Nothing about that class or the app changed. It was one class-order shuffle from
+ * failing on any day, and a suite that only passes in one ordering is not passing for a reason.
+ *
+ * A daemon thread rather than a composable, because the hang can begin inside the rule's own
+ * activity launch — before any test body runs and before there is a composition to hold a loop. This
+ * is the *intervention* #239 proved sufficient (a watchdog thread calling `sendApplyNotifications()`
+ * un-hung a captured hang on the spot), made into a rule rather than a one-off.
+ *
+ * It must be the **outer** rule: the compose rule launches the activity during its own `before`, so
+ * a flusher nested inside it starts too late to help. `RuleChain` states that ordering explicitly
+ * rather than leaving it to `@Rule(order = …)`, whose direction is easy to get backwards and whose
+ * failure mode here is a hang rather than an error.
+ */
+internal class GlobalSnapshotFlushRule : TestRule {
+
+    override fun apply(base: Statement, description: Description): Statement =
+        object : Statement() {
+            override fun evaluate() {
+                val stopped = AtomicBoolean(false)
+                val flusher = thread(isDaemon = true, name = "global-snapshot-flush") {
+                    while (!stopped.get()) {
+                        Snapshot.sendApplyNotifications()
+                        try {
+                            Thread.sleep(FLUSH_INTERVAL_MS)
+                        } catch (interrupted: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            return@thread
+                        }
+                    }
+                }
+                try {
+                    base.evaluate()
+                } finally {
+                    // Daemon, so it could be left running — stopped anyway, because a flusher
+                    // outliving its test would be a thread mutating global snapshot state
+                    // underneath the *next* class, which is the family of fault this whole file
+                    // is about.
+                    stopped.set(true)
+                    flusher.interrupt()
+                }
+            }
+        }
 }
 
 /**

@@ -119,4 +119,104 @@ class CountUpBrightnessRuleTest {
             COUNT_UP_PROMPT_DWELL_MS in 5_000L..60_000L,
         )
     }
+
+    @Test
+    fun `the question shows on exactly one combination of the five conditions`() {
+        // `countUpBrightnessPromptShows` was inline in `RaceTimerApp` until #281, and #281 is why it
+        // is out here: closing the navigation gap removed the only arrangement that could exercise
+        // its `onTimerScreen` clause through the UI. #279's screen test reached that clause by
+        // starting a count-up and letting the fresh composition open on the **picker** — which is
+        // precisely the defect #281 fixes, so after it the clause kept a real job (the frames before
+        // the service binding lands) and no way to fail. Extracting it gives that job a subject a
+        // test can reach, which is the alternative to deleting a clause on the strength of a green
+        // suite.
+        //
+        // 2 x 2 x 2 x 2 x 3 = 48, so this is the function rather than a sample of it.
+        val actual = mutableListOf<String>()
+        val expected = mutableListOf<String>()
+
+        for (answered in listOf(false, true)) {
+            for (onTimerScreen in listOf(false, true)) {
+                for (countingUp in listOf(false, true)) {
+                    for (fullBrightness in listOf(false, true)) {
+                        for (answer in listOf(null, true, false)) {
+                            val shows = countUpBrightnessPromptShows(
+                                answered = answered,
+                                onTimerScreen = onTimerScreen,
+                                countingUp = countingUp,
+                                fullBrightnessChosen = fullBrightness,
+                                countUpKeepsBrightness = answer,
+                            )
+                            // Written out rather than derived from the subject: an expected value
+                            // computed by re-calling the function under test agrees with whatever
+                            // it does (cairn `a-mutation-cannot-see-what-no-test-reaches`).
+                            val shouldShow =
+                                answered && onTimerScreen && countingUp &&
+                                    fullBrightness && answer == null
+                            val case = "answered=$answered onTimerScreen=$onTimerScreen " +
+                                "countingUp=$countingUp fullBrightness=$fullBrightness answer=$answer"
+                            expected += "$case -> $shouldShow"
+                            actual += "$case -> $shows"
+                        }
+                    }
+                }
+            }
+        }
+
+        // Asserted first: a loop that stopped iterating agrees with itself perfectly and proves
+        // nothing (cairn `an-absent-result-reads-as-a-clean-one`).
+        assertEquals("every combination of the predicate's five inputs", 48, actual.size)
+        assertEquals(expected, actual)
+
+        // And the positive statement, so the table above cannot pass by returning false in all 48.
+        assertEquals(
+            "exactly one of the 48 combinations puts the question on screen",
+            1,
+            actual.count { it.endsWith("-> true") },
+        )
+    }
+
+    @Test
+    fun `dropping any single condition would put the question somewhere it must not go`() {
+        // The table above proves the function is what it is. This says why each clause is *there*,
+        // by naming the state that clause alone excludes — so a later reader deleting one has a
+        // sentence explaining what breaks rather than a row of booleans.
+        val shows = { answered: Boolean, onScreen: Boolean, up: Boolean, bright: Boolean, ans: Boolean? ->
+            countUpBrightnessPromptShows(answered, onScreen, up, bright, ans)
+        }
+
+        assertTrue("the one case that must show", shows(true, true, true, true, null))
+
+        assertEquals(
+            "asked before the officer had been through the launch surface at all",
+            false,
+            shows(false, true, true, true, null),
+        )
+        assertEquals(
+            "asked while the officer is not looking at the screen it renders on — silence is only " +
+                "an answer if the question was askable",
+            false,
+            shows(true, false, true, true, null),
+        )
+        assertEquals(
+            "asked during a countdown, which has a gun to justify the panel cost",
+            false,
+            shows(true, true, false, true, null),
+        )
+        assertEquals(
+            "asked of an officer who declined brightness and so has nothing to release",
+            false,
+            shows(true, true, true, false, null),
+        )
+        assertEquals(
+            "asked again after the officer already answered keep",
+            false,
+            shows(true, true, true, true, true),
+        )
+        assertEquals(
+            "asked again after the officer already answered dim",
+            false,
+            shows(true, true, true, true, false),
+        )
+    }
 }

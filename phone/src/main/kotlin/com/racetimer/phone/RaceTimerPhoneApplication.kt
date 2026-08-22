@@ -3,16 +3,37 @@ package com.racetimer.phone
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
 
 /**
- * Application class: creates the notification channel the foreground service posts on (#203).
+ * Application class: creates the notification channel the foreground service posts on (#203), and
+ * owns the one [ViewModelStore] whose lifetime is the process (#281).
  *
  * At Application init rather than in the service, per the watch's pattern and for the watch's
  * reason: a channel must exist before the first `startForeground` renders against it, and the
  * Application's `onCreate` is the one hook that runs before any component can need it — whatever
  * order the activity, the binding and the service land in.
+ *
+ * ### Why this class holds a ViewModelStore (#281)
+ *
+ * #225 ratified the officer's display answers as lasting **for the life of the process** — the right
+ * answer is a property of the day, so it must survive being picked up and turned, and must not
+ * survive to the next race day. `DisplayChoiceViewModel`'s own KDoc says exactly that, and until
+ * #281 it was **false**: an activity-scoped `viewModel()` dies with the *activity*, and #281
+ * measured a recreated activity mid-race re-asking "Screen for today" while the process was very
+ * much alive with a foreground service ticking. An Application-owned store is process scope for
+ * real, and it is the whole mechanism — nothing is written to disk, so
+ * `ModuleBoundaryTest#the display choice is written to no persistent store` still holds, and the
+ * "dies with the process" half is unchanged because this object dies with it.
+ *
+ * The store is deliberately **not** cleared anywhere. A `ViewModelStore` cleared on some lifecycle
+ * event would reintroduce exactly the bug above through a different door, and the process ending
+ * is the only event that should end this state.
  */
-class RaceTimerPhoneApplication : Application() {
+class RaceTimerPhoneApplication : Application(), ViewModelStoreOwner {
+
+    override val viewModelStore: ViewModelStore = ViewModelStore()
 
     override fun onCreate() {
         super.onCreate()

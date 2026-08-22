@@ -1,5 +1,9 @@
 package com.racetimer.phone
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
@@ -48,6 +52,26 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
     val runner = PhoneRaceRunner(clock)
 
     /**
+     * The display choice, held **outside** the composition so it survives [recreateActivity] (#281).
+     *
+     * This is the harness's model of the process-scoped store `RaceTimerPhoneApplication` owns: in
+     * production `MainActivity` resolves the view-model from the Application, so the instance
+     * outlives any one activity and dies with the process. Holding it here rather than letting
+     * `RaceTimerApp` default to `viewModel()` is what makes the two lifetimes distinguishable in a
+     * test — the composition can be thrown away while this object is not, which is exactly the
+     * asymmetry #281 is about.
+     *
+     * Each harness gets its own, so tests stay isolated from one another.
+     */
+    val displayChoice = DisplayChoiceViewModel()
+
+    /**
+     * Bumped by [recreateActivity]. The app is composed under `key(generation)`, so changing it
+     * disposes the whole subtree and builds it again with every `remember` fresh.
+     */
+    private var generation by mutableStateOf(0)
+
+    /**
      * Compose the whole app and answer the display surface, leaving the sequence picker up.
      *
      * [fullBrightness] answers the launch surface's second switch, and [applyDisplay] records what
@@ -63,9 +87,17 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
         compose.setContent {
             // The #239 flush loop rides the same frame pump that would otherwise spin forever —
             // see GlobalSnapshotFlushLoop for the measured mechanism. Composed before the app so
-            // it exists from the first composition, which is where the hang bites.
+            // it exists from the first composition, which is where the hang bites. Outside the key
+            // deliberately: it must survive a recreation, since the hang it prevents does not care
+            // which composition is running.
             GlobalSnapshotFlushLoop()
-            RaceTimerApp(applyDisplay = applyDisplay, runner = runner)
+            key(generation) {
+                RaceTimerApp(
+                    applyDisplay = applyDisplay,
+                    runner = runner,
+                    displayChoice = displayChoice,
+                )
+            }
         }
         if (fullBrightness != DisplayChoice.INITIAL.fullBrightness) {
             compose.onNodeWithTag(TAG_FULL_BRIGHTNESS).performClick()
@@ -76,13 +108,36 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
     }
 
     /**
+     * Throw the composition away and build it again — an activity recreation, as the app sees one
+     * (#281).
+     *
+     * **What this reproduces, and what it does not.** Every `remember` in `RaceTimerApp` is
+     * discarded and every `LaunchedEffect` re-runs, which is the whole of what a destroy-and-recreate
+     * does to the composition — and `onTimerScreen`, the state whose loss #281 is about, is a
+     * `remember`. What survives is what production arranges to survive: the engine (it is in the
+     * service) and [displayChoice] (the Application owns its store). Robolectric's compose rule
+     * cannot destroy and rebuild a real activity, so the *cause* is simulated; the state the app is
+     * then in is identical, and that state is what every assertion here is about.
+     *
+     * Deliberately does not touch either clock: a recreation takes no time in the officer's day.
+     */
+    fun recreateActivity() {
+        generation++
+        compose.waitForIdle()
+    }
+
+    /**
      * Put the runner past the gun **before anything is composed** (#279).
      *
-     * This is the state an activity recreation lands in, reproduced without one: the engine is
-     * counting up in the service, and the fresh composition opens on the picker because
-     * `onTimerScreen` is `remember`ed rather than saved. Robolectric's compose rule cannot recreate
-     * an activity, so the state is arranged rather than caused — the part under test is what the
-     * app does *given* that state, which is identical either way.
+     * This is the state a launch lands in when the service already holds a count-up: the engine is
+     * past the gun before anything is composed. Robolectric's compose rule cannot recreate an
+     * activity, so the state is arranged rather than caused — the part under test is what the app
+     * does *given* that state, which is identical either way.
+     *
+     * *(Until #281 this KDoc went on to say "and the fresh composition opens on the picker, because
+     * `onTimerScreen` is `remember`ed rather than saved". That was the defect, and it is fixed: the
+     * composition now opens on the **timer screen**, from the engine's own state. [recreateActivity]
+     * is the way to reach a fresh composition over a live race deliberately.)*
      *
      * Deliberately does not touch the composition clock: there is no composition yet.
      */
