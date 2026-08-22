@@ -238,6 +238,10 @@ class PhoneTimerService : Service() {
         runner = PhoneRaceRunner(
             cueSounder = PhoneCueSounder(this),
             cueScheduler = HandlerCueScheduler(),
+            // The process's journal, not one of this service's own (#216). A day is a handful of
+            // service lifetimes and the record has to span them. An unarmed build, and any test
+            // that does not install the Application, both get `DayJournal.OFF`.
+            journal = (application as? RaceTimerPhoneApplication)?.journal ?: DayJournal.OFF,
         )
         runner.engine.addListener(engineListener)
     }

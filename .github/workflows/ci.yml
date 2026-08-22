@@ -64,6 +64,18 @@ jobs:
           python3 -V
           python3 .github/scripts/declared-surface.py --check
 
+      # #216. .github/scripts/parse-start-day.py turns a start-day journal into the numbers that decide
+      # whether bar condition 1 is proven. A start day is unrepeatable - one phone, one regatta, one
+      # charge - so the parse gets exactly one chance at a real journal, and a bug found afterwards
+      # cannot be re-run away. Its known-answer cases run here, including the ones that must REFUSE:
+      # an empty journal (which is also what an UNARMED build writes), a reboot mid-day, and a phone
+      # that went on charge.
+      #
+      # Beside the declared-surface check and for its reason: pure Python, nothing compiled, and a
+      # failure here should not wait behind R8.
+      - name: Check the start-day parser
+        run: python3 .github/scripts/parse-start-day.py --selftest
+
       # Point Gradle at the JDKs setup-java installed so the JVM 8 toolchain resolves
       # from disk. If this ever stops matching, the foojay resolver in settings.gradle.kts
       # downloads a JDK instead and the build still succeeds - just more slowly.

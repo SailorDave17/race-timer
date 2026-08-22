@@ -44,6 +44,7 @@ class PhoneRaceRunner(
     clock: MonotonicClock = SystemMonotonicClock,
     private val cueSounder: CueSounder = CueSounder.SILENT,
     private val cueScheduler: CueScheduler = CueScheduler.NONE,
+    private val journal: DayJournal = DayJournal.OFF,
 ) {
 
     val engine = TimerEngine(clock)
@@ -64,6 +65,18 @@ class PhoneRaceRunner(
     private val cueListener = object : TimerListener {
         override fun onCue(cue: SequenceCue) {
             cueSounder.playCue(cue.signal)
+            // The journal record goes *after* the sound is asked for, so an armed run cannot put
+            // itself in front of a cue. Lateness is `offsetMs - remainingMs` and both come from the
+            // engine's own monotonic anchor, read inside this callback before the state flips — one
+            // clock, no subtraction across two (#216).
+            journal.record(
+                "cue",
+                "seq" to selected.id,
+                "offsetMs" to cue.offsetMs,
+                "lateMs" to cue.offsetMs - engine.remainingMs,
+                "gun" to if (cue.isGun) 1 else 0,
+                "label" to cue.signal.label,
+            )
         }
 
         override fun onGun() {}
@@ -160,6 +173,7 @@ class PhoneRaceRunner(
      */
     private fun applySelection(sequence: RaceSequence) {
         selected = sequence
+        journal.record("race_load", "seq" to sequence.id, "totalMs" to sequence.totalMs)
         engine.load(sequence)
         // Render the new pick now, seconds ahead of any Start — the head start #98 measured the
         // first cue losing without. Shapes are cached, so re-picking re-renders almost nothing.
@@ -167,6 +181,11 @@ class PhoneRaceRunner(
     }
 
     fun start() {
+        // Ahead of the engine, so the schedule is on the record before the first cue can fire
+        // against it. This is what makes "zero missed cues" checkable rather than remembered: the
+        // parse compares what fired against what *this race* was going to fire, so a sequence that
+        // changes later cannot rewrite the expectation a past race was judged on (#216 AC 1).
+        journal.record("race_start", "seq" to selected.id, "schedule" to cueSchedule(selected))
         // Re-prepare at arm, the watch's twice-called pattern: the construction-time track can have
         // been torn down by an audio-stack hiccup, and rebuilding it here still lands ahead of the
         // first cue. In the ordinary case this costs one comparison (#114).
@@ -194,6 +213,12 @@ class PhoneRaceRunner(
     fun endRace() {
         engine.endRace()
         armCueDispatch()
+        // After the engine, because `endRace` is what freezes the elapsed time this records. The
+        // flush is here rather than only on the battery sample: End Race is the end of a race
+        // cycle, and it is the natural point at which the day's record should be safe from a
+        // process death in the gap that follows.
+        journal.record("race_end", "seq" to selected.id, "elapsedMs" to -engine.remainingMs)
+        journal.flush()
     }
 
     /**
@@ -207,6 +232,8 @@ class PhoneRaceRunner(
      * the Done control — which is why it is reachable from more than the running states.
      */
     fun stop() {
+        journal.record("race_stop", "seq" to selected.id)
+        journal.flush()
         engine.stop()
         engine.load(selected)
         // With nothing running, msUntilNextCue is null and this only disarms the pending dispatch —
@@ -224,6 +251,10 @@ class PhoneRaceRunner(
      */
     fun restore(sequence: RaceSequence, snapshot: TimerEngine.Snapshot): com.racetimer.shared.RestoreOutcome {
         selected = sequence
+        // A restored race is a race for the parse's purposes — it has a schedule and it will fire
+        // cues — so it records one, marked as a restore. Without this a day containing a process
+        // death would show cues belonging to no race and read as an instrument fault.
+        journal.record("race_start", "seq" to sequence.id, "schedule" to cueSchedule(sequence), "restored" to 1)
         cueSounder.prepare()
         cueSounder.warmUp(sequence.cues.map { it.signal })
         val outcome = engine.restore(sequence, snapshot)
@@ -292,6 +323,16 @@ class PhoneRaceRunner(
         val dueInMs = engine.msUntilNextCue() ?: return
         cueScheduler.armIn(dueInMs.coerceAtLeast(0L), cueDispatch)
     }
+
+    /**
+     * The cues [sequence] is going to fire, as one field: `offset:offset:…`, largest first (#216).
+     *
+     * Offsets only. The label is on each `cue` record already, and putting it here too would be a
+     * second copy of a cue list inside the phone module — the very drift `ModuleBoundaryTest` keeps
+     * out — where an offset is the identity the parse actually matches on.
+     */
+    private fun cueSchedule(sequence: RaceSequence): String =
+        sequence.cues.map { it.offsetMs }.sortedDescending().joinToString(separator = ":")
 
     /** Tear the cue path down. The owner is going away; nothing plays after this. */
     fun release() {

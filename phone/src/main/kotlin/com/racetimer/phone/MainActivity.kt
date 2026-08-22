@@ -180,6 +180,15 @@ class MainActivity : ComponentActivity() {
                 RaceTimerApp(
                     applyDisplay = { choice ->
                         window.applyDisplayProperties(choice.keepScreenOn, choice.fullBrightness)
+                        // Recorded here rather than in `RaceTimerApp` because this is the moment
+                        // the panel actually changes, and the *applied* pair is what a µAh figure
+                        // has to be attributed to (#216 AC 2, and AC 4's bright-versus-dim arms).
+                        // `RaceTimerApp` stays the composition-only test seam it was.
+                        (application as? RaceTimerPhoneApplication)?.journal?.record(
+                            "display",
+                            "screenOn" to choice.keepScreenOn,
+                            "bright" to choice.fullBrightness,
+                        )
                     },
                     runner = runnerState.value,
                     onStartRace = { PhoneTimerService.start(this) },
