@@ -214,6 +214,38 @@ hold is any answer that was measured on one device: `USAGE_TOUCH` and the `CueSt
 mapping are supplied by the app module through `HapticUsagePolicy` and `CueAudioProfile`, with no
 default, so a second form factor is made to measure its own rather than inherit the watch's.
 
+## Branches
+
+Three long-lived branches. The rule underneath is that **the branch a deploy is built from is
+never pushed to by hand**.
+
+| Branch | What it is | How it is entered |
+|---|---|---|
+| `develop` | Integration, and the repo default. Branch from here; merge back here. | A pull request from a feature branch, merged by the owner. |
+| `release` | **Production.** | A pull request from `develop`, merged by the owner. Nothing else. |
+| `main` | The **backup branch**: a known-good working version to fall back to if `release` breaks and cannot be fixed in place. Never a working branch and never a base. | A pull request **from `release`**, merged by the owner — from the branch production actually ran, never from `develop`. |
+
+`main` is promoted **from `release`** rather than from `develop`, and that is the whole
+mechanism: `release` is the branch production actually ran, so a copy of it is known-good **by
+construction** rather than by anyone remembering to be careful. A copy of `develop` would be a
+copy of something nobody has run, which is the one thing a fallback must not be.
+
+Two things follow. **Do not take a backup while production is broken** — the point is to keep
+the last good copy, not to record the bad one. And `main` is **allowed to sit behind**
+`release`: a backup is a copy of a past good state, so lagging is expected rather than a
+defect. *Measured 2026-09-01*: `main` is 64 commits behind `release`. A `main` that has moved is the backup being taken,
+not drift — nothing should file it or offer to freeze it.
+
+`release` is what an uploadable bundle is cut from — see [`docs/releases.md`](docs/releases.md),
+whose first row records a bundle rebuilt from `release` at `089f216` as the artifact Play
+accepted. The `Release` workflow itself fires on a `v*` **tag**, not on a branch push.
+
+`githooks/pre-push` refuses direct pushes to `develop`, `main` and `master`. Enable it once per
+clone: `git config core.hooksPath githooks`.
+
+*`main`'s role is an owner directive of 2026-09-01 and applies to every repo in this workspace,
+not just this one; cairn's `memory/global/branch-off-current-develop-2026-07-30.md` carries it.*
+
 ## Build
 
 ### Requirements
