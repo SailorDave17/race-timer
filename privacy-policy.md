@@ -7,7 +7,7 @@ description: >-
 
 # Privacy Policy — Mad Cow Race Timer
 
-**Effective date:** 17 August 2026
+**Effective date:** 5 September 2026
 **Applies to:** Mad Cow Race Timer (`io.github.sailordave17.racetimer`) — both the **Wear OS watch
 app** and the **Android phone app**, which ship under one Play listing. Referred to together below
 as *Race Timer*, and distinguished as *the watch app* and *the phone app* wherever they differ.
@@ -84,11 +84,11 @@ for the whole device is a setting Android gives you, and Race Timer works the sa
 | `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_SPECIAL_USE` | To keep the start sequence running accurately while the screen is off, so the horn and vibration cues still fire at the right moment | Both apps |
 | `WAKE_LOCK` | To hold the CPU awake for the duration of a running sequence, so cue timing does not drift while the device is idle. The lock is sized to the remaining race and released when the sequence ends | Both apps |
 | `POST_NOTIFICATIONS` | To show the ongoing-activity notification Android requires for a running foreground service, and which lets you return to the running race | Both apps |
-| `VIBRATE` | To deliver the haptic signals for each race cue | Watch app only |
+| `VIBRATE` | To deliver the haptic signals for each race cue | Both apps |
 
 Neither app requests location, microphone, camera, contacts, storage, body sensors, or any health
 or fitness permission. Adding the phone app introduced **no permission the watch app did not
-already request** — the phone's list is the table above without `VIBRATE`.
+already request** — the two apps request exactly the same set.
 
 ## Sharing
 
