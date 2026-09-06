@@ -2,10 +2,12 @@ package com.racetimer.phone
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.NO_CAPTURED_ELAPSED_MS
 import com.racetimer.shared.NO_GUN_ELAPSED_MS
 import com.racetimer.shared.NO_GUN_WALL_MS
 import com.racetimer.shared.TimerEngine
+import com.racetimer.shared.isValidBoxAlert
 import com.racetimer.shared.snapshotFrom
 
 /**
@@ -89,6 +91,30 @@ class PhoneRacePersistence(context: Context) {
     fun pickedSequenceId(): String? = prefs.getString(PREF_PICKED_SEQUENCE_ID, null)
 
     /**
+     * Remember the box alert the officer last armed, so the lead-in picker reopens on it (#207).
+     *
+     * A preference rather than part of any race, exactly as the watch stores it: a club runs one
+     * signal box, and re-dialling its alert every start is the cost this remembers away. The alert
+     * a race *in flight* was armed with is not here — it lives inside the sequence id
+     * (`scholastic_race_manager_alert60s`), where the snapshot already carries it.
+     */
+    fun saveLastBoxAlertSeconds(seconds: Int) {
+        prefs.edit().putInt(PREF_LAST_BOX_ALERT, seconds).apply()
+    }
+
+    /**
+     * The alert last armed, or [DEFAULT_BOX_ALERT_SECONDS] when there has never been one.
+     *
+     * Range-checked on the way out rather than trusted, for the watch's reason: this is the one
+     * lead-in value that is *not* reconstructed from a sequence id, so a stored number out of
+     * bounds would otherwise open the stepper somewhere the picker can never produce.
+     */
+    fun lastBoxAlertSeconds(): Int =
+        prefs.getInt(PREF_LAST_BOX_ALERT, DEFAULT_BOX_ALERT_SECONDS)
+            .takeIf { isValidBoxAlert(it) }
+            ?: DEFAULT_BOX_ALERT_SECONDS
+
+    /**
      * Forget the race in flight. By key, not `clear()` — the watch learned that a blanket clear
      * silently takes unrelated keys with it the day somebody adds one (#88).
      *
@@ -125,5 +151,11 @@ class PhoneRacePersistence(context: Context) {
          * no second value here that could disagree with it.
          */
         const val PREF_PICKED_SEQUENCE_ID = "picked_sequence_id"
+
+        /**
+         * The box alert last armed (#207) — the watch's key name, and the same lifetime as the
+         * pick above: outlives every race, cleared by nothing, so it is not in [clear] either.
+         */
+        const val PREF_LAST_BOX_ALERT = "last_box_alert_seconds"
     }
 }

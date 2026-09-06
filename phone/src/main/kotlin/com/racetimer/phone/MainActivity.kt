@@ -22,6 +22,8 @@ import com.racetimer.phone.ui.ConfirmEndRaceDialog
 import com.racetimer.phone.ui.CustomDurationScreen
 import com.racetimer.phone.ui.DEFAULT_CUSTOM_MINUTES
 import com.racetimer.phone.ui.DisplayChoiceScreen
+import com.racetimer.phone.ui.LeadInDurationScreen
+import com.racetimer.phone.ui.LeadInPickerScreen
 import com.racetimer.phone.ui.PhoneReadout
 import com.racetimer.phone.ui.PhoneTheme
 import com.racetimer.phone.ui.SequencePickerScreen
@@ -29,11 +31,14 @@ import com.racetimer.phone.ui.TimerScreen
 import android.os.SystemClock
 import com.racetimer.shared.BG_NORMAL_ARGB
 import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.formatCountdown
+import com.racetimer.shared.offersLeadIn
 import com.racetimer.shared.resumeOfferRemainingMs
+import com.racetimer.shared.withLeadIn
 import kotlinx.coroutines.delay
 
 /**
@@ -61,12 +66,12 @@ private const val UI_REFRESH_MS = 50L
  * deliberately — the watch's activity-side twin of that flag is a one-way latch whose own remedy
  * cannot clear it (#165), and the phone declines to inherit the pattern.
  *
- * What it deliberately does not do yet, with the story that brings it: the two-stage signal-box
- * lead-in (#207) and cue haptics (#208). (Restore after a kill was listed here until #209 noticed
- * the line had outlived #205, which shipped it — `offerSavedRace` below is that work. Count-up
- * after the gun was listed until #206, which is the same lesson landing a second time: a line
- * naming a *future* story number is correct when written and false the moment that story merges,
- * and no grep aimed at the change will find it, because the change is not what it names.)
+ * What it deliberately does not do yet, with the story that brings it: cue haptics (#208).
+ * (Restore after a kill was listed here until #209 noticed the line had outlived #205, which
+ * shipped it — `offerSavedRace` below is that work. Count-up after the gun was listed until #206,
+ * and the signal-box lead-in until #207 shipped it, which is the same lesson landing a third time:
+ * a line naming a *future* story number is correct when written and false the moment that story
+ * merges, and no grep aimed at the change will find it, because the change is not what it names.)
  *
  * **Position across a recreation was the gap, and #281 closed it — by not restoring a position at
  * all.** Which screen is showing is still `remember`ed rather than saved; what changed is that the
@@ -106,6 +111,14 @@ class MainActivity : ComponentActivity() {
     private val customMinutesState = mutableStateOf<Int?>(null)
 
     /**
+     * Where the lead-in picker opens: the box alert last armed, read from persistence when the
+     * binding lands and updated on every arming (#207). Mirrors [customMinutesState] — a
+     * preference rather than part of any race, and the one lead-in value that is not derived from
+     * a sequence id.
+     */
+    private val lastBoxAlertState = mutableStateOf(DEFAULT_BOX_ALERT_SECONDS)
+
+    /**
      * The officer's display answers, resolved from the **process-scoped** store (#281, #225).
      *
      * `by lazy` rather than a call inside the composition: `ViewModelProvider.get` is idempotent and
@@ -131,6 +144,9 @@ class MainActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val lb = binder as? PhoneTimerService.LocalBinder ?: return
             boundService = lb.service
+            // Read whether or not a race survived: the picker opens on this, and it is a
+            // preference rather than part of any race (#207).
+            lastBoxAlertState.value = lb.service.lastBoxAlertSeconds()
             offerSavedRace(lb.service)
             runnerState.value = lb.service.runner
         }
@@ -203,6 +219,16 @@ class MainActivity : ComponentActivity() {
                     // officer left off (#209).
                     onSequencePicked = { boundService?.savePickedSequence(it.id) },
                     initialCustomMinutes = customMinutesState.value,
+                    // A lead-in start is always a fresh start (#207, the watch's rule): the picker
+                    // is a deliberate two-tap arming of a race that does not exist yet, so it must
+                    // not fall into the restore path and come back with somebody else's clock —
+                    // Resume is the control for that, and it is on the same screen.
+                    onStartLeadIn = { PhoneTimerService.start(this, freshStart = true) },
+                    initialBoxAlertSeconds = lastBoxAlertState.value,
+                    onBoxAlertChosen = { seconds ->
+                        lastBoxAlertState.value = seconds
+                        boundService?.saveLastBoxAlertSeconds(seconds)
+                    },
                     // Resolved from the *Application's* store, not this activity's (#281). #225
                     // ratified the officer's display answers as lasting for the life of the
                     // process; the parameter's `viewModel()` default gives the life of the
@@ -251,6 +277,12 @@ class MainActivity : ComponentActivity() {
  * binding lands, which the UI guards). [onStartRace]/[onStopRace] default to driving [runner]
  * directly — production passes the service intents instead, which is what makes Start survive the
  * screen going off.
+ *
+ * [onStartLeadIn] is the start a lead-in arming reaches (#207) — the armed sequence is already
+ * selected in [runner] by the time it fires, so it needs no argument; production passes the
+ * fresh-start service intent. [initialBoxAlertSeconds] is where the alert picker opens and
+ * [onBoxAlertChosen] is how a chosen alert reaches persistence, the pair [initialCustomMinutes] and
+ * [onSequencePicked] are for Custom.
  */
 @Composable
 internal fun RaceTimerApp(
@@ -265,22 +297,35 @@ internal fun RaceTimerApp(
     collectRestoreNotice: (() -> RestoreOutcome?)? = null,
     onSequencePicked: ((RaceSequence) -> Unit)? = null,
     initialCustomMinutes: Int? = null,
+    onStartLeadIn: (() -> Unit)? = null,
+    initialBoxAlertSeconds: Int = DEFAULT_BOX_ALERT_SECONDS,
+    onBoxAlertChosen: ((Int) -> Unit)? = null,
     displayChoice: DisplayChoiceViewModel = viewModel(),
 ) {
     var onTimerScreen by remember { mutableStateOf(false) }
     var onCustomScreen by remember { mutableStateOf(false) }
+    // The two lead-in screens sit *over* the timer screen rather than replacing it: `onTimerScreen`
+    // stays true underneath, so backing out of either lands on the pre-start screen the officer
+    // left, with nothing to unwind (#207).
+    var onLeadInScreen by remember { mutableStateOf(false) }
+    var onLeadInCustomScreen by remember { mutableStateOf(false) }
     var readout by remember(runner) {
         mutableStateOf(runner?.readout() ?: PhoneReadout.of(TimerState.IDLE, 0L, 0L))
     }
     var state by remember(runner) {
         mutableStateOf(runner?.engine?.currentState ?: TimerState.IDLE)
     }
+    var inLeadIn by remember(runner) { mutableStateOf(runner?.inLeadIn == true) }
+    // The alert the picker opens on. Seeded from persistence and moved by every arming, so a second
+    // lead-in race in one sitting opens on the first one's value before the write-through lands.
+    var lastBoxAlertSeconds by remember(initialBoxAlertSeconds) { mutableStateOf(initialBoxAlertSeconds) }
 
     val startRace = onStartRace ?: { runner?.start() }
     val stopRace = onStopRace ?: { runner?.stop() }
     val syncRace = onSyncRace ?: { runner?.sync() }
     val endRaceNow = onEndRace ?: { runner?.endRace() }
     val startOverRace = onStartOverRace ?: { runner?.start() }
+    val startLeadIn = onStartLeadIn ?: { runner?.start() }
 
     // Consumed once either offer control is tapped (or Back declines it); the snapshot on disk
     // outlives a decline, so the next launch offers again — discarding is Start over's job alone.
@@ -297,6 +342,7 @@ internal fun RaceTimerApp(
         runner ?: return
         readout = runner.readout()
         state = runner.engine.currentState
+        inLeadIn = runner.inLeadIn
     }
 
     // A bind that lands on a race already running puts the officer back on it (#281 AC 1, AC 5).
@@ -345,6 +391,10 @@ internal fun RaceTimerApp(
         while (onTimerScreen && runner != null) {
             readout = runner.tick()
             state = runner.engine.currentState
+            // Read on every pass rather than set at Start: the lead-in ends on the tick the
+            // sequence's own first signal fires, and the Sync control has to come back on that
+            // same tick (#207).
+            inLeadIn = runner.inLeadIn
             collectRestoreNotice?.invoke()?.let { outcome ->
                 restoreNotice = when (outcome) {
                     RestoreOutcome.EXACT -> null
@@ -458,14 +508,48 @@ internal fun RaceTimerApp(
         openWith(sequence)
     }
 
+    /**
+     * Arm the selected sequence with a [boxAlertSeconds] run-up and start it (#207).
+     *
+     * The armed variant goes into the runner's selection so the readout previews the race being
+     * started (4:10 on a 70 s lead) rather than the plain sequence's 3:00, and so the service's
+     * Start finds it as the requested sequence. The runner drops it back to the base the moment
+     * that race is over — a lead-in is a per-race choice, never a sticky one.
+     *
+     * `withLeadIn` is null for a sequence that cannot carry a lead, which the control's own
+     * reachability rules out (`leadInOffered` reads the same `offersLeadIn`); `select` is false
+     * only over a live race, which the pre-start screen this is reached from rules out. Both are
+     * refusals rather than guesses if a future route reaches here from somewhere else.
+     */
+    fun startWithLeadIn(boxAlertSeconds: Int) {
+        runner ?: return
+        val armed = withLeadIn(runner.selected, boxAlertSeconds) ?: return
+        if (!runner.select(armed)) return
+        lastBoxAlertSeconds = boxAlertSeconds
+        onBoxAlertChosen?.invoke(boxAlertSeconds)
+        // The offer, if one was declined earlier this sitting, is spent: a fresh start writes its
+        // own snapshot over the saved race, exactly as Start over does.
+        offerConsumed = true
+        startLeadIn()
+        refresh()
+    }
+
     // Backing out of the stepper is a plain cancel: nothing was selected on the way in, so there is
     // no race state to unwind and the picker is exactly where the officer was.
     BackHandler(enabled = onCustomScreen) { onCustomScreen = false }
 
+    // The same plain cancel for the two lead-in screens: nothing is armed until a row or Set is
+    // tapped, so Back lands on the pre-start screen exactly as it was. The timer screen's handler
+    // below is disabled while either is up rather than relying on registration order, because
+    // `onTimerScreen` stays true underneath them and an enabled handler pair would otherwise be
+    // resolved by which composed last.
+    BackHandler(enabled = onLeadInCustomScreen) { onLeadInCustomScreen = false }
+    BackHandler(enabled = onLeadInScreen && !onLeadInCustomScreen) { onLeadInScreen = false }
+
     // Back returns to the picker, but never mid-race: the gesture is one an officer makes without
     // looking, and it must not be able to end a start sequence. While a race is on it falls through
     // to the system, which backgrounds the app with the race still in the service.
-    BackHandler(enabled = onTimerScreen && !raceActive) {
+    BackHandler(enabled = onTimerScreen && !raceActive && !onLeadInScreen && !onLeadInCustomScreen) {
         // Backing out of the offer declines it for this sitting without discarding the snapshot;
         // stopping an idle engine is a no-op beyond returning the screen to the top.
         offerConsumed = true
@@ -485,11 +569,38 @@ internal fun RaceTimerApp(
             onFullBrightnessChange = displayChoice::setFullBrightness,
             onContinue = displayChoice::confirm,
         )
+    } else if (onLeadInCustomScreen) {
+        LeadInDurationScreen(
+            initialSeconds = lastBoxAlertSeconds,
+            onConfirm = { seconds ->
+                onLeadInCustomScreen = false
+                onLeadInScreen = false
+                startWithLeadIn(seconds)
+            },
+        )
+    } else if (onLeadInScreen) {
+        LeadInPickerScreen(
+            lastUsedSeconds = lastBoxAlertSeconds,
+            // Selecting an alert *starts the race* — the tapped row was the confirm, and its label
+            // carried the value being committed to. The picker comes down first so the countdown
+            // the race is running is what appears, rather than a picker for a race under way.
+            onAlertSelected = { seconds ->
+                onLeadInScreen = false
+                startWithLeadIn(seconds)
+            },
+            onCustomSelected = { onLeadInCustomScreen = true },
+        )
     } else if (onTimerScreen) {
         TimerScreen(
             readout = readout,
             sequenceName = runner?.selected?.name ?: "",
             state = state,
+            // The rule is shared's (`offersLeadIn` — race-manager modes only); this only asks it,
+            // and withholds the control until the binding lands for the picker entries' own
+            // reason: a control that cannot arm anything is a dead one (#207).
+            leadInOffered = runner?.selected?.let { offersLeadIn(it) } == true,
+            inLeadIn = inLeadIn,
+            onLeadIn = { onLeadInScreen = true },
             onStart = {
                 startRace()
                 refresh()

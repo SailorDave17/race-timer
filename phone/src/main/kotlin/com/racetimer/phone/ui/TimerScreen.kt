@@ -97,6 +97,18 @@ private const val GLYPH_WIDTH_FRACTION = 0.68f
  *                      Start over.
  * @param onResume      Tapped to take the saved race back exactly where it was.
  * @param onStartOver   Tapped to decline it and run the sequence from the top.
+ * @param leadInOffered True when the selected sequence may be armed with a lead-in (#207), which is
+ *                      race-manager modes only — the rule is `offersLeadIn` in `shared/`, never a
+ *                      decision taken here. Puts a Lead-in control beside Start on the pre-start
+ *                      screen. Absent while a resume offer stands, for the watch's reason: the
+ *                      question that screen asks is *this race or a fresh one*, and Start over
+ *                      already re-runs whatever lead the saved race carried.
+ * @param inLeadIn      True while a running race is still in its lead-in. Drops the Sync button
+ *                      for the duration — the sequence proper has not started, so there is nothing
+ *                      to snap to and the engine refuses anyway (`isInLeadIn`); a button that takes
+ *                      the tap and does nothing reads as broken.
+ * @param onLeadIn      Tapped to choose the box alert and start. Only reachable when
+ *                      [leadInOffered].
  */
 @Composable
 fun TimerScreen(
@@ -114,6 +126,9 @@ fun TimerScreen(
     resumeOffer: String? = null,
     onResume: () -> Unit = {},
     onStartOver: () -> Unit = {},
+    leadInOffered: Boolean = false,
+    inLeadIn: Boolean = false,
+    onLeadIn: () -> Unit = {},
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -223,6 +238,18 @@ fun TimerScreen(
                         }
                     }
                 }
+            } else if (state == TimerState.RUNNING && inLeadIn) {
+                // Sync has nothing to act on until the sequence proper is under way (#207) — see
+                // `isInLeadIn`. Rather than leave a button that takes the tap and does nothing,
+                // the lead-in gets the sole-control layout Start and End Race use, and Sync
+                // reappears on the tick the sequence's own first signal fires.
+                Button(
+                    onClick = onStop,
+                    colors = ButtonDefaults.buttonColors(),
+                    modifier = Modifier.fillMaxWidth(0.6f),
+                ) {
+                    Text(text = "Stop", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                }
             } else if (state == TimerState.RUNNING) {
                 // Sync first, Stop second: sync is the control an officer reaches for mid-race at
                 // a flag, stop is the one that ends everything — the destructive control goes
@@ -246,6 +273,32 @@ fun TimerScreen(
                         Text(text = "Stop", fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     }
                 }
+            } else if (leadInOffered) {
+                // Two ways to begin a race, in equal halves, exactly as the watch splits them
+                // (#207): a race manager on a committee boat with a signal box reaches for the
+                // right-hand one every start of the day, and sizing it as a narrow afterthought
+                // would make the more common of the two the harder to hit. Tapping Start here is
+                // byte-for-byte what it was — same anchor, same cues; the lead-in is reached only
+                // through its own control.
+                Row(
+                    modifier = Modifier.fillMaxWidth(0.9f),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    Button(
+                        onClick = onStart,
+                        colors = ButtonDefaults.buttonColors(),
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    ) {
+                        Text(text = "Start", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = onLeadIn,
+                        colors = ButtonDefaults.buttonColors(),
+                        modifier = Modifier.weight(1f).padding(start = 8.dp),
+                    ) {
+                        Text(text = LEAD_IN_LABEL, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             } else {
                 Button(
                     onClick = onStart,
@@ -258,6 +311,9 @@ fun TimerScreen(
         }
     }
 }
+
+/** The lead-in control's label, shared with the tests so the copy lives in one place (#207). */
+const val LEAD_IN_LABEL = "Lead-in"
 
 /**
  * The one question a count-up asks, and only when there is something to release (#279).

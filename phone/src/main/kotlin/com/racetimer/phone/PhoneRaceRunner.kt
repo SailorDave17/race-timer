@@ -11,6 +11,8 @@ import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.isInLeadIn
+import com.racetimer.shared.leadInBaseOf
 
 /**
  * The race and its cue path, owned by whoever must outlive the screen (#202, #203).
@@ -117,6 +119,21 @@ class PhoneRaceRunner(
     val raceInProgress: Boolean
         get() = engine.currentState == TimerState.RUNNING ||
             engine.currentState == TimerState.COUNTING_UP
+
+    /**
+     * True while the running race is still in its two-stage lead-in (#207).
+     *
+     * What drops the Sync control for the duration: the engine already refuses a sync here on its
+     * own terms (`isInLeadIn` — there is nothing to snap *to* before the sequence proper begins,
+     * and snapping 4:07 to 4:00 deletes seven seconds of the run-up), so a button left on screen
+     * would take the tap and do nothing, which is the watch's definition of a broken control.
+     *
+     * Read from the engine's own loaded sequence and live clock rather than from [selected]: the
+     * rule is shared's, and this only asks it.
+     */
+    val inLeadIn: Boolean
+        get() = engine.currentState == TimerState.RUNNING &&
+            engine.loadedSequence?.let { isInLeadIn(it, engine.remainingMs) } == true
 
     /**
      * Choose the sequence to run, and report whether it was taken (#281 AC 4).
@@ -235,6 +252,18 @@ class PhoneRaceRunner(
         journal.record("race_stop", "seq" to selected.id)
         journal.flush()
         engine.stop()
+        // A lead-in is a per-race choice, never a sticky one (#104, #207). The armed variant sits
+        // in [selected] only while its race is the engine's; the moment that race is over the
+        // selection drops back to the base sequence, so the next plain Start runs a clean 3:00
+        // rather than silently carrying an alert nobody re-chose — the invisible state the
+        // two-tap picker exists to rule out. The watch measured exactly that: after three lead-in
+        // races the remembered pick was still the plain sequence, and Start ran it plain.
+        //
+        // `leadInBaseOf` passes an unarmed sequence through unchanged, so every other race is
+        // byte-for-byte what it was here. Null only if the base id resolves to nothing, which a
+        // sequence built by arming one cannot produce; the selection is better left than cleared
+        // on a surprise.
+        selected = leadInBaseOf(selected) ?: selected
         engine.load(selected)
         // With nothing running, msUntilNextCue is null and this only disarms the pending dispatch —
         // a cue must not fire out of a race the officer just ended.
