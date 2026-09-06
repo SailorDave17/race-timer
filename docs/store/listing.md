@@ -106,23 +106,23 @@ AC 4.)*
 ## Before pasting — three claims that are contingent
 
 This draft is written for the state the epic is being held for: a phone app coherent enough to
-ship. Two of its lines are **not true of the phone as of 2026-08-18** and become true only when
-their stories land. Check each against the build being uploaded, and cut the line if it has not.
+ship. One of its lines is **not true of the phone as of 2026-09-05** and becomes true only when
+its story lands. Check it against the build being uploaded, and cut the line if it has not.
 
 | Line in the copy | True only after |
 |---|---|
-| the two-stage signal-box lead-in on the phone | [#207](https://github.com/SailorDave17/race-timer/issues/207) |
 | *a distinct vibration for every signal* being said of **both** devices | [#208](https://github.com/SailorDave17/race-timer/issues/208) |
 
 The *FOR THE RACE COMMITTEE* line was the third row here until **#206** shipped the count-up past
-the gun and End Race on 2026-08-18; the phone now offers both race-manager modes, so the copy may
-name it. The row was removed rather than ticked, because this table's job is to list what is *not*
-yet true — a row that has become true is a row that has to go, and leaving it would make the next
-reader cut a line the build supports.
+the gun and End Race on 2026-08-18, and the signal-box lead-in was the second until **#207** shipped
+it on the phone on 2026-09-05; the phone now offers both race-manager modes and the two-stage
+lead-in, so the copy may name both. Each row was removed rather than ticked, because this table's
+job is to list what is *not* yet true — a row that has become true is a row that has to go, and
+leaving it would make the next reader cut a line the build supports.
 
 Everything else in the draft is true of the phone today: the countdown, the cue audio, cueing with
-the screen off, Sync, Custom, restore-after-kill, the officer's screen choice, and the race-manager
-count-up through End Race have all landed.
+the screen off, Sync, Custom, restore-after-kill, the officer's screen choice, the race-manager
+count-up through End Race, and the signal-box lead-in have all landed.
 
 ## Short description (draft)
 

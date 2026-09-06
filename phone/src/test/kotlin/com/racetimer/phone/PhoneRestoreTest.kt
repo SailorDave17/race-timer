@@ -125,7 +125,7 @@ class PhoneRestoreTest {
         // The id is the whole mechanism (#205 AC 3): the box-alert variant persists as its
         // id-encoded self, and resolve() rebuilds the armed sequence from nothing else. The base
         // is the race-manager variant because lead-ins are committee work by design — offersLeadIn
-        // reads countUpAfterFinish — so this is the exact shape #207 will persist.
+        // reads countUpAfterFinish — so this is the exact shape #207 persists from its picker.
         val armedId = leadInId(BuiltInSequences.scholasticRaceManager.id, 60)
         val armed = BuiltInSequences.resolve(armedId)
         assertNotNull("the armed id must resolve or this test is testing nothing", armed)

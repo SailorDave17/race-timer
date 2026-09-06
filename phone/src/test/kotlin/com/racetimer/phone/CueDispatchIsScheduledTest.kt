@@ -11,9 +11,11 @@ import org.junit.Test
 
 /**
  * A monotonic clock the test moves by hand. Its own name rather than `FakeClock` because a
- * file-private top-level class still collides across files in one Kotlin package.
+ * file-private top-level class still collides across files in one Kotlin package — and since
+ * #207 the three fakes here are `internal` on purpose, so [LeadInCuePathTest] drives the same
+ * seams through the same doubles rather than a third copy of them.
  */
-private class SteppedClock(var nowMs: Long = 0L) : MonotonicClock {
+internal class SteppedClock(var nowMs: Long = 0L) : MonotonicClock {
     override fun elapsedMs(): Long = nowMs
 }
 
@@ -22,7 +24,7 @@ private class SteppedClock(var nowMs: Long = 0L) : MonotonicClock {
  * before the first cue, warmed up on selection — are asserted as positive evidence rather than
  * inferred from silence.
  */
-private class RecordingSounder : CueSounder {
+internal class RecordingSounder : CueSounder {
     val events = mutableListOf<String>()
     val played = mutableListOf<String>()
 
@@ -49,7 +51,7 @@ private class RecordingSounder : CueSounder {
  * disarms — but fires only when the test says so, which is what lets a race be driven boundary by
  * boundary with no looper.
  */
-private class RecordingScheduler : CueScheduler {
+internal class RecordingScheduler : CueScheduler {
     var armedDelayMs: Long? = null
     var armedAction: Runnable? = null
 

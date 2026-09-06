@@ -168,17 +168,19 @@ enumeration, for the reason `docs/privacy-policy.md` records having been bitten 
 
 | Key | What it is | Line |
 |---|---|---|
-| `sequence_id` | Which start sequence a race in flight is running | `PhoneRacePersistence.kt:111` |
-| `gun_elapsed_ms` | Scheduled gun time as a monotonic clock reading | `:112` |
-| `gun_wall_clock_ms` | Scheduled gun time as a wall-clock reading, for recovery after a restart | `:113` |
-| `captured_elapsed_ms` | Monotonic reading at the moment the race was saved | `:114` |
-| `picked_sequence_id` | The sequence the officer last chose — a preference that outlives a race (#209) | `:127` |
+| `sequence_id` | Which start sequence a race in flight is running | `PhoneRacePersistence.kt:137` |
+| `gun_elapsed_ms` | Scheduled gun time as a monotonic clock reading | `:138` |
+| `gun_wall_clock_ms` | Scheduled gun time as a wall-clock reading, for recovery after a restart | `:139` |
+| `captured_elapsed_ms` | Monotonic reading at the moment the race was saved | `:140` |
+| `picked_sequence_id` | The sequence the officer last chose — a preference that outlives a race (#209) | `:153` |
+| `last_box_alert_seconds` | The signal-box alert the officer last armed a lead-in with — a preference, not part of any race (#207) | `:159` |
 
-The phone's set is a **subset** of the watch's, and the three it lacks are behavioural rather than
-a policy choice: no `last_box_alert_seconds` because the signal-box lead-in is unbuilt on the phone
-(#207), and no volume-receipt pair because the phone never raises a device volume. A Custom race
-adds no key on either — `custom_8m` carries its duration inside the sequence id, so
-`BuiltInSequences.resolve` rebuilds the whole sequence from that one string.
+The phone's set is a **subset** of the watch's, and the two it lacks are behavioural rather than
+a policy choice: no volume-receipt pair because the phone never raises a device volume. (The
+lead-in key was the third absence until #207 built the lead-in on the phone, 2026-09-05; the line
+numbers above moved with it.) A Custom race adds no key on either — `custom_8m` carries its
+duration inside the sequence id, so `BuiltInSequences.resolve` rebuilds the whole sequence from
+that one string.
 
 Clock readings, a sequence identifier, a stream index and a volume integer. No name, no account, no
 device identifier, no location, no health value, no free text — **neither** app has any text input

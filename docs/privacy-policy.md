@@ -162,15 +162,17 @@ MAINTAINER NOTES — remove this block before publishing.
          PREF_CAPTURED_ELAPSED :1089, PREF_PICKED_SEQUENCE_ID :1105 (#88),
          PREF_LAST_BOX_ALERT :1119 (#104), PREF_RAISED_STREAM :1140 and
          PREF_RAISED_PREVIOUS_VOLUME :1141 (both #95).
-       PHONE -- "phone_race_state" (PhoneRacePersistence.kt PREFS_NAME :110):
-         PREF_SEQUENCE_ID :111, PREF_GUN_ELAPSED :112, PREF_GUN_WALL_CLOCK :113,
-         PREF_CAPTURED_ELAPSED :114, PREF_PICKED_SEQUENCE_ID :127 (#209).
+       PHONE -- "phone_race_state" (PhoneRacePersistence.kt PREFS_NAME :136):
+         PREF_SEQUENCE_ID :137, PREF_GUN_ELAPSED :138, PREF_GUN_WALL_CLOCK :139,
+         PREF_CAPTURED_ELAPSED :140, PREF_PICKED_SEQUENCE_ID :153 (#209),
+         PREF_LAST_BOX_ALERT :159 (#207, added 2026-09-05; the phone line numbers moved
+         :110-:127 -> :136-:159 with it, the fourth re-cite).
      The watch line numbers had ALL drifted again since 2026-08-12 (:1014-:1070 -> :1085-:1141),
      which is the third time this note has had to re-cite them and is the argument for the rule
      below rather than an incidental.
      The phone stores a SUBSET, and the difference is behavioural, not a policy question: no
-     lead-in key because #207 is unbuilt, and no volume-receipt pair because the phone never
-     raises a device volume. A Custom race adds nothing -- custom_8m carries its duration inside
+     volume-receipt pair because the phone never raises a device volume. (It said "no lead-in
+     key because #207 is unbuilt" until #207 built it; the lead-in key is now on both.) A Custom race adds nothing -- custom_8m carries its duration inside
      picked_sequence_id, so BuiltInSequences.resolve rebuilds the sequence from that one string
      (PhoneRacePersistence.kt :115-:126 says so in its own words).
    - RE-VERIFIED 2026-08-17 at f953e97, ALL FOUR module trees, closing the 2026-08-13 scope note

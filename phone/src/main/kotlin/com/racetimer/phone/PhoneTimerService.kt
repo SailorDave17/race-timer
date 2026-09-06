@@ -129,6 +129,12 @@ class PhoneTimerService : Service() {
      */
     fun savePickedSequence(sequenceId: String) = persistence.savePickedSequenceId(sequenceId)
 
+    /** Remember the box alert the officer just armed, so the lead-in picker reopens on it (#207). */
+    fun saveLastBoxAlertSeconds(seconds: Int) = persistence.saveLastBoxAlertSeconds(seconds)
+
+    /** The box alert last armed, or the default. Read by the activity when the binding lands. */
+    fun lastBoxAlertSeconds(): Int = persistence.lastBoxAlertSeconds()
+
     private val handler = Handler(Looper.getMainLooper())
 
     /** How long the cue that fired most recently occupies the speaker — sizes the gun teardown. */
