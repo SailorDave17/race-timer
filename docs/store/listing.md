@@ -103,22 +103,29 @@ timing-figure claims out. When the link ships, the listing gets a third revision
 the pair belongs. *(Owner decision, 2026-08-17, taken against the alternative reading of #212's
 AC 4.)*
 
-## Before pasting — three claims that are contingent
+## Before pasting — the claims that were contingent
 
 This draft is written for the state the epic is being held for: a phone app coherent enough to
-ship. One of its lines is **not true of the phone as of 2026-09-05** and becomes true only when
-its story lands. Check it against the build being uploaded, and cut the line if it has not.
+ship. It carried a table of lines **not yet true of the phone**, each to be checked against the
+build being uploaded and cut if its story had not landed. **The table is empty as of 2026-09-05.**
 
 | Line in the copy | True only after |
 |---|---|
-| *a distinct vibration for every signal* being said of **both** devices | [#208](https://github.com/SailorDave17/race-timer/issues/208) |
+| *(none)* | |
 
 The *FOR THE RACE COMMITTEE* line was the third row here until **#206** shipped the count-up past
-the gun and End Race on 2026-08-18, and the signal-box lead-in was the second until **#207** shipped
-it on the phone on 2026-09-05; the phone now offers both race-manager modes and the two-stage
-lead-in, so the copy may name both. Each row was removed rather than ticked, because this table's
-job is to list what is *not* yet true — a row that has become true is a row that has to go, and
-leaving it would make the next reader cut a line the build supports.
+the gun and End Race on 2026-08-18; the signal-box lead-in was the second until **#207** shipped it
+on the phone on 2026-09-05; and *a distinct vibration for every signal* being said of **both**
+devices was the last until **#208** buzzed the three cue voices on the phone the same day. Each row
+was removed rather than ticked, because this table's job is to list what is *not* yet true — a row
+that has become true is a row that has to go, and leaving it would make the next reader cut a line
+the build supports. The empty table stays so the next contingent line has somewhere to land.
+
+One caveat survives the table: the phone's vibration is **built but not measured** on the phone —
+its usage declaration is provisional until [#210](https://github.com/SailorDave17/race-timer/issues/210)
+reads delivery off the owner's handset under DND and silent mode. That does not touch the line
+above, which claims a distinct vibration per signal and not delivery under any condition; it is
+why the *feel the gun* line below stays declined.
 
 Everything else in the draft is true of the phone today: the countdown, the cue audio, cueing with
 the screen off, Sync, Custom, restore-after-kill, the officer's screen choice, the race-manager
@@ -265,9 +272,13 @@ are not visible from the text itself.
   - **One watch, one OS version.** The baseline is an SM-R925U on API 36. A listing sentence is read
     as a claim about every device it installs on — the same reason the timing figure stays out, where
     a median-shaped number would be read as a bound.
-  - **The draft revision above is two-form-factor, and the phone has no haptic path at all.**
-    [#208](https://github.com/SailorDave17/race-timer/issues/208) is unbuilt, so a shared line would
-    over-claim on the device it was never measured on.
+  - **The draft revision above is two-form-factor, and the phone's haptics are unmeasured.**
+    [#208](https://github.com/SailorDave17/race-timer/issues/208) built the path on 2026-09-05 with
+    a *provisional* usage declaration — the honest `USAGE_ALARM`, the very class that measured 0 of
+    30 on the watch — and [#210](https://github.com/SailorDave17/race-timer/issues/210) is where a
+    phone gets its own DND table. Until then a shared line would over-claim on the device it was
+    never measured on. *(This bullet said "no haptic path at all" and "unbuilt" until #208 landed;
+    the reason moved from absence to non-measurement and the decision did not move.)*
 
   What would make it available: a re-check that holds across a `targetSdk` bump and a platform
   upgrade, or arm 3 retiring the mislabel — plus the phone's haptics landing, if the line is to sit in

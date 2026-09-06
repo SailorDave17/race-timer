@@ -263,7 +263,7 @@ change that, on the day it merges, makes something above **wrong**.
 | **In-app purchases or subscriptions** | **Financial features** and the content rating both change, and the store listing must say so |
 | **Free-text entry** (naming a custom sequence, say) | The content rating's user-generated-content answer changes, and Data safety may gain a type depending on where the text goes |
 | **Data Layer sync between the watch and the phone** ([#219](https://github.com/SailorDave17/race-timer/issues/219)) | Data leaves a device **by the app's own action** — the reasoning in *the part that is not obvious* above no longer applies, and Data safety must be re-answered from scratch rather than edited. The watch's standalone `meta-data` declaration would also need re-reading, though it describes *not requiring* a phone rather than *not talking to* one |
-| **Haptics on the phone** ([#208](https://github.com/SailorDave17/race-timer/issues/208)) | Adds `VIBRATE` to the phone manifest. Nothing in this document moves — the permission is already declared by the watch and already in the app-wide set — but `docs/privacy-policy.md`'s permission table says `VIBRATE` is **watch-only**, and that row becomes wrong the day it merges |
+| **Haptics on the phone** ([#208](https://github.com/SailorDave17/race-timer/issues/208)) | **Landed 2026-09-05.** Added `VIBRATE` to the phone manifest. Nothing in this document moved — the permission was already declared by the watch and already in the app-wide set — and `docs/privacy-policy.md`'s permission table, which said `VIBRATE` was **watch-only**, was corrected in the same change, with its effective date. Kept as the worked example of a manifest change that moves one document and not the other |
 
 **One row of this table has already been half-resolved, and the correction is instructive.** It
 used to read *"A phone companion or Data Layer sync"* as a single trigger, predicting that a phone
@@ -337,7 +337,7 @@ the same enumeration hazard one level up.
 | | Watch | Phone |
 |---|---|---|
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `WAKE_LOCK`, `POST_NOTIFICATIONS` | yes | yes |
-| `VIBRATE` | yes | **no** — until #208 |
+| `VIBRATE` | yes | **yes** — since #208 (2026-09-05); it read *no* in the 2026-08-17 reading |
 | `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` (androidx-injected) | yes | yes |
 | `INTERNET`, `AD_ID`, any media/storage/health permission | no | no |
 | `uses-feature` | `android.hardware.type.watch`; `android.hardware.audio.output` `required="false"` | **none at all** |

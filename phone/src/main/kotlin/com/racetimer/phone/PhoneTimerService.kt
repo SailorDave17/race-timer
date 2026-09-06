@@ -244,6 +244,9 @@ class PhoneTimerService : Service() {
         runner = PhoneRaceRunner(
             cueSounder = PhoneCueSounder(this),
             cueScheduler = HandlerCueScheduler(),
+            // The felt channel (#208), beside the heard one: the runner buzzes each cue before it
+            // sounds it, on the shared manager's waveforms, declared per PhoneHapticUsagePolicy.
+            cueBuzzer = PhoneCueBuzzer(this),
             // The process's journal, not one of this service's own (#216). A day is a handful of
             // service lifetimes and the record has to span them. An unarmed build, and any test
             // that does not install the Application, both get `DayJournal.OFF`.

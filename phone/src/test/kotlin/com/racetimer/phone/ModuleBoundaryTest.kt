@@ -228,6 +228,54 @@ class ModuleBoundaryTest {
         )
     }
 
+    /**
+     * #208 AC 1: the haptic patterns are shared's, never re-declared here.
+     *
+     * The phone buzzes through the shared `HapticManager`, which composes each voice's waveform
+     * from `CueTiming` — the same boundaries the tone plays on, measured on a wrist. A phone-local
+     * waveform would be the duplicated rule the criterion names as having drifted every time this
+     * boundary has carried one: it would not fail anything, the cue would still buzz, and the hand
+     * would feel a different signal from the one the wrist feels for the same cue.
+     *
+     * So the scan refuses the phone's main sources naming the platform's waveform builders, the
+     * vibrator itself, or the timing and amplitude constants a hand-rolled waveform would be
+     * composed from. `CueTiming.durationMs` stays permitted — it sizes a teardown, and reads a
+     * duration rather than composing one. Comments are read on purpose, for the reason the colour
+     * scan gives: the subject is a textual reference. The names below are assembled for the same
+     * reason the sequence scan assembles its constructors — this file must survive its own scan.
+     */
+    @Test
+    fun `the phone composes no vibration waveform of its own`() {
+        val sources = kotlinSourcesIn("phone")
+        assertTrue("no phone sources were scanned", sources.size >= 7)
+
+        val forbidden = listOf(
+            "Vibration" + "Effect",
+            "create" + "Waveform",
+            "create" + "OneShot",
+            "system" + "Vibrator",
+            "Vibrator" + "Manager",
+            "LONG_" + "ON", "LONG_" + "OFF",
+            "SHORT_" + "ON", "SHORT_" + "OFF",
+            "GUN_" + "REPEAT",
+            "SYNC_" + "AMPLITUDE", "PROMPT_" + "AMPLITUDE",
+        )
+        val offenders = sources.flatMap { file ->
+            file.readLines().withIndex()
+                .filter { (_, line) -> forbidden.any { line.contains(it) } }
+                .map { (index, line) -> "${file.name}:${index + 1}: ${line.trim()}" }
+        }
+        assertEquals(
+            "Phone sources composing a vibration. Every cue's waveform comes from the shared " +
+                "HapticManager in :shared-android, built from CueTiming and measured on the watch " +
+                "(#144, #187, #201); the phone hands shared's pattern over through CueBuzzer and " +
+                "declares only the usage (PhoneHapticUsagePolicy). A local waveform would not fail " +
+                "— the hand would simply feel a different signal from the wrist for the same cue.",
+            emptyList<String>(),
+            offenders,
+        )
+    }
+
     @Test
     fun `the display choice is written to no persistent store`() {
         val sources = kotlinSourcesIn("phone")
