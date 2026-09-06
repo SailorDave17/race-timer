@@ -10,6 +10,11 @@ text or composed background, no transparency). The machine-checkable half is che
 asserted here: run `python docs/store/check-screenshots.py`. Nothing in this file states a pixel
 count or an image count — those are the claims that go stale first.
 
+**The phone form factor's set lives in [`phone/`](phone/README.md)**
+([#213](https://github.com/SailorDave17/race-timer/issues/213)), under Play's *phone* rules, which
+differ from these in the one dimension that matters — the same checker applies each directory's
+rules to that directory. This file describes the Wear images in this directory only.
+
 ## Which build these depict
 
 | | |
