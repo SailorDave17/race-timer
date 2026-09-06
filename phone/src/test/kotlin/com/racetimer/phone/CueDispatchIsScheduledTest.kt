@@ -23,9 +23,12 @@ internal class SteppedClock(var nowMs: Long = 0L) : MonotonicClock {
  * Records what the runner asked of the audio path, in order, so ordering claims — prepared
  * before the first cue, warmed up on selection — are asserted as positive evidence rather than
  * inferred from silence.
+ *
+ * [events] can be handed in, so that a [RecordingBuzzer] built on the same list produces ONE
+ * interleaved log — which is the only way "the buzz precedes the tone" is an ordering a test can
+ * read rather than two orderings it has to correlate (#208).
  */
-internal class RecordingSounder : CueSounder {
-    val events = mutableListOf<String>()
+internal class RecordingSounder(val events: MutableList<String> = mutableListOf()) : CueSounder {
     val played = mutableListOf<String>()
 
     override fun prepare() {
@@ -43,6 +46,27 @@ internal class RecordingSounder : CueSounder {
 
     override fun release() {
         events += "release"
+    }
+}
+
+/**
+ * Records what the runner asked of the haptic path (#208), on a log it can share with
+ * [RecordingSounder] — see there.
+ *
+ * [buzzed] keeps the pattern OBJECT and the gun flag, not a label: a fake that records only that
+ * a call happened cannot fail whichever pattern ships, and the gun flag is the one argument with
+ * two behaviours behind it (cairn `a-fake-that-drops-an-argument-makes-two-behaviours-one`).
+ */
+internal class RecordingBuzzer(val events: MutableList<String> = mutableListOf()) : CueBuzzer {
+    val buzzed = mutableListOf<Pair<SignalPattern, Boolean>>()
+
+    override fun buzz(pattern: SignalPattern, isGun: Boolean) {
+        events += "buzz:${pattern.label}"
+        buzzed += pattern to isGun
+    }
+
+    override fun cancel() {
+        events += "buzz-cancel"
     }
 }
 

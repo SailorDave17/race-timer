@@ -38,15 +38,16 @@ import com.racetimer.shared.leadInBaseOf
  * and can never double-fire. What it must never be is the thing the cue path relies on, and the
  * unit test proves it is not by driving a whole race through the scheduler with no poll running.
  *
- * [cueSounder] and [cueScheduler] default to no-ops so a test or preview can construct this without
- * an audio stack; production construction is [PhoneTimerService.onCreate], which supplies the real
- * pair.
+ * [cueSounder], [cueScheduler] and [cueBuzzer] default to no-ops so a test or preview can construct
+ * this without an audio or haptic stack; production construction is [PhoneTimerService.onCreate],
+ * which supplies the real three.
  */
 class PhoneRaceRunner(
     clock: MonotonicClock = SystemMonotonicClock,
     private val cueSounder: CueSounder = CueSounder.SILENT,
     private val cueScheduler: CueScheduler = CueScheduler.NONE,
     private val journal: DayJournal = DayJournal.OFF,
+    private val cueBuzzer: CueBuzzer = CueBuzzer.STILL,
 ) {
 
     val engine = TimerEngine(clock)
@@ -58,14 +59,19 @@ class PhoneRaceRunner(
         private set
 
     /**
-     * Sounds each cue as the engine fires it, whichever path noticed it was due.
+     * Buzzes and sounds each cue as the engine fires it, whichever path noticed it was due.
      *
      * Registered for the life of the runner rather than per race, so a cue can never fire into
-     * a gap between races where nobody was listening. Haptics are deliberately absent — that is
-     * #208, and the watch's ordering lesson (vibration first, audio best-effort) arrives with it.
+     * a gap between races where nobody was listening.
+     *
+     * **Vibration first, always** — the watch's ordering (#208, ported from `TimerService`): the
+     * buzz is one binder call that returns at once, the tone is posted to its own thread and is
+     * best-effort, and audio must never gate the haptic. Both take shared's own pattern, voice
+     * intact, so a cue felt and a cue heard are one definition rather than two.
      */
     private val cueListener = object : TimerListener {
         override fun onCue(cue: SequenceCue) {
+            cueBuzzer.buzz(cue.signal, isGun = cue.isGun)
             cueSounder.playCue(cue.signal)
             // The journal record goes *after* the sound is asked for, so an armed run cannot put
             // itself in front of a cue. Lateness is `offsetMs - remainingMs` and both come from the
@@ -363,10 +369,11 @@ class PhoneRaceRunner(
     private fun cueSchedule(sequence: RaceSequence): String =
         sequence.cues.map { it.offsetMs }.sortedDescending().joinToString(separator = ":")
 
-    /** Tear the cue path down. The owner is going away; nothing plays after this. */
+    /** Tear the cue path down. The owner is going away; nothing plays or buzzes after this. */
     fun release() {
         cueScheduler.cancel()
         engine.removeListener(cueListener)
+        cueBuzzer.cancel()
         cueSounder.release()
     }
 

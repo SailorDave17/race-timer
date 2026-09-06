@@ -43,6 +43,7 @@ service com.racetimer.phone.PhoneTimerService exported=false foregroundServiceTy
 uses-permission android.permission.FOREGROUND_SERVICE
 uses-permission android.permission.FOREGROUND_SERVICE_SPECIAL_USE
 uses-permission android.permission.POST_NOTIFICATIONS
+uses-permission android.permission.VIBRATE
 uses-permission android.permission.WAKE_LOCK
 uses-permission io.github.sailordave17.racetimer.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
 

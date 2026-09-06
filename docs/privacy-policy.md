@@ -1,6 +1,6 @@
 # Privacy Policy — Mad Cow Race Timer
 
-**Effective date:** 17 August 2026
+**Effective date:** 5 September 2026
 **Applies to:** Mad Cow Race Timer (`io.github.sailordave17.racetimer`) — both the **Wear OS watch
 app** and the **Android phone app**, which ship under one Play listing. Referred to together below
 as *Race Timer*, and distinguished as *the watch app* and *the phone app* wherever they differ.
@@ -77,11 +77,11 @@ for the whole device is a setting Android gives you, and Race Timer works the sa
 | `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_SPECIAL_USE` | To keep the start sequence running accurately while the screen is off, so the horn and vibration cues still fire at the right moment | Both apps |
 | `WAKE_LOCK` | To hold the CPU awake for the duration of a running sequence, so cue timing does not drift while the device is idle. The lock is sized to the remaining race and released when the sequence ends | Both apps |
 | `POST_NOTIFICATIONS` | To show the ongoing-activity notification Android requires for a running foreground service, and which lets you return to the running race | Both apps |
-| `VIBRATE` | To deliver the haptic signals for each race cue | Watch app only |
+| `VIBRATE` | To deliver the haptic signals for each race cue | Both apps |
 
 Neither app requests location, microphone, camera, contacts, storage, body sensors, or any health
 or fitness permission. Adding the phone app introduced **no permission the watch app did not
-already request** — the phone's list is the table above without `VIBRATE`.
+already request** — the two apps request exactly the same set.
 
 ## Sharing
 
@@ -131,6 +131,9 @@ MAINTAINER NOTES — remove this block before publishing.
    - The permission table gained a "Requested by" column because VIBRATE is watch-only. The
      phone app has no haptics until #208, and a policy that claimed one would be describing a
      capability the app does not have.
+     - 2026-09-05, #208 landed: the phone gained VIBRATE and every row now reads "Both apps".
+       The column STAYS — it is the shape the next divergence needs (#219's link is the likely
+       one), and a table that had to regrow it would regrow it under time pressure.
 
    Note the Changes-to-this-policy section promises an update BEFORE a version that affects this
    policy is published. That is why #212 sits ahead of the phone upload (#214) rather than
@@ -204,9 +207,12 @@ MAINTAINER NOTES — remove this block before publishing.
        PHONE: the same list WITHOUT VIBRATE, plus the same injected permission. NO uses-feature
          at all. Its only meta-data are androidx startup initialisers (emoji2, lifecycle,
          profileinstaller), none of which is declaration-relevant.
-     So the phone's permission set is a SUBSET of the watch's, and the app-wide list is unchanged
-     by the phone existing. That is the single most useful fact for Play: no declaration that
-     rests on the permission list has to move. DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION is
+       PHONE, re-read 2026-09-05 (#208): VIBRATE added. The two permission lists are now
+         IDENTICAL; uses-feature and meta-data unchanged. Read off docs/declared-surface.lock,
+         which the CI check regenerated from the merged manifest in the same change.
+     So the phone's permission set is a SUBSET of the watch's (equal to it since #208), and the
+     app-wide list is unchanged by the phone existing. That is the single most useful fact for
+     Play: no declaration that rests on the permission list has to move. DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION is
      androidx-injected, built from applicationId, app-private and signature-level, and is not
      user-visible -- it is recorded so that finding it at upload time is not a surprise, and it
      is deliberately absent from the published table, which lists what the app ASKS FOR and why.
@@ -243,9 +249,12 @@ MAINTAINER NOTES — remove this block before publishing.
    without doing that reading defeats the whole mechanism, which is why the failure message says
    so rather than just printing a diff.
 
-   The two that will land next, and what each breaks:
+   The two that were predicted to land next, and what each breaks:
    - #208 gives the phone haptics, which adds VIBRATE to the phone manifest. The permission
      table's "Watch app only" becomes wrong that day, and it is the only row that changes.
+     LANDED 2026-09-05, exactly as predicted: one row moved, the effective date moved with it
+     (the Changes section promises that), and the lock caught the manifest change before the
+     document was opened — which is the mechanism working in the direction it was built for.
    - #219 links the two devices over the Wearable Data Layer. That is the big one: data would
      then leave a device BY THE APP'S OWN ACTION, and every "transmits nothing" claim here has
      to be re-argued from scratch rather than edited. #212 was sequenced before the link stories
