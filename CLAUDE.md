@@ -50,3 +50,34 @@ Start, via the `ACTION_START` restore path.
 
 Watch pairing details and the adb pair-port gotcha are recorded in the cairn repo at
 `memory/reference/wear-os-adb-pairing-2026-07-30.md`.
+
+## The CI gate in acceptance criteria
+
+When a story's criteria need the gate to be green, write **"the gate as `.github/workflows/ci.yml`
+defines it is green"** — never a list of commands, and never a count of them. A list of this kind
+fails by staying true: every command in it keeps running and passing while the gate grows steps it
+does not name, so a session working from it gets a green result and no signal that it skipped
+anything. #192's criterion named a subset, and the step that caught that story's only real breakage
+— `:wear:testDebugUnitTest`, red on `ForegroundNotificationTest` after AGP 8.13 moved the merged
+manifest — was not in it (#273). The README and the wiki stopped copying the gate for the same
+reason (#252, #246); an issue body is the copy nothing checks.
+
+A criterion that names a command **for a reason of its own** is not a gate list and stays: #261 names
+`:wear:bundleRelease` to prove the watch was *not* moved, and #193 compares `:shared:test`'s test
+count before and after. Say the reason in the criterion, so the next reader can tell the two apart.
+
+When you need the command list itself, derive it rather than copy it:
+
+```
+grep -nE '^\s+run:' .github/workflows/ci.yml
+```
+
+That prints every step that runs anything, whatever it runs, so a step added in a new form still
+shows up. A `run: |` line is a block — read the lines beneath it (the declared-surface check is one).
+A pattern on the commands themselves, such as `run: ./gradlew`, drops the Python checks, which is the
+same defect one level down. The `-Porg.gradle.java.installations.fromEnv=…` on each Gradle line
+points the runner at setup-java's JDKs; locally the Foojay resolver in `settings.gradle.kts` does that
+job, which is why `githooks/checks` omits it.
+
+And do not write the number of steps down anywhere, a comment included: a count is a list with the
+names taken out, and it goes stale the same way.
