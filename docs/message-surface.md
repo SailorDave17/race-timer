@@ -28,7 +28,7 @@ follows from two facts:
    | State | Colour | When |
    |---|---|---|
    | Normal | `#1A1A2E` deep navy | idle, or running above 1:00 |
-   | One minute | `#A0660A` amber | running, ≤ 60 s |
+   | One minute | `#553000` dark amber (`#A0660A` until #277) | running, ≤ 60 s |
    | Final ten | `#7B0000` dark red | running, ≤ 10 s |
    | Finished | `#005000` dark green | gun fired |
 
@@ -38,6 +38,19 @@ follows from two facts:
 
    Amber-on-amber is the case that bites. Any message that relies on the background being navy will
    disappear at exactly the moment the race gets tense.
+
+   **Why the amber is dark (#277).** `#A0660A` was the only state background bright enough to cost
+   its own digits contrast. White on it was 4.77 : 1, barely over the bar, and in sun it emitted
+   enough light to raise the floor under the numerals as well as under itself. `#553000` keeps the
+   hue, which is what signals the state, and cuts the luminance to under a quarter. The digits are now
+   **11.61 : 1**, asserted by `MessageContrastTest`. The one remaining check is whether it still
+   reads as "inside a minute" on a wrist in real sun, and that needs the watch outdoors. The candidates
+   and the sunlight figures, which are modelled rather than measured, are on
+   [#277](https://github.com/SailorDave17/race-timer/issues/277).
+
+   Most of the figures and defects below were measured against the old amber and are labelled where
+   that matters. On the dark amber, bare `#FFC107` clears the bar (7.12 : 1). The scrims stay because
+   of rule 1, not because the text would otherwise fail.
 
 ## Three tiers
 
@@ -170,7 +183,7 @@ occupies, and Start is not on screen to be tapped.
 | Readout | Stays visible at `alpha = 0.4f` — communicates "not armed" without removing context |
 | Panel | Scrim `#E6000000` (90 % black), 8 dp rounded, 1 dp `#D32F2F` border. The border carries "this is blocking"; the text stays amber so it never becomes red-on-red |
 | Type | `caption1`, amber `#FFB74D`, centre-aligned, **max 3 lines** |
-| Contrast | 11.38 : 1 worst case, 11.95 : 1 best — computed by `MessageContrast.kt`, asserted by `MessageContrastTest`. The 90 % scrim makes the background nearly irrelevant, and the border is held to WCAG's **non-text** 3 : 1 (it lands at 3.96 : 1) rather than the 4.5 : 1 the copy clears |
+| Contrast | 11.73 : 1 worst case (finished green; amber was the worst at 11.38 until #277), 11.95 : 1 best — computed by `MessageContrast.kt`, asserted by `MessageContrastTest`. The 90 % scrim makes the background nearly irrelevant, and the border is held to WCAG's **non-text** 3 : 1 (it lands at 4.08 : 1) rather than the 4.5 : 1 the copy clears |
 | Primary button | Labelled by the **remedy**, not the problem: "Settings", "Grant", "Retry". Never "OK" |
 | Secondary button | None. The pre-start screen has exactly one control ([#55](https://github.com/SailorDave17/race-timer/issues/55) removed Reset), and the remedy takes its place |
 | Start | **Absent**, not disabled. A greyed Start on a watch invites repeated taps |
@@ -206,16 +219,18 @@ used to give were both wrong by more than a hundred lines before anyone noticed.
 #96 is why it needed the scrim. Until then every notice it carried was confined to the pre-start
 screen, where navy is the only background and bare `#FFC107` clears the bar at 10.46 : 1 — the
 discard warning still goes without a scrim for exactly that reason. #96's warning stays up through
-the amber minute, where the same colour lands at 2.93 : 1. The rule that decides which states each
-notice can appear in lives in `shared/StartPreconditions.kt`, and `MessageContrastTest` derives the
-backgrounds by *driving* it rather than by restating them here.
+the amber minute, where the same colour landed at 2.93 : 1 on the amber before #277. The rule that
+decides which states each notice can appear in lives in `shared/StartPreconditions.kt`, and
+`MessageContrastTest` derives the backgrounds by *driving* it rather than by restating them here.
 
 Use this tier for anything mid-sequence that needs a *sustained* action or a standing caveat, and Tier 1
 for anything that is merely news.
 
 ### The amber-on-amber defect — fixed in #123
 
-Bare `#FFC107` on the four backgrounds, which is what the re-sync prompt drew until #123:
+Bare `#FFC107` on the four backgrounds, which is what the re-sync prompt drew until #123. The
+one-minute row is the amber of that time, `#A0660A`. On `#553000`, since #277, it is 7.12 : 1 and
+passes:
 
 | Background state | Contrast | | Prompt reachable there? |
 |---|---|---|---|
@@ -455,9 +470,11 @@ call; what has not been demonstrated is the tail-write site setting the notice.
 
 ---
 
-Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144.
+Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144, #277.
 Owner: SailorDave17.
-Last reviewed: 2026-08-13 (#231 — the copy budget gained the surface it was derived for. The
+Last reviewed: 2026-09-25 (#277 darkened the one-minute amber to `#553000`. The state table, the
+Tier 2 worst case and border figure, and the old-amber labels on the defect history were updated to
+match. Before that, 2026-08-13: #231 — the copy budget gained the surface it was derived for. The
 ~60-character rule was Tier 1's arithmetic applied to all three surfaces; the per-surface figures now
 live in `shared/BannerLayout.kt` as `MessageSurface` and are asserted, and this document's own "34
 characters" is one of the two assertions pinning them. Previously #96 — Tier 3 gained its first
