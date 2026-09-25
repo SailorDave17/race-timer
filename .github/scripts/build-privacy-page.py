@@ -74,11 +74,29 @@ def strip_maintainer_block(text):
         raise SystemExit(
             f"expected exactly 1 maintainer block in {SOURCE}, found {count} -- refusing to publish"
         )
+    # The pattern is non-greedy, so the block ends at its FIRST `-->` -- which is also where an HTML
+    # comment ends, so a `-->` written inside the block ends it early in the source as well. The two
+    # checks below both miss that: the MAINTAINER literal sat in the part that was removed, and so did
+    # the opening marker. The rest of the block publishes, and the script exits 0 (#266). A `-->` left
+    # anywhere after the match is that case, and this names the line that caused it.
+    block = pattern.search(text)
+    if "-->" in text[block.end():]:
+        cut = text.count("\n", 0, text.rfind("-->", 0, block.end())) + 1
+        raise SystemExit(
+            f"{SOURCE} line {cut}: a `-->` inside the maintainer block closes the HTML comment there, "
+            "so the rest of the block would publish -- reword it, then rebuild. Refusing to publish"
+        )
     if "MAINTAINER" in stripped:
         raise SystemExit("maintainer text survived the strip -- refusing to publish")
     # The block is the only HTML comment in the file; anything left is unexpected and worth a stop.
     if "<!--" in stripped:
         raise SystemExit("an HTML comment survived the strip -- refusing to publish")
+    # The checks above ask whether the markers were found. This one asks whether the output is clean,
+    # in its own vocabulary: no comment terminator may survive, wherever it came from. It is also a
+    # spare for the premature-terminator check above, which exists to name the cause -- delete that
+    # one and this still refuses, with a message that names only the symptom.
+    if "-->" in stripped:
+        raise SystemExit("an HTML comment terminator `-->` survived the strip -- refusing to publish")
     return stripped.rstrip() + "\n"
 
 
