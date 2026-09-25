@@ -250,7 +250,9 @@ fun TimerScreen(
             // amber text it used to be computed 2.93 : 1 against a 4.5 : 1 bar, on the screen a
             // sailor reads under stress. The scrim is Tier 1's, opaque, so the tier has one contrast
             // case rather than four; `MessageContrastTest` asserts it and asserts the old bare text
-            // failing, so removing this reddens the suite.
+            // failing. Since #277 darkened the amber, bare text would clear there (7.12 : 1), so the
+            // scrim is margin rather than rescue, and it stays under rule 1. The failing control is
+            // pinned to the amber it was measured on.
             if (showResyncPrompt) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -298,7 +300,8 @@ fun TimerScreen(
             // The scrim is not optional here and #96 is why. Until then every notice reaching this
             // branch was confined to the pre-start screen, where navy is the only background; the
             // Do Not Disturb warning stays up through the amber minute and the red final ten, which
-            // is the exposure that made bare `#FFC107` a defect in #123. `MessageContrastTest`
+            // is the exposure that made bare `#FFC107` a defect in #123. (#277's darker amber
+            // would pass bare text, and the scrim stays anyway under rule 1.) `MessageContrastTest`
             // derives this surface's backgrounds by driving `armedNotice`, so the check follows the
             // rule rather than a comment.
             //

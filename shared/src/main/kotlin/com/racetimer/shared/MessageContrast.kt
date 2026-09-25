@@ -30,8 +30,23 @@ package com.racetimer.shared
 /** Deep navy — idle, or running above 1:00. */
 const val BG_NORMAL_ARGB = 0xFF1A1A2EL
 
-/** Amber — running, inside 1:00. The state that makes amber text a problem. */
-const val BG_ONE_MINUTE_ARGB = 0xFFA0660AL
+/**
+ * Dark amber — running, inside 1:00. Darkened by #277 from `#A0660A`, which had been the one state
+ * background bright enough to make amber text a problem.
+ *
+ * The old value had a relative luminance of 0.170, about fifteen times navy's. In sun it was the
+ * only background that emitted enough light to raise the floor under its own digits: white on it
+ * was 4.77 : 1 indoors, barely over the bar, and the weakest state outdoors too. The hue signals the
+ * state and the luminance was doing the damage, so this keeps the hue and cuts the luminance to
+ * under a quarter (0.040): the digits are now 11.61 : 1 here. #12's sunlight model rates this as
+ * the one background change worth making. The chosen value keeps most of that gain while staying
+ * clearly distinct from navy and from the Tier 1/3 scrim. The figures and the rejected candidates
+ * are on #277.
+ *
+ * Only the wrist, in real sun, can say whether this still reads as "inside a minute" and not as a
+ * second navy. That is #277's last criterion, and nothing here can check it.
+ */
+const val BG_ONE_MINUTE_ARGB = 0xFF553000L
 
 /** Dark red — running, final 10 s. */
 const val BG_FINAL_TEN_ARGB = 0xFF7B0000L
@@ -112,9 +127,11 @@ fun renderedBackgroundsFor(stateBackgroundArgb: Long): List<Long> =
  *
  * This is the one element the app exists to display, and until #12 it was the only text on the
  * screen with **no contrast guard at all** — `MessageContrastTest` covered all three message tiers
- * and never the numerals. Amber is the tight background at 4.77 : 1, which clears the bar with
- * little enough room that a future retune of [BG_ONE_MINUTE_ARGB] could take it under without
- * anything reporting so; that is what the digit test now stands in front of.
+ * and never the numerals. Amber was the tight background at 4.77 : 1, which cleared the bar with
+ * little enough room that a retune of [BG_ONE_MINUTE_ARGB] could take it under without anything
+ * reporting so; that is what the digit test now stands in front of. #277 was that retune, in the
+ * safe direction: amber is now 11.61 : 1, and the tightest background is the finished green at
+ * 9.78 : 1.
  */
 const val COUNTDOWN_DIGIT_ARGB = 0xFFFFFFFFL
 
@@ -159,17 +176,18 @@ const val TIER2_TEXT_ARGB = 0xFFFFB74DL
  * 10 % of the background on purpose: the blocking panel covers the Start button on a screen whose
  * background is the sailor's only cue to how much time is left, and a fully opaque plate reads as a
  * separate surface floating over a dead screen. The cost is four contrast cases instead of one,
- * which is affordable because they span 11.38–11.95 : 1 — the whole range clears the bar with room
- * that Tier 3 bare-on-amber never had. `compositeOver` is what makes that claim checkable, and
- * `MessageContrastTest` checks it on every background rather than on the one that looks worst.
+ * which is affordable because they span 11.73–11.95 : 1 (11.38 at the bottom until #277 darkened
+ * the amber) — the whole range clears the bar with room that Tier 3 bare-on-amber never had.
+ * `compositeOver` is what makes that claim checkable, and `MessageContrastTest` checks it on every
+ * background rather than on the one that looks worst.
  */
 const val TIER2_SCRIM_ARGB = 0xE6000000L
 
 /**
  * Tier 2 border, 1 dp. A UI-component boundary rather than text, so its bar is WCAG's non-text
- * 3 : 1 ([WCAG_NON_TEXT_MIN]) and not the 4.5 : 1 the copy has to clear. It lands at 3.96 : 1 on
- * the worst background, which passes the bar it is actually held to and fails the other — worth
- * stating, because reading the wrong bar off this file would look like a defect.
+ * 3 : 1 ([WCAG_NON_TEXT_MIN]) and not the 4.5 : 1 the copy has to clear. It lands at 4.08 : 1 on
+ * the worst background (3.96 until #277), which passes the bar it is actually held to and fails
+ * the other — worth stating, because reading the wrong bar off this file would look like a defect.
  */
 const val TIER2_BORDER_ARGB = 0xFFD32F2FL
 

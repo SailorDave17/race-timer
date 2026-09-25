@@ -29,6 +29,19 @@ import org.junit.Test
  */
 class MessageContrastTest {
 
+    /**
+     * The one-minute background that shipped until #277 darkened it to [BG_ONE_MINUTE_ARGB].
+     *
+     * The negative controls below record defects measured against *this* colour. Every scrim in the
+     * app was added because text went under the bar on it. On the darkened amber the same bare text
+     * clears (`#FFC107` at 7.12 : 1), so a control still measuring the live constant would assert a
+     * failure that no longer happens and turn red for the wrong reason. Pinning them here keeps
+     * each one proving what it was written to prove: that this arithmetic reports a real
+     * failure as a failure. The scrims stay, because rule 1 of `docs/message-surface.md` still says
+     * to use one.
+     */
+    private val AMBER_BEFORE_277 = 0xFFA0660AL
+
     /** Enough samples either side of every threshold in [backgroundArgbFor] to reach all its branches. */
     private val remainingSamples = listOf(
         -60_000L, -1L, 0L, 1L, 9_999L, 10_000L, 10_001L, 59_999L, 60_000L, 60_001L, 300_000L,
@@ -129,7 +142,7 @@ class MessageContrastTest {
     // --- Negative controls: the defects this file was written to catch --------------------------
 
     @Test fun `the un-scrimmed prompt that shipped before failed on the amber background`() {
-        val ratio = effectiveContrast(TIER3_TEXT_ARGB, null, BG_ONE_MINUTE_ARGB)
+        val ratio = effectiveContrast(TIER3_TEXT_ARGB, null, AMBER_BEFORE_277)
         assertEquals(2.93, ratio, 0.01)
         assertFalse("amber-on-amber must not pass, or this suite proves nothing", ratio >= WCAG_NORMAL_TEXT_MIN)
     }
@@ -138,11 +151,11 @@ class MessageContrastTest {
         // docs/message-surface.md still proposed this alpha as Tier 3's remedy. It passes, which is
         // why it survived unchallenged — but it gives back 1.5 : 1 on amber for nothing.
         val eighty = 0xCC3A2A00L
-        assertEquals(6.55, effectiveContrast(TIER1_TEXT_ARGB, eighty, BG_ONE_MINUTE_ARGB), 0.01)
+        assertEquals(6.55, effectiveContrast(TIER1_TEXT_ARGB, eighty, AMBER_BEFORE_277), 0.01)
         assertTrue(
             "the opaque scrim must beat the 80 % one it replaced",
-            effectiveContrast(TIER1_TEXT_ARGB, TIER1_SCRIM_ARGB, BG_ONE_MINUTE_ARGB) >
-                effectiveContrast(TIER1_TEXT_ARGB, eighty, BG_ONE_MINUTE_ARGB),
+            effectiveContrast(TIER1_TEXT_ARGB, TIER1_SCRIM_ARGB, AMBER_BEFORE_277) >
+                effectiveContrast(TIER1_TEXT_ARGB, eighty, AMBER_BEFORE_277),
         )
     }
 
@@ -207,18 +220,23 @@ class MessageContrastTest {
         // The doc claims ">= 11 : 1 on every background state". Asserting the worst case is what
         // makes that sentence checkable — it was the strongest claim in the Tier 2 section and the
         // only one nothing could have caught, which is exactly how the 8.6 : 1 error survived.
-        assertEquals(11.38, effectiveContrast(TIER2_TEXT_ARGB, TIER2_SCRIM_ARGB, BG_ONE_MINUTE_ARGB), 0.01)
+        //
+        // The worst case moved from amber (11.38) to the finished green when #277 darkened the
+        // amber. The doc names the worst figure, so the minimum is pinned as well as bounded: a
+        // retune that moves it again fails here rather than leaving the doc quoting a stale case.
+        assertEquals(11.73, effectiveContrast(TIER2_TEXT_ARGB, TIER2_SCRIM_ARGB, BG_FINISHED_ARGB), 0.01)
         assertEquals(11.95, effectiveContrast(TIER2_TEXT_ARGB, TIER2_SCRIM_ARGB, BG_FINAL_TEN_ARGB), 0.01)
         val worst = listOf(BG_NORMAL_ARGB, BG_ONE_MINUTE_ARGB, BG_FINAL_TEN_ARGB, BG_FINISHED_ARGB)
             .minOf { effectiveContrast(TIER2_TEXT_ARGB, TIER2_SCRIM_ARGB, it) }
+        assertEquals(11.73, worst, 0.01)
         assertTrue("the doc's >= 11 : 1 claim, measured: %.2f".format(worst), worst >= 11.0)
     }
 
     @Test fun `the Tier 2 panel beats bare amber on the background that would have caught it`() {
         // Negative control, same shape as Tier 3's above: without the scrim this text lands at
         // 2.76 : 1 on amber and fails. The panel exists to make that impossible, so the failing
-        // case is asserted to fail.
-        val bare = effectiveContrast(TIER2_TEXT_ARGB, null, BG_ONE_MINUTE_ARGB)
+        // case is asserted to fail — on the amber it was measured against (see [AMBER_BEFORE_277]).
+        val bare = effectiveContrast(TIER2_TEXT_ARGB, null, AMBER_BEFORE_277)
         assertEquals(2.76, bare, 0.01)
         assertFalse("un-scrimmed Tier 2 must not pass, or the scrim proves nothing", bare >= WCAG_NORMAL_TEXT_MIN)
     }
@@ -245,17 +263,23 @@ class MessageContrastTest {
         )
     }
 
-    @Test fun `the cue-volume warning would fail un-scrimmed, which is why it has a scrim`() {
+    @Test fun `the cue-volume warning would have failed un-scrimmed on the amber it was scrimmed for`() {
         // The negative control, in the same shape as the re-sync prompt's above. Bare `#FFC107`
         // clears the bar on navy at 10.46 : 1, so a warning confined to the pre-start screen could
-        // go without a scrim — the discard warning does. This one cannot: it is on screen through
-        // the amber minute, where the same colour lands at 2.93 : 1.
+        // go without a scrim — the discard warning does. This one could not: it is on screen
+        // through the amber minute, where the same colour landed at 2.93 : 1.
+        //
+        // Reachability is still derived from the live rule; only the one-minute colour is swapped
+        // for the one #96 measured against. Since #277 bare text clears on every background this
+        // warning can reach, so on the live palette the scrim is margin rather than rescue.
         val reachable = backgroundsWhen { it in statesTheArmedNoticeSpeaksIn() }
         assertTrue(
             "the amber background must be reachable, or this control proves nothing",
             BG_ONE_MINUTE_ARGB in reachable,
         )
-        val bare = reachable.minOf { effectiveContrast(TIER3_TEXT_ARGB, null, it) }
+        val bare = reachable
+            .map { if (it == BG_ONE_MINUTE_ARGB) AMBER_BEFORE_277 else it }
+            .minOf { effectiveContrast(TIER3_TEXT_ARGB, null, it) }
         assertFalse(
             "un-scrimmed this warning must fail somewhere, at %.2f : 1".format(bare),
             bare >= WCAG_NORMAL_TEXT_MIN,
@@ -275,11 +299,32 @@ class MessageContrastTest {
 
     @Test fun `the countdown digits are legible on every background they can render on`() {
         // The element the whole app exists to display, and until #12 the only text on the screen
-        // this file did not measure. Amber is the tight one at 4.77 : 1.
+        // this file did not measure. Amber was the tight one at 4.77 : 1 until #277.
         assertLegible(
             "countdown digits", COUNTDOWN_DIGIT_ARGB, null,
             renderedBackgroundsWhen { true },
         )
+    }
+
+    @Test fun `darkening the amber took the digits from barely over the bar to well clear of it`() {
+        // #277's recorded figure, asserted so it cannot age in the KDoc or the doc. The old value
+        // is asserted too: it is the evidence that the retune moved the right way, and it matches
+        // the 4.77 : 1 on #12 and #277.
+        val before = contrastRatio(COUNTDOWN_DIGIT_ARGB, AMBER_BEFORE_277)
+        val after = contrastRatio(COUNTDOWN_DIGIT_ARGB, BG_ONE_MINUTE_ARGB)
+        assertEquals(4.77, before, 0.01)
+        assertEquals(11.61, after, 0.01)
+        assertTrue("the retune must raise the digits, not sink them", after > before)
+    }
+
+    @Test fun `the finished green is now the tightest background for the digits`() {
+        // The digit guard's margin is set by whichever background is tightest. That was amber at
+        // 4.77 : 1, and after #277 it is green at 9.78 : 1. Pinned so the next retune says out loud
+        // which background became the tight one, instead of the KDoc quietly naming the wrong state.
+        val tightest = renderedBackgroundsWhen { true }
+            .minByOrNull { contrastRatio(COUNTDOWN_DIGIT_ARGB, it) }!!
+        assertEquals(BG_FINISHED_ARGB, tightest)
+        assertEquals(9.78, contrastRatio(COUNTDOWN_DIGIT_ARGB, tightest), 0.01)
     }
 
     @Test fun `the flash the digits used to carry failed the bar at its trough`() {
