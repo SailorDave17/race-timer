@@ -291,14 +291,36 @@ Two assertions now stop that drifting again, and they fail for different reasons
 - It also pins #96's notice to **three** lines on Tier 3 — the render the watch actually drew. That
   check is independent of the calibration, which is what makes it more than circular.
 
-### What is still a measurement rather than arithmetic
+### Where the Tier 3 plate sits, per line count (#233)
 
-`STATUS_LINE_HEIGHT_BUDGET_FRACTION` is a **two-line** figure and has not been re-measured. The Tier 3
-plate sits inside a vertically centred `Column`, so a third line does not simply extend it downwards —
-it lifts the top edge onto a narrower chord, by an amount nothing in `shared/` can compute. The
-evidence that the three-line plate clears the bezel is #96's check on the wrist, not the geometry
-test. Scaling the constant by 3/2 would produce a number that *looked* derived and was not, which is
-the defect this section exists to record.
+Until #233 the plate's geometry was two constants: a top edge of 0.09, and a height of 0.23 described
+as two lines. Neither held up when measured again. The top edge has moved down to 0.113–0.122, and
+0.23 is about what **three** lines measure, not two, which come to 0.16. *Measured on an SM-R925U*
+from `screencap` pixels, where the plate's opaque scrim is its own edge:
+
+| Screen | Lines | Plate top | Plate height | Button row |
+|---|---|---|---|---|
+| Pre-start | 0 | — | — | Start 119 px |
+| Pre-start | 2 | 55 px | 72 px | Start **111 px** |
+| Running | 0 | — | — | Sync 136 px |
+| Running | 3 | 51 px | 106 px | Sync **81 px** |
+
+The plate sits in a vertically centred `Column`, so a taller plate *does* sit higher — but only while
+the column has room to spare, and it has less than any notice that ships needs (68 px pre-start,
+56 px running). Past that point the column is pinned at its top padding, the label and the plate hold
+their place, and the overflow comes out of the button row. The top edge stops rising and the plate
+grows downwards, so for every shipped notice the top edge alone decides the bezel. It clears with
+11 px to spare at the corner. Had the column kept centring, the three-line plate's top would sit at
+24 px and the bezel would cut it.
+
+`statusLineTopFraction` and `statusLineHeightFraction` in `shared/BannerLayout.kt` carry this per
+line count and per screen, and `BannerLayoutTest` proves every line count the surface allows against
+the circle. The unbounded-centring case is asserted to fail. The model is also checked against
+something it was not built from: it predicts the button squeeze the watch drew, 8 px and 55 px.
+
+**The squeeze is real and is not fixed here.** A three-line notice mid-race turns Sync and Stop into
+81 px pills. The notice covers nothing and clears the bezel, and that is all #96 checked. #301 owns
+what to do about it.
 
 ## Rules any new message must follow
 

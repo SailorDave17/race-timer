@@ -327,7 +327,10 @@ fun TimerScreen(
                         // Capped so the scrim stays inside the bezel. Measured on an SM-R925U: left
                         // uncapped this drew from x=30 to x=420 at y=40, where the round display's
                         // visible chord is only x=97 to x=353 — the plate's top corners were cut.
-                        // The arithmetic and the negative control are in `shared/BannerLayout.kt`.
+                        // The arithmetic and the negative control are in `shared/BannerLayout.kt`,
+                        // with where the plate sits per line count (#233). Those figures were
+                        // measured on this column as it is, so changing what it holds above or
+                        // below the plate, or the 2 dp spacer, moves `StatusLineScreen`'s numbers.
                         .widthIn(max = configuration.screenWidthDp.dp * STATUS_LINE_MAX_WIDTH_FRACTION)
                         .background(Color(TIER3_SCRIM_ARGB), shape = RoundedCornerShape(6.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)

@@ -77,27 +77,21 @@ class BannerLayoutTest {
 
     // --- Tier 3 status line (#13) ---------------------------------------------------------------
 
-    @Test fun `the status line fits the round screen at the height it actually sits`() {
-        assertTrue(
-            bannerFitsRoundScreen(
-                topFraction = STATUS_LINE_TOP_FRACTION,
-                widthFraction = STATUS_LINE_MAX_WIDTH_FRACTION,
-                heightFraction = STATUS_LINE_HEIGHT_BUDGET_FRACTION,
-            )
-        )
-    }
-
     @Test fun `the status line width that shipped before the cap did not fit`() {
         // The negative control, and the measurement that justified the constant. #13's notification
         // warning drew its scrim across 390 px of a 450 px screen (0.87) starting 40 px down; the
         // visible chord there is 256 px, so the plate's top corners were outside the circle.
-        // Without this assertion the test above passes just as happily against a cap of 0.9.
+        // Without this assertion the fit below passes just as happily against a cap of 0.9.
+        //
+        // Pinned to #13's own box, (30,40)-(420,142), rather than read from the live geometry. It
+        // read `STATUS_LINE_TOP_FRACTION` until #233 re-measured that edge and found it had moved
+        // down, and a control that reads a live figure goes red when the figure *improves*.
         assertFalse(
-            "an uncapped status line must not fit, or the cap above proves nothing",
+            "an uncapped status line must not fit, or the cap proves nothing",
             bannerFitsRoundScreen(
-                topFraction = STATUS_LINE_TOP_FRACTION,
+                topFraction = 40f / 450f,
                 widthFraction = 0.87f,
-                heightFraction = STATUS_LINE_HEIGHT_BUDGET_FRACTION,
+                heightFraction = 102f / 450f,
             )
         )
     }
@@ -106,19 +100,100 @@ class BannerLayoutTest {
         // The relationship is the point, not the two numbers. A circle is widest at its equator, so
         // a surface nearer the top has less room — and anyone widening the status line to match the
         // banner "for consistency" is undoing a measurement.
-        assertTrue(STATUS_LINE_TOP_FRACTION < BANNER_TOP_FRACTION)
+        for (screen in StatusLineScreen.values()) {
+            assertTrue(screen.name, screen.fullColumnTopFraction < BANNER_TOP_FRACTION)
+        }
         assertTrue(STATUS_LINE_MAX_WIDTH_FRACTION < BANNER_MAX_WIDTH_FRACTION)
     }
 
-    // --- How much copy each surface holds (#231) ------------------------------------------------
+    // --- Where the plate sits, per line count (#233) --------------------------------------------
     //
-    // There is deliberately **no** test here that the three-line status plate fits the circle, and
-    // the reason is worth more than the test would have been. `bannerFitsRoundScreen` measures the
-    // edge furthest from the centre; growing a plate *downwards* from a fixed top moves its bottom
-    // edge towards the equator, so such an assertion passes for any height at all and could never
-    // have gone red. The real plate does not grow downwards — it is inside a centred `Column` and
-    // rises as it grows — and how far it rises is a measurement #231 did not take.
-    // `STATUS_LINE_HEIGHT_BUDGET_FRACTION` carries that gap.
+    // #231 left no test that the three-line plate fits, because the only one it could write passed
+    // for every height: a plate growing downwards from a fixed top moves its far edge towards the
+    // equator. It expected the real plate to rise as it grew, since it sits in a centred `Column`,
+    // and did not measure by how much. #233 measured it, and the plate does rise, but only until
+    // the column fills. Every notice that ships fills it, so from there the plate does grow
+    // downwards. What lets the fit below go red is the ceiling, and the control after it shows the
+    // circle cutting the plate without one.
+
+    /** One px of the reference screen, which is as fine as a `screencap` measurement reads. */
+    private val onePx = 1f / REFERENCE_SCREEN_PX
+
+    @Test fun `the plate grows by one measured line per line`() {
+        // Wiring rather than evidence: the line height and the inset are *solved* from these two
+        // plates, so this proves the function puts them back together, not that they are right.
+        // The next test is the one that checks the model against something it was not built from.
+        assertEquals(72f / 450f, statusLineHeightFraction(2), onePx / 2)
+        assertEquals(106f / 450f, statusLineHeightFraction(3), onePx / 2)
+    }
+
+    @Test fun `the model predicts the button squeeze the watch drew`() {
+        // The cross-check, and why the model is more than its inputs read back. The spare room
+        // comes from where the label sat, the spacer from the source and the density, and the
+        // squeeze from the buttons, which nothing above was measured from. Start went from 119 to
+        // 111 px under the two-line notice, and Sync from 136 to 81 px under the three-line one.
+        assertEquals(8f / 450f, statusLineOverflowFraction(2, StatusLineScreen.PRE_START), 2 * onePx)
+        assertEquals(55f / 450f, statusLineOverflowFraction(3, StatusLineScreen.RUNNING), 2 * onePx)
+    }
+
+    @Test fun `a notice that ships fills the column, so its plate is pinned where the watch drew it`() {
+        // The two states the watch was measured in, and the finding in one assertion each. Both
+        // overflow, which is what pins the top, and the pinned top is the measured edge.
+        assertTrue(statusLineOverflowFraction(2, StatusLineScreen.PRE_START) > 0f)
+        assertTrue(statusLineOverflowFraction(3, StatusLineScreen.RUNNING) > 0f)
+        assertEquals(55f / 450f, statusLineTopFraction(2, StatusLineScreen.PRE_START), onePx)
+        assertEquals(51f / 450f, statusLineTopFraction(3, StatusLineScreen.RUNNING), onePx)
+    }
+
+    @Test fun `a plate with room to spare sits lower than one that fills the column`() {
+        // Without this the top-edge function could be a constant and every test above would still
+        // hold. A one-line plate fits the spare room on both screens, so the column is still
+        // centred and the plate sits below where a full column pins it.
+        for (screen in StatusLineScreen.values()) {
+            assertEquals(screen.name, 0f, statusLineOverflowFraction(1, screen), 0f)
+            assertTrue(
+                screen.name,
+                statusLineTopFraction(1, screen) > statusLineTopFraction(MessageSurface.STATUS_LINE.maxLines, screen),
+            )
+        }
+    }
+
+    @Test fun `every line count the status line allows fits the round screen, on both screens`() {
+        // The geometry assertion #231 could not write. Driven off the surface's own line budget and
+        // the screens enum, so a fourth line or a third screen is proved rather than assumed.
+        var checked = 0
+        for (screen in StatusLineScreen.values()) {
+            for (lines in 1..MessageSurface.STATUS_LINE.maxLines) {
+                assertTrue(
+                    "${screen.name} at $lines line(s)",
+                    bannerFitsRoundScreen(
+                        topFraction = statusLineTopFraction(lines, screen),
+                        widthFraction = STATUS_LINE_MAX_WIDTH_FRACTION,
+                        heightFraction = statusLineHeightFraction(lines),
+                    )
+                )
+                checked++
+            }
+        }
+        assertEquals("the loops above ran over nothing", 6, checked)
+    }
+
+    @Test fun `a plate that kept centring past a full column would be cut by the bezel`() {
+        // The negative control for the fit above, and it is #231's own premise: that a third line
+        // lifts the top edge onto a narrower chord. Pinned to the running measurement, not read
+        // from the live model, so it cannot go red because the geometry got better. The three-line
+        // plate and its spacer cost 110.25 px against 56 px spare. A column that kept centring
+        // would share the 54.25 px overflow above and below and lift the top from 51 px to about
+        // 24 px, where the chord is too short for a 248 px plate.
+        val width = 248f / 450f
+        val height = 106f / 450f
+        val centredTop = (51f - (106f + 4.25f - 56f) / 2f) / 450f
+        assertFalse(bannerFitsRoundScreen(topFraction = centredTop, widthFraction = width, heightFraction = height))
+        // And the same plate at the edge the watch drew fits, so the ceiling is the whole difference.
+        assertTrue(bannerFitsRoundScreen(topFraction = 51f / 450f, widthFraction = width, heightFraction = height))
+    }
+
+    // --- How much copy each surface holds (#231) ------------------------------------------------
 
     @Test fun `the character model reproduces the figure the doc already publishes`() {
         // The calibration, and the reason `AVERAGE_CHAR_WIDTH_EM` is 0.51 rather than a number
