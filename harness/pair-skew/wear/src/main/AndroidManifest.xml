@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature android:name="android.hardware.type.watch" />
+
+    <!-- allowBackup off: nothing here is worth restoring, and a restore would bring back an old log. -->
+    <application
+        android:allowBackup="false"
+        android:label="PairSkew">
+        <!-- Not standalone: the watch half exists only to talk to the phone half. -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="false" />
+    </application>
+
+</manifest>
