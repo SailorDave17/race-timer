@@ -201,9 +201,10 @@ val archiveReleaseArtifacts = tasks.register("archiveReleaseArtifacts") {
                 //
                 // A DIRTY build is never an upload candidate - the commit does not describe it - so
                 // there is nothing to decide: skip, say so loudly, leave the archive alone, and let
-                // the build carry on. That matters because :wear:bundleRelease is one of the three
-                // quality-gate commands, and failing it would break the gate for a reason that has
-                // nothing to do with the code under test. All three measured clobbers were this case.
+                // the build carry on. That matters because each app's bundleRelease is a step of the
+                // quality gate in .github/workflows/ci.yml, and failing it would break the gate for a
+                // reason that has nothing to do with the code under test. All three measured clobbers
+                // were this case.
                 //
                 // A CLEAN build at a different commit is a genuine conflict between two shippable
                 // artifacts, and nobody should guess which one wins. That one refuses, per the
