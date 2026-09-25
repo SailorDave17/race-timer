@@ -70,19 +70,13 @@ const val BANNER_HEIGHT_BUDGET_FRACTION = 0.19f
 // asserted, rather than as a number typed into a modifier.
 
 /**
- * How far down the screen the Tier 3 status line starts, as a fraction of screen height.
- *
- * Directly beneath the sequence-name label. Measured rather than chosen: the label's box ends at
- * 40 px of a 450 px screen.
- */
-const val STATUS_LINE_TOP_FRACTION = 0.09f
-
-/**
  * The widest a Tier 3 status line may be, as a fraction of screen width.
  *
  * A cap like [BANNER_MAX_WIDTH_FRACTION], and a much tighter one, because the chord this high up
- * the circle is far shorter than the chord at the banner's height. The geometry permits about
- * `0.57`; this leaves a margin rather than sitting on the boundary.
+ * the circle is far shorter than the chord at the banner's height. At the highest the plate is ever
+ * drawn — [StatusLineScreen.RUNNING]'s full-column top — the geometry permits about `0.63`; this
+ * leaves a margin rather than sitting on the boundary. (#13 put the limit at `0.57`, against a top
+ * edge of `0.09` that #233 re-measured and found had moved down.)
  *
  * *This sentence ended "and it still holds the longest shipped notice in two lines" until #231.*
  * True when #13 wrote it and false from #96, whose 49-character notice renders on **three** —
@@ -91,26 +85,131 @@ const val STATUS_LINE_TOP_FRACTION = 0.09f
  */
 const val STATUS_LINE_MAX_WIDTH_FRACTION = 0.55f
 
+// --- Where the Tier 3 plate sits, per line count (#233) --------------------------------------
+//
+// Until #233 this was two constants: a top edge of `0.09`, measured under #13, and a height of
+// `0.23`, described as two lines. Neither survived being measured again. The top edge has moved
+// down, and `0.23` is about what three lines come to, not two. *Measured on an SM-R925U* from
+// `screencap` pixels, where the plate's opaque scrim is its own edge:
+//
+//     screen      lines   plate top   plate height   button row
+//     pre-start     0         —            —         Start 119 px
+//     pre-start     2       55 px        72 px       Start 111 px
+//     running       0         —            —         Sync  136 px
+//     running       3       51 px       106 px       Sync   81 px
+//
+// The plate is drawn in `TimerScreen`'s vertically centred `Column`. #231 reasoned from that
+// centring that a third line would lift the top edge onto a narrower chord, and that holds only
+// while the column has room to spare. It has less than any notice that ships needs: 68 px
+// pre-start, 56 px running. Past that point the column stops centring. It is pinned at its own top
+// padding, the label and the plate hold their place, and the overflow comes out of the last child,
+// the button row. That is why Start and Sync shrink in the table (#301). So the top edge rises with
+// line count until the column fills, then stops, and from there the plate grows downwards.
+//
+// For every notice that ships, then, the top edge alone decides whether the plate clears the bezel.
+// The shape #231 removed as vacuous, a plate growing downwards from a fixed top that passes for any
+// height, is the real geometry, not a mistake in the test. The ceiling is what makes the geometry
+// assertion able to fail: had the column kept centring, the three-line plate's top would sit at
+// 24 px and the bezel would cut its corners. `BannerLayoutTest` asserts both.
+//
+// Everything here is in px of the 450 px reference screen. The column's padding, its label and
+// its buttons are specified in dp and do not scale with the display the way a width cap does, so
+// these are this watch's numbers, and a house standard for the same reason [REFERENCE_SCREEN_DP]
+// is.
+
+/** The screen these measurements were taken on, in px — the SM-R925U's 450 × 450. */
+const val REFERENCE_SCREEN_PX = 450f
+
 /**
- * The tallest a **two-line** Tier 3 status line may grow, as a fraction of screen height.
+ * One line of Tier 3 text, as a fraction of screen height.
  *
- * Two lines of `caption2` plus its scrim padding came to `0.227` when measured, so this is that
- * with a little grace. As with the banner, it is the height the geometry is *proved* against rather
- * than a clamp on the text: clipping a warning is worse than crowding the readout.
- *
- * **Two lines is no longer the tallest this surface goes, and this figure has not been re-measured
- * (#231).** #96 ships a notice that draws three — see [MessageSurface.STATUS_LINE] — so the check
- * in `BannerLayoutTest` proves the circle against a smaller plate than the one on the watch.
- *
- * It is left as the measurement it is rather than scaled into a three-line estimate, and the reason
- * is worth stating: this plate is drawn inside a vertically **centred** `Column`, so a third line
- * does not simply extend it downwards — it lifts the top edge onto a narrower chord, by an amount
- * nothing here can compute. Scaling this by 3/2 would produce a number that looks derived and is
- * not, which is the exact defect #231 was filed about. The evidence that the three-line plate
- * clears the bezel is #96's check on an SM-R925U; the arithmetic to replace that check needs a
- * measurement this issue did not take.
+ * `caption2`'s line height. Measured as the difference between the three-line and the two-line
+ * plates, 106 − 72 px, rather than converted from sp.
  */
-const val STATUS_LINE_HEIGHT_BUDGET_FRACTION = 0.23f
+const val STATUS_LINE_LINE_HEIGHT_FRACTION = 34f / REFERENCE_SCREEN_PX
+
+/**
+ * What a Tier 3 plate adds to its lines, as a fraction of screen height.
+ *
+ * The scrim's 2 dp of padding top and bottom, less the leading Compose trims from the first and
+ * last lines: 4 px in all, which is the two-line plate's 72 px less two lines.
+ */
+const val STATUS_LINE_PLATE_INSET_FRACTION = 4f / REFERENCE_SCREEN_PX
+
+/**
+ * The 2 dp `Spacer` `TimerScreen` puts above the plate, as a fraction of screen height.
+ *
+ * Converted rather than measured, on purpose. It is the one input the cross-check in
+ * `BannerLayoutTest` must not share with the observations it checks, so it comes from the source
+ * and the density instead of from a screenshot: 2 dp at the 340 dpi `wm density` reports is 4.25 px.
+ * That density is **not** the 2× [REFERENCE_SCREEN_DP] was written against, which works out at
+ * 212 dp across rather than 225. The character model is unaffected, because
+ * [AVERAGE_CHAR_WIDTH_EM] is calibrated against the same figure and absorbs the difference, but
+ * the comment on that constant is wrong about the watch.
+ */
+const val STATUS_LINE_SPACER_FRACTION = 4.25f / REFERENCE_SCREEN_PX
+
+/**
+ * The two screens a Tier 3 plate is drawn on, and the two measurements that place it on each.
+ *
+ * They differ because the column differs. Pre-start the label carries the sequence picker's `▾`,
+ * the only difference in that label between the two screens, and it comes out 4 px taller. Running,
+ * Sync and Stop are taller than Start, so the column has less height to spare.
+ *
+ * @property fullColumnTopFraction where the plate's top edge sits once the column is full. It is
+ *   the highest the plate can go, because the label above it is pinned to the column's top padding.
+ * @property spareFraction how much height the column has left over with no notice on it. Measured
+ *   off the label, which a centred column holds half its spare room below the full-column position:
+ *   its glyphs sit 34 px lower with no notice than with one pre-start (58 against 24 px), and 28 px
+ *   running (49 against 21 px).
+ */
+enum class StatusLineScreen(
+    val fullColumnTopFraction: Float,
+    val spareFraction: Float,
+) {
+    /** Before Start, where the pre-start warnings of `startNotice` draw. */
+    PRE_START(fullColumnTopFraction = 55f / REFERENCE_SCREEN_PX, spareFraction = 68f / REFERENCE_SCREEN_PX),
+
+    /** During the countdown, where #96's Do Not Disturb notice draws. */
+    RUNNING(fullColumnTopFraction = 51f / REFERENCE_SCREEN_PX, spareFraction = 56f / REFERENCE_SCREEN_PX),
+}
+
+/** How tall a Tier 3 plate of [lines] lines is, as a fraction of screen height. */
+fun statusLineHeightFraction(lines: Int): Float {
+    require(lines > 0) { "a plate with no lines is not drawn" }
+    return STATUS_LINE_PLATE_INSET_FRACTION + lines * STATUS_LINE_LINE_HEIGHT_FRACTION
+}
+
+/**
+ * Where the top edge of a Tier 3 plate of [lines] lines sits on [screen], as a fraction of screen
+ * height.
+ *
+ * While the plate and its spacer fit the column's spare room, the column stays centred and the
+ * room left over is shared above and below it, so a taller plate sits higher. Once they do not
+ * fit, the column is full and the top edge stops at [StatusLineScreen.fullColumnTopFraction]. The
+ * `coerceAtLeast` is that ceiling, and it is the whole reason a three-line plate clears the bezel.
+ */
+fun statusLineTopFraction(lines: Int, screen: StatusLineScreen): Float {
+    val leftOver = (screen.spareFraction - statusLineCostFraction(lines)).coerceAtLeast(0f)
+    return screen.fullColumnTopFraction + leftOver / 2f
+}
+
+/**
+ * How much height a Tier 3 plate of [lines] lines takes from the button row on [screen], as a
+ * fraction of screen height. Zero while the plate fits the column's spare room.
+ *
+ * Not a budget anything enforces yet; #301 is where that decision lives. It is here because it is
+ * the model checking itself. [StatusLineScreen.spareFraction] comes from where the label sits and
+ * [STATUS_LINE_SPACER_FRACTION] from the source, while the squeeze was read off the buttons, so a
+ * model that predicts the squeeze the watch drew has been checked against something it was not
+ * built from.
+ */
+fun statusLineOverflowFraction(lines: Int, screen: StatusLineScreen): Float =
+    (statusLineCostFraction(lines) - screen.spareFraction).coerceAtLeast(0f)
+
+/** The column height a plate of [lines] lines costs: the plate, and the spacer above it. */
+private fun statusLineCostFraction(lines: Int): Float =
+    STATUS_LINE_SPACER_FRACTION + statusLineHeightFraction(lines)
 
 /**
  * True when a banner of [widthFraction] × [heightFraction], starting [topFraction] down, fits
@@ -263,8 +362,9 @@ enum class MessageSurface(
      *
      * Three lines, and this is the number #231 exists to write down. Not derived: it is what #96
      * shipped and checked on an SM-R925U, where the three-line plate cleared the bezel and covered
-     * no readout. `statusLineHeightFraction(3)` is the geometric half of that, and it is the
-     * weaker half — see its note on the centred column.
+     * no readout. [statusLineTopFraction] and [statusLineHeightFraction] are the geometric half of
+     * that, measured by #233, and `BannerLayoutTest` proves every line count up to this one against
+     * the circle.
      */
     STATUS_LINE(STATUS_LINE_MAX_WIDTH_FRACTION, STATUS_LINE_TEXT_SP, maxLines = 3),
 
