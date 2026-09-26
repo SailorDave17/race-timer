@@ -21,8 +21,11 @@ android {
         // Wear OS is a carve-out from the general Play target-API rule: API 35 by 2026-08-31,
         // where regular apps must reach 36. See #69.
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // One counter shared with :phone (epic #196 D3). 1 was burned at the 2026-08-13 upload and
+        // :phone holds 2, so the first tagged release takes 3. The tag must equal versionName in
+        // BOTH modules or release.yml refuses before building.
+        versionCode = 3
+        versionName = "1.1"
     }
 
 

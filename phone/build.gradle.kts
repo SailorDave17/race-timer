@@ -55,7 +55,7 @@ android {
         // This number is an ALLOCATION, not a derivation: if :wear ships an update before the phone
         // does, it takes 3 and docs/releases.md records who took what.
         versionCode = 2
-        versionName = "1.0"
+        versionName = "1.1"
     }
 
     buildTypes {
