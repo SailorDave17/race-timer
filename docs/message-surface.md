@@ -62,7 +62,7 @@ action (Tier 3).
 
 ## Tier 1 — Transient banner (shipped)
 
-`MessageBanner` in [TimerScreen.kt:661](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L661),
+`MessageBanner` in [TimerScreen.kt](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt) — named, not cited by line, which had drifted by nearly two hundred —
 driven by the `message: String?` parameter and cleared through `onMessageExpired`.
 
 | | |
@@ -73,7 +73,7 @@ driven by the `message: String?` parameter and cleared through `onMessageExpired
 | Backing | `#FF3A2A00` (opaque dark amber), 8 dp rounded corners, 8 × 3 dp padding |
 | Lifetime | `showTransientMessage` sets `uiMessage`; a `LaunchedEffect` **in `TimerScreen`** clears it after `MESSAGE_DURATION_MS` = 3 s, counted from the composition that puts it on screen |
 | Interaction | None. Not tappable, not dismissible, does not block anything |
-| Consumers | Five, all via `showTransientMessage`: `restorePendingSelection` → "Saved race unreadable — starting fresh" and "Saved sequence unreadable — using default"; `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady"; `announceRestoreOutcome` → "Resumed race in progress" (`EXACT`) and "Old race ended — starting fresh" (`EXPIRED`) |
+| Consumers | Seven, all via `showTransientMessage`: `restorePendingSelection` → "Saved race unreadable — starting fresh" and "Saved sequence unreadable — using default"; `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady"; `announceRestoreOutcome` → "Resumed race in progress" (`EXACT`) and "Old race ended — starting fresh" (`EXPIRED`); `announceCueLoss` → "Cue silent — wrist still buzzing" (`DROPPED`) and "Cue cut short — wrist still buzzing" (`TRUNCATED`), #161 |
 
 ### Why it is below the readout, and why the screen owns the timer (#102)
 
@@ -117,6 +117,11 @@ the gap above the Start button holds — so keep a notice under about 60. State 
 what it means for the countdown, in that order — "Clock changed — countdown held steady" tells the
 sailor the fact *and* that they need do nothing. Never end in an instruction the banner will vanish
 before they can follow; that is Tier 3.
+
+**That 60 is this tier's arithmetic, and it is applied to all three.** See
+[the copy budget](#the-copy-budget-and-which-surface-it-was-derived-for) — every clause of the
+sentence above is about *this* surface, and a notice on the Tier 3 plate gets about **20**
+characters to a line, not 34.
 
 ---
 
@@ -184,15 +189,26 @@ screen turning off) has no usable degraded mode and stays hard-blocked.
 
 ## Tier 3 — Persistent status line (shipped)
 
-Two consumers, both `caption2` bold in `#FFC107` directly under the sequence name, and both
+Three rendering sites, all `caption2` bold in `#FFC107` directly under the sequence name, and all
 persisting until the sailor acts because each asks for something a 3 s banner could not:
 
-| Consumer | Line | On screen when | Scrim |
+| Site | Line | On screen when | Scrim |
 |---|---|---|---|
 | Degraded-recovery prompt | "Recovered — tap Sync to confirm" | `RUNNING`, after a `DEGRADED` restore, until Sync is tapped | **Yes** — `#FF3A2A00`, added by #123 |
 | Discard warning (#89) | "Start discards saved *name*" | `IDLE` pre-start only, cleared by `clearResumeOffer` | No — navy is its whole exposure |
+| `StartNotice` warning line (#13, #96) | the three Tier 3 rows of the catalogue below, plus "Do Not Disturb — cues silent, wrist still buzzing" | `IDLE` for #13's three; `RUNNING` for #96's | **Yes** — `#FF3A2A00` |
 
-Both live in [TimerScreen.kt:174-214](../wear/src/main/kotlin/com/racetimer/wear/ui/TimerScreen.kt#L174-L214).
+They are the `showResyncPrompt`, `discardWarning` and `warningNotice` blocks of `TimerScreen`, in
+that precedence order — named rather than cited by line, because the two line ranges this paragraph
+used to give were both wrong by more than a hundred lines before anyone noticed.
+
+**The third site is the one that reaches a running race with a message that is not a prompt**, and
+#96 is why it needed the scrim. Until then every notice it carried was confined to the pre-start
+screen, where navy is the only background and bare `#FFC107` clears the bar at 10.46 : 1 — the
+discard warning still goes without a scrim for exactly that reason. #96's warning stays up through
+the amber minute, where the same colour lands at 2.93 : 1. The rule that decides which states each
+notice can appear in lives in `shared/StartPreconditions.kt`, and `MessageContrastTest` derives the
+backgrounds by *driving* it rather than by restating them here.
 
 Use this tier for anything mid-sequence that needs a *sustained* action or a standing caveat, and Tier 1
 for anything that is merely news.
@@ -224,6 +240,51 @@ than trusting this paragraph.
 
 ---
 
+## The copy budget, and which surface it was derived for
+
+`NOTICE_MAX_CHARS = 60` in `shared/StartPreconditions.kt` is **one ceiling over all three surfaces**,
+and `StartPreconditionsTest` holds every notice to it. It is derived from the arithmetic in the Tier 1
+section above — 11 sp inside that surface's 0.85 width cap is about 34 characters a line, and two
+lines is what the gap above Start holds.
+
+Every clause of that derivation is about the transient banner. The other two surfaces are a different
+width and a different type size, so **the same 60 characters buys a different number of lines on
+each** — and until #231 the doc said only the number.
+
+| Surface | Width cap | Type | Characters a line | Lines it may take |
+|---|---|---|---|---|
+| Tier 1 banner | `BANNER_MAX_WIDTH_FRACTION` 0.85 | 11 sp | ~34 | 2 |
+| Tier 2 blocking panel | `BLOCKING_PANEL_WIDTH_FRACTION` 0.86 | 12 sp (`caption1`) | ~31 | 3 — and a fourth is **clipped**, not crowded |
+| Tier 3 status line | `STATUS_LINE_MAX_WIDTH_FRACTION` 0.55 | 12 sp (`caption2`) | ~20 | 3 |
+
+**Those numbers are computed, not typed here.** `MessageSurface` in `shared/BannerLayout.kt` holds
+the three inputs per surface and `BannerLayoutTest` asserts them, the same move #123 made when it
+took the contrast ratios out of this document. Read them there; this table is a copy and copies age.
+
+### How #96 found it
+
+`NOTICE_CUE_VOLUME_REFUSED` is 49 characters — comfortably inside the 60, and it renders on **three**
+lines, *measured on an SM-R925U*. Nothing is wrong with the result: there is no Start button on a
+running race, the readout is not covered, and the plate clears the bezel. But 60 was a ceiling that
+happened not to bite, described as a fit that had been measured, and the next person to write a
+running-race notice would have had no way to tell those apart.
+
+Two assertions now stop that drifting again, and they fail for different reasons:
+
+- `BannerLayoutTest` pins the model to reproduce the **34** this document publishes for Tier 1. Move
+  either without the other and the suite goes red.
+- It also pins #96's notice to **three** lines on Tier 3 — the render the watch actually drew. That
+  check is independent of the calibration, which is what makes it more than circular.
+
+### What is still a measurement rather than arithmetic
+
+`STATUS_LINE_HEIGHT_BUDGET_FRACTION` is a **two-line** figure and has not been re-measured. The Tier 3
+plate sits inside a vertically centred `Column`, so a third line does not simply extend it downwards —
+it lifts the top edge onto a narrower chord, by an amount nothing in `shared/` can compute. The
+evidence that the three-line plate clears the bezel is #96's check on the wrist, not the geometry
+test. Scaling the constant by 3/2 would produce a number that *looked* derived and was not, which is
+the defect this section exists to record.
+
 ## Rules any new message must follow
 
 1. **Scrim or nothing.** Text drawn directly on the background is only safe if it has been checked
@@ -237,12 +298,18 @@ than trusting this paragraph.
 5. **Say the consequence, not the cause.** "The gun will be silent" beats "AudioTrack init failed".
 6. **One message at a time.** `uiMessage` is a single nullable — a second message replaces the first.
    That is correct; two stacked banners on a 45 mm screen is worse than losing one.
+7. **Budget against the tier, not against the number.** 60 characters is the shared ceiling and it
+   is two lines on Tier 1 and three on Tier 3 — see [the copy budget](#the-copy-budget-and-which-surface-it-was-derived-for).
+   Add the string to `StartPreconditionsTest` and let it derive the surface from the tier the rule
+   returns; a notice that later changes tier is then re-checked against the plate it moved to.
 
 ## Message catalogue
 
 Every row below is **shipped**. The copy is held as constants in `shared/StartPreconditions.kt` and
-`StartPreconditionsTest` asserts each one fits the panel, so a copy edit that outgrows the screen
-fails rather than wraps.
+`StartPreconditionsTest` asserts each one twice — against the shared 60-character ceiling, and
+against the line budget of the surface its own tier puts it on — so a copy edit that outgrows the
+screen fails rather than wraps. *It asserted only the first of those until #231, which is how a
+49-character notice reached the watch on three lines with every check green.*
 
 | Condition | Tier | Copy | Action |
 |---|---|---|---|
@@ -255,6 +322,9 @@ fails rather than wraps.
 | Exact recovery (race resumed) | 1 | "Resumed race in progress" | none — **shipped** |
 | Spent snapshot discarded | 1 | "Old race ended — starting fresh" | none — **shipped** |
 | Degraded recovery | 3 | "Recovered — tap Sync to confirm" | Sync — **shipped**, scrimmed #123 |
+| Cue volume raise refused (Do Not Disturb) | 3 | "Do Not Disturb — cues silent, wrist still buzzing" | none — **shipped** (#96), `RUNNING` only |
+| Cue dropped mid-race | 1 | "Cue silent — wrist still buzzing" | none — **shipped** (#161) |
+| Cue truncated mid-race | 1 | "Cue cut short — wrist still buzzing" | none — **shipped** (#161) |
 
 ### The notification row moved from Tier 2 to Tier 3, and that was a decision
 
@@ -280,9 +350,17 @@ Copy is a starting point, not fixed — all of it is untested on a wrist in sun.
 ## Error-surface audit (#13 AC5)
 
 *"Every error surface has a visible message, not just a log line."* That is a claim about the whole
-app rather than about a feature, so it is discharged as an audit: every `Log.w`/`Log.e` in `wear/`
-classified, with the ones that stay silent saying why. Re-run it with
-`grep -rn "Log\.\(w\|e\)(" wear/src/main/kotlin/` — 20 sites as of 2026-08-11.
+app rather than about a feature, so it is discharged as an audit: every `Log.w`/`Log.e` on the
+watch's own code paths classified, with the ones that stay silent saying why. Re-run it with
+`grep -rn "Log\.\(w\|e\)(" wear/src/main/kotlin/ shared-android/src/main/kotlin/` — 20 sites as of
+2026-08-13, **5 in `wear/` and 15 in `shared-android/`**.
+
+*The command above named only `wear/` until #161, and by then it could not see the three sites this
+audit's own gap section was about.* `ToneManager` and `HapticManager` moved to `:shared-android` when
+the phone module was founded, taking three quarters of the sites with them. Nothing looked wrong: the
+total was still 20, because 5 + 15 is what 20 had been, so re-running the check reproduced the
+documented number **while reading a different set of files**. A count that survives its own subject
+moving is not a check that passed — it is two errors agreeing. Name both trees.
 
 ### Visible to the sailor
 
@@ -296,6 +374,10 @@ classified, with the ones that stay silent saying why. Re-run it with
 | Notification permission denied | Tier 3, tappable to Settings |
 | Battery saver on | Tier 3, "Battery saver — sound may be cut" |
 | No settings activity for a remedy | The notice it was offered from stays on screen |
+| `setStreamVolume` refused (Do Not Disturb) | Tier 3 for the length of the countdown, "Do Not Disturb — cues silent, wrist still buzzing" (#96) |
+| `AudioTrack` write returned `<= 0` (`writeCue`) | Tier 1, "Cue silent — wrist still buzzing" (#161) |
+| `AudioTrack` write threw, track discarded (`writeCue`) | Tier 1, "Cue silent — wrist still buzzing" (#161) — same copy as the row above, because the sailor's consequence is the same |
+| Tail write failed, cue truncated (`writeCue`) | Tier 1, "Cue cut short — wrist still buzzing" (#161) |
 
 ### Silent by decision, with the reason
 
@@ -305,20 +387,53 @@ classified, with the ones that stay silent saying why. Re-run it with
 | `AudioTrack` stop / release / keep-alive release failed | Teardown, after the race. Nothing left to affect. |
 | Native output rate unavailable | Falls back to a working rate; the cue is unchanged. |
 | Output rate changed with the stream | Handled by re-rendering. Not an error. |
-| `setStreamVolume` refused (Do Not Disturb) | Recorded in `TimerService.cueVolumeRefused`. Deliberately **not** #13's to surface — [#96](https://github.com/SailorDave17/race-timer/issues/96) owns that warning and its design rests on the measured refusal rather than a prediction. Two warnings for one condition would be a second copy of the rule. |
-| Haptic dropped under Do Not Disturb | The app cannot see it — the platform drops the effect and reports nothing. [#144](https://github.com/SailorDave17/race-timer/issues/144). |
+| ~~`setStreamVolume` refused (Do Not Disturb)~~ | **No longer silent — [#96](https://github.com/SailorDave17/race-timer/issues/96) shipped it**, as the row in the table above. It sat here on the argument that two warnings for one condition would be a second copy of the rule; that still holds, and the one warning is now the measured one. |
+| ~~Haptic dropped under Do Not Disturb~~ | **No longer true — [#144](https://github.com/SailorDave17/race-timer/issues/144) shipped.** The app was not choosing silence, it was failing to declare what the vibrations were for, and the platform classified the long ones `UNKNOWN` and dropped them under DND. Declaring the usage moved **30 of 30 cues to delivered at `zen_mode=2`, the 3000 ms gun included** — which is why #96's copy tells the sailor the wrist still works. |
 
-### The one genuine gap, stated rather than closed
+### The gap that was left open, and how it closed (#161)
 
-**A cue lost or truncated mid-race is silent.** Three paths in `ToneManager.writeCue` — a write
-returning `<= 0` ("cue dropped"), an `IllegalStateException` discarding the track, and a failed tail
-write ("cue truncated") — produce a log line and nothing else. None of them sets `initFailed`, so
-the condition does not resurface as a Tier 2 block before the next race either.
+**A cue lost or truncated mid-race used to be silent** — the three `writeCue` rows in the table
+above. #13 recorded them here rather than fixing them, because the fix needed a Tier 1 banner on the
+*running-race* screen and there was no route from the tone thread to the UI. #161 built both, and
+the three rows moved up.
 
-It is left open rather than closed, for a reason worth stating: the fix is a Tier 1 banner on the
-*running-race* screen, which is the most sensitive surface in the app and the one #102 already had
-to move once. It also needs a route from the tone thread to the UI that does not exist yet. That is
-a piece of work with its own risk, not a line to add to this story.
+**The route.** `ToneManager` records the loss in an `AtomicReference` under the `audioLock` it is
+already holding; `MainActivity`'s 100 ms refresh takes it with `getAndSet(null)` on the main thread.
+An atomic rather than a field under the lock, because the read is the problem, not the write: a main
+thread blocking on the lock the audio path holds while it talks to the audio server is the stall
+this app is built to avoid. Read-and-clear rather than a sampled flag, for the reason
+`TimerService.consumeRestoreNotice` is shaped that way — a lost cue is *news*, and a `@Volatile`
+boolean polled at 100 ms cannot say "announce this once". A loss left uncollected is discarded when
+the next race is armed, so a banner can never describe a race that has already finished.
+
+**Two messages, not one.** A dropped cue is *absent*; a truncated one is *present and wrong* — a
+three-second gun cut short sounds like a short blast, which is a different mark in every sequence
+this app ships. Silence is noticed; a plausible wrong signal is acted on. The copy and the mapping
+live in `shared/StartPreconditions.kt` and are asserted by `StartPreconditionsTest`.
+
+**How it was proven, which was the hard part.** None of the three paths had ever been observed on
+this hardware, so the banner could only have been *reviewed* — which is exactly what #102 cost, a
+Tier 1 banner whose code was correct and which no sailor ever saw. `ToneManager` therefore carries a
+fault switch, armed over adb with no root and no debug build:
+
+```
+adb shell setprop log.tag.RaceTimerCueFault VERBOSE
+```
+
+It stands in for the write rather than wrapping it, so an armed run reaches the failure branch by
+the route a real refusal would, and it is read **once at construction** so the cue deadline pays one
+boolean test. *Measured on an SM-R925U, 2026-08-13*: armed, `write returned -3; cue dropped` and
+`delivered 0 frames = 0ms`, with the banner on screen at 4:59 and again at 2:59 — a second loss two
+minutes after the first, each clearing after its three seconds while ~450 refreshes went by in
+between. Disarmed, the same race at the same mark: **0 losses, `delivered 74400 frames = 1550ms`,
+no banner.** That control is what separates a banner that works from one that is always up.
+
+**What is still unobserved, stated rather than implied.** Only the *dropped* banner has been seen on
+a wrist. The tail-write path needs a cue longer than the track buffer (`MAX_PREFILL_MS`, 4 s) and
+the longest cue this app ships is the three-second gun, so **`TRUNCATED` is unreachable with any
+shipped sequence** — it is defensive coding for the day a cue's length becomes data. Its copy,
+length and mapping are unit-asserted and it renders through the identical `showTransientMessage`
+call; what has not been demonstrated is the tail-write site setting the notice.
 
 ## Resolved questions
 
@@ -340,7 +455,12 @@ a piece of work with its own risk, not a line to add to this story.
 
 ---
 
-Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123.
+Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144.
 Owner: SailorDave17.
-Last reviewed: 2026-08-11 (#13 — Tier 2 built, the notification row demoted to Tier 3 with its
-reasoning recorded, both open questions answered).
+Last reviewed: 2026-08-13 (#231 — the copy budget gained the surface it was derived for. The
+~60-character rule was Tier 1's arithmetic applied to all three surfaces; the per-surface figures now
+live in `shared/BannerLayout.kt` as `MessageSurface` and are asserted, and this document's own "34
+characters" is one of the two assertions pinning them. Previously #96 — Tier 3 gained its first
+message that lives on a *running* screen rather than a prompt; the two stale `TimerScreen` line
+citations replaced with symbol names, and the two Do Not Disturb rows in the error audit corrected,
+both having been overtaken by shipped work).

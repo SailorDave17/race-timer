@@ -30,9 +30,12 @@ import kotlin.math.sin
  * ### Why the numbers are here rather than in the wear module
  *
  * This is arithmetic over [SignalPattern] and [CueTiming] with no Android SDK anywhere in it, and it
- * is the half of the cue contract that had no test. `wear/` has no test source set (#64), so logic
- * that lives there cannot be guarded; `CueTimingTest` exists precisely because the same reasoning
- * applied to the constants. Keeping the renderer beside [CueTiming] is also the point structurally:
+ * is the half of the cue contract that had no test. Logic that lives in `wear/` cannot be guarded by
+ * a unit test: the module had no test source set at all until #160, and the one #160 gave it is
+ * scoped away from the cue path by design — a shadow `AudioTrack` cannot see the defect class this
+ * renderer exists to prevent, so `AudioHapticBoundaryTest` refuses any assertion that reaches for
+ * it. `CueTimingTest` exists precisely because the same reasoning applied to the constants.
+ * Keeping the renderer beside [CueTiming] is also the point structurally:
  * the two channels drifted apart while the numbers driving them lived in different modules.
  *
  * The wear module keeps only the parts that need a device — opening an `AudioTrack` at the output's

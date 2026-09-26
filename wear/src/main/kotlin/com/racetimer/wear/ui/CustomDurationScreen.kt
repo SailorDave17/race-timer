@@ -28,6 +28,10 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.DISABLED_BUTTON_ARGB
+import com.racetimer.shared.ON_ACCENT_ARGB
+import com.racetimer.shared.PRIMARY_ARGB
+import com.racetimer.shared.SECONDARY_ARGB
 
 /**
  * Sets the length of a Custom race, in whole minutes.
@@ -103,8 +107,8 @@ fun CustomDurationScreen(
                     .fillMaxWidth(0.6f)
                     .height(48.dp),
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = Color(0xFFFFD700),
-                    contentColor = Color(0xFF1A1A2E),
+                    backgroundColor = Color(PRIMARY_ARGB),
+                    contentColor = Color(ON_ACCENT_ARGB),
                 ),
             ) {
                 Text(
@@ -158,9 +162,9 @@ private fun StepButton(glyph: String, enabled: Boolean, onClick: () -> Unit) {
         enabled = enabled,
         modifier = Modifier.size(44.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFF64B5F6),
-            contentColor = Color(0xFF1A1A2E),
-            disabledBackgroundColor = Color(0xFF3A4A5E),
+            backgroundColor = Color(SECONDARY_ARGB),
+            contentColor = Color(ON_ACCENT_ARGB),
+            disabledBackgroundColor = Color(DISABLED_BUTTON_ARGB),
             disabledContentColor = Color.White.copy(alpha = 0.5f),
         ),
     ) {

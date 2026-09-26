@@ -1,4 +1,4 @@
-package com.racetimer.wear
+package com.racetimer.android
 
 import android.content.Context
 import android.media.AudioAttributes
@@ -26,7 +26,10 @@ import com.racetimer.shared.SignalPattern
  *
  * The patterns are composed off the monotonic clock so multiple blasts don't drift.
  */
-class HapticManager(context: Context) {
+class HapticManager(
+    context: Context,
+    private val usagePolicy: HapticUsagePolicy,
+) {
 
     private val vibrator: Vibrator = systemVibrator(context)
 
@@ -86,7 +89,7 @@ class HapticManager(context: Context) {
 
         emit(
             VibrationEffect.createWaveform(timings.toLongArray(), amplitudes.toIntArray(), -1),
-            Usage.CUE,
+            HapticUsage.CUE,
         )
     }
 
@@ -95,23 +98,9 @@ class HapticManager(context: Context) {
         if (!vibrator.hasVibrator()) return
         emit(
             VibrationEffect.createOneShot(SYNC_FEEDBACK_MS, VibrationEffect.DEFAULT_AMPLITUDE),
-            Usage.FEEDBACK,
+            HapticUsage.FEEDBACK,
         )
     }
-
-    /**
-     * What a vibration is *for*, which the platform will decide on your behalf if you don't say.
-     *
-     * Not a boolean, for the reason `play` gives above: a boolean silently absorbs a third case into
-     * the else branch. The two values are genuinely different promises — a cue must reach the wrist
-     * even when the watch has been asked for quiet, and a tap confirmation need not.
-     *
-     * Both currently resolve to `USAGE_TOUCH`, which looks like the enum earning nothing. It is not:
-     * the values differ in *intent* and only coincide in what the platform will honour today. See
-     * `emit` for why, and keep them separate — collapsing them would delete the record of a decision
-     * that is expected to be revisited.
-     */
-    private enum class Usage { CUE, FEEDBACK }
 
     /**
      * Issue [effect], declaring what it is for (#144).
@@ -128,35 +117,14 @@ class HapticManager(context: Context) {
      * The sailor felt the minute pips and the sync ticks and got nothing for the prep signals, the
      * final five seconds, or the gun.
      *
-     * ### Why `USAGE_TOUCH` and not `USAGE_ALARM`, which is the honest answer
+     * ### Which usage, and why this class does not decide
      *
-     * Because `USAGE_ALARM` does not work here, and that was **measured rather than assumed** — this
-     * issue and the cairn note both warned it might not. *SM-R925U, API 36, one full race per arm:*
-     *
-     * | declared usage | `zen_mode=2` | `zen_mode=0` |
-     * |---|---|---|
-     * | none (duration-inferred) | 20 of 30 | 30 of 30 |
-     * | `USAGE_ALARM` | **0 of 30**, every one `ignored_app_ops` | 29 of 29 |
-     * | `USAGE_ALARM` + `FLAG_BYPASS_INTERRUPTION_POLICY` | **0 of 30** — the flag is *stripped*, the
-     *   record reads `flags: 0`, and no error is raised. Only platform apps keep it. |  |
-     * | **`USAGE_TOUCH`** | **30 of 30**, gun at 3032 ms | **30 of 30** |
-     *
-     * Total-silence DND restricts the alarm usage class on this device and permits the feedback
-     * class. So the honest declaration is the one that gets the sailor's gun silenced, and the
-     * dishonest one is the only thing that delivers it.
-     *
-     * **This is a known lie, taken deliberately.** A race gun is not touch feedback. It is declared
-     * that way because the platform offers no unprivileged usage that is both accurate and audible
-     * under DND, and a silent gun is a safety failure while a mislabelled one is a taxonomy failure.
-     *
-     * **What would break it, and why nothing here would notice**: if DND policy ever restricts the
-     * feedback class, every cue goes silent under DND again, with no error, no crash and no failing
-     * test — `wear/` has no test source set (#160) and no unit test can reach a `vibrate` call. The
-     * only instrument that has ever detected this class is a race run on the wrist reading
-     * `dumpsys vibrator_manager`. Re-run it after any platform upgrade; the numbers above are the
-     * baseline to compare against. That obligation is tracked as
-     * [#186](https://github.com/SailorDave17/race-timer/issues/186) rather than left to this comment,
-     * because a comment is not a thing anybody is scheduled to read.
+     * `USAGE_ALARM` is the honest declaration for a race gun and it is the *silent* one on the watch:
+     * total-silence Do Not Disturb restricts the alarm class there and permits the feedback class, so
+     * the declaration that delivers the gun is a known lie taken deliberately. That is a fact about
+     * one device's zen policy, measured on one watch, and it is supplied through [usagePolicy] rather
+     * than written here — see [HapticUsagePolicy] for why, and the app module's implementation of it
+     * for the measured table and the obligation to re-run it.
      *
      * A *declared* usage is honoured on effects that inference would never have classified that way —
      * the 3000 ms gun goes through as TOUCH, which duration-inference only ever assigned to effects
@@ -179,15 +147,41 @@ class HapticManager(context: Context) {
      * ### Why no test asserts what is passed here (#144 AC 4)
      *
      * Nothing CI runs can see it, and that is a property of the module layout rather than an
-     * oversight. `shared/` is pure JVM and cannot reference `android.os`, so the decision cannot be
-     * moved there without inventing a second enum whose only consumer is this file; and `wear/` has
-     * **no test source set at all**, which is [#160](https://github.com/SailorDave17/race-timer/issues/160).
-     * Until that lands, the only assertions available are the bytecode read taken when this shipped
-     * (`bipush 17` reaching `setUsage`, both `vibrate` overloads present) and the on-watch
-     * `dumpsys vibrator_manager` table in #144 — neither of which is a regression test. **A later
-     * edit that drops the attributes will go green.**
+     * oversight. `:shared-android` has no test source set by decision, recorded in this module's
+     * build file, and no unit test can reach a `vibrate` call regardless. The only assertions
+     * available are a bytecode read and the on-watch `dumpsys vibrator_manager` table in #144 —
+     * neither of which is a regression test. **A later edit that drops the attributes will go
+     * green** — still true of the `vibrate` call itself, and **no longer true of the constant it
+     * declares**, which [#245](https://github.com/SailorDave17/race-timer/issues/245) pinned on
+     * 2026-08-15 (`HapticUsageDeclarationTest`, under `wear/src/test/`).
+     *
+     * *Narrowed by [#160](https://github.com/SailorDave17/race-timer/issues/160), 2026-08-14.* That
+     * issue gave `:wear` a test source set, so the sentence above used to name two modules and now
+     * names one. It does **not** reopen this: the granted scope is the non-audio surfaces, and
+     * `AudioHapticBoundaryTest` fails the build on a test naming `HapticManager` or `VibrationEffect`
+     * at all — so the route is now closed by an assertion rather than merely absent. What #160 *does*
+     * make possible is the narrower change-detector `docs/dnd-haptics-recheck.md` defers: pinning
+     * `WearHapticUsagePolicy.vibrationUsageFor`, which is a declaration and not a `vibrate` call.
+     * *Built by [#245](https://github.com/SailorDave17/race-timer/issues/245), 2026-08-15* — so the
+     * deferral above is discharged rather than outstanding, and the doc records the three things the
+     * pin deliberately does not cover: a collapse of the two branches, a third usage value, and the
+     * pre-33 route below.
+     *
+     * *Re-read 2026-08-13 on the #200 release build*: `HapticUsagePolicy.vibrationUsageFor` reaches
+     * `VibrationAttributes$Builder.setUsage` for both usages, the supplied constant is `bipush 18`
+     * (`USAGE_TOUCH`), the pre-33 path still carries `bipush 13` (`USAGE_ASSISTANCE_SONIFICATION`),
+     * and the `bipush 33` API gate is intact — so both `vibrate` overloads remain reachable. This
+     * paragraph cited **`bipush 17`** from #144 until that read: 17 is `USAGE_ALARM`, and #187
+     * replaced the constant with `USAGE_TOUCH` while rewriting the prose around this sentence and
+     * leaving the number alone. A constant quoted in prose ages the moment the constant moves, and
+     * the surrounding rewrite is what made it look current.
+     *
+     * #200 moved the *value* out of this file and did not change that. What it did change is the
+     * older claim made here, that the decision could not leave without "inventing a second enum whose
+     * only consumer is this file": [HapticUsage] now has a second consumer, which is the policy that
+     * answers for it. The seam is a place to put a per-device answer, not a place a test can reach.
      */
-    private fun emit(effect: VibrationEffect, usage: Usage) {
+    private fun emit(effect: VibrationEffect, usage: HapticUsage) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             vibrator.vibrate(effect, vibrationAttributes(usage))
         } else {
@@ -196,26 +190,41 @@ class HapticManager(context: Context) {
         }
     }
 
-    private fun vibrationAttributes(usage: Usage): VibrationAttributes =
+    private fun vibrationAttributes(usage: HapticUsage): VibrationAttributes =
         when (usage) {
-            Usage.CUE -> cueVibrationAttributes
-            Usage.FEEDBACK -> feedbackVibrationAttributes
+            HapticUsage.CUE -> cueVibrationAttributes
+            HapticUsage.FEEDBACK -> feedbackVibrationAttributes
         }
 
-    private fun audioAttributes(usage: Usage): AudioAttributes =
+    private fun audioAttributes(usage: HapticUsage): AudioAttributes =
         when (usage) {
-            Usage.CUE -> cueAudioAttributes
-            Usage.FEEDBACK -> feedbackAudioAttributes
+            HapticUsage.CUE -> cueAudioAttributes
+            HapticUsage.FEEDBACK -> feedbackAudioAttributes
         }
 
-    // Built once. Constructing these is cheap, but a cue is issued on a deadline and allocation on
-    // that path is the kind of thing that ends up in a timing investigation later.
+    // Built once, and once per instance rather than once per class since #200 — the usage is now the
+    // app module's answer. Constructing these is cheap, but a cue is issued on a deadline and
+    // allocation on that path is the kind of thing that ends up in a timing investigation later, so
+    // the policy is read here at construction and never on a cue's path.
     private val cueVibrationAttributes: VibrationAttributes =
-        VibrationAttributes.Builder().setUsage(VibrationAttributes.USAGE_TOUCH).build()
+        VibrationAttributes.Builder()
+            .setUsage(usagePolicy.vibrationUsageFor(HapticUsage.CUE))
+            .build()
 
     private val feedbackVibrationAttributes: VibrationAttributes =
-        VibrationAttributes.Builder().setUsage(VibrationAttributes.USAGE_TOUCH).build()
+        VibrationAttributes.Builder()
+            .setUsage(usagePolicy.vibrationUsageFor(HapticUsage.FEEDBACK))
+            .build()
 
+    // The pre-33 pair is deliberately NOT injected, and the difference is the point of the seam.
+    // The vibration usage above is a measured answer to a measured question — the app module
+    // supplying it carries the table — so shared code must not state it.
+    // `USAGE_ASSISTANCE_SONIFICATION` here is the
+    // generic, documented attribution for a non-media vibration and has never been measured on any
+    // device this app runs on ([emit] says so, and the branch is unreachable on the only watch
+    // available). Injecting an unmeasured default would dress it as a per-device decision somebody
+    // took, which is precisely the reading this seam exists to prevent. It stays one shared value
+    // until a device measurement gives it a reason not to be.
     private val cueAudioAttributes: AudioAttributes =
         AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
@@ -241,7 +250,8 @@ class HapticManager(context: Context) {
          * The system vibrator, resolved the one way that covers this app's whole minSdk range.
          *
          * Public and here rather than inline in the constructor since #13, which needs the same
-         * lookup from `MainActivity` to warn a sailor that a cue will never reach their wrist. Two
+         * lookup from the app module's UI to warn a sailor that a cue will never reach their wrist —
+         * on the watch that caller is `MainActivity`. Two
          * copies of an API-level branch is how one of them silently stops matching the other — the
          * same argument that moved the message colours into `shared/MessageContrast.kt`.
          */

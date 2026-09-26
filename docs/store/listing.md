@@ -46,7 +46,7 @@ US Sailing — Race Manager and Scholastic — Race Manager are the committee si
 
 SYNC
 
-Tap Sync during the countdown to snap to the nearest whole minute. That absorbs the lag between the Race Committee's flag reaching the top of the staff and your thumb landing on the watch.
+Tap Sync during the countdown to snap to a whole minute. That absorbs the lag between the Race Committee's flag reaching the top of the staff and your thumb landing on the watch.
 
 BUILT TO BE TRUSTED WITH A START
 

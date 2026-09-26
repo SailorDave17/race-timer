@@ -41,8 +41,13 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.racetimer.shared.BANNER_MAX_WIDTH_FRACTION
+import com.racetimer.shared.BANNER_TEXT_SP
 import com.racetimer.shared.BANNER_TOP_FRACTION
+import com.racetimer.shared.BLOCKING_PANEL_TEXT_SP
+import com.racetimer.shared.BLOCKING_PANEL_WIDTH_FRACTION
+import com.racetimer.shared.MessageSurface
 import com.racetimer.shared.STATUS_LINE_MAX_WIDTH_FRACTION
+import com.racetimer.shared.STATUS_LINE_TEXT_SP
 import com.racetimer.shared.BG_FINAL_TEN_ARGB
 import com.racetimer.shared.NoticeTier
 import com.racetimer.shared.StartNotice
@@ -59,6 +64,10 @@ import com.racetimer.shared.backgroundArgbFor
 import com.racetimer.shared.bannerFitsRoundScreen
 import com.racetimer.shared.formatCountdown
 import com.racetimer.shared.formatElapsed
+import com.racetimer.shared.NEUTRAL_BUTTON_ARGB
+import com.racetimer.shared.ON_ACCENT_ARGB
+import com.racetimer.shared.PRIMARY_ARGB
+import com.racetimer.shared.SECONDARY_ARGB
 import kotlinx.coroutines.delay
 
 /** How long a Tier 1 banner stays up, counted from the composition that puts it on screen (#102). */
@@ -74,15 +83,6 @@ private const val MESSAGE_DURATION_MS = 3_000L
  * that have a bar to clear.
  */
 private const val BLOCKED_READOUT_ALPHA = 0.4f
-
-/**
- * How much of the screen's width the Tier 2 panel and its remedy button take.
- *
- * Wider than [StartButton]'s 0.68 because this surface carries up to three lines of copy rather
- * than one word, and narrower than full width so the round bezel never clips a corner of the
- * scrim — the mistake #102 made with the Tier 1 banner and had to move the whole surface to fix.
- */
-private const val BLOCKING_PANEL_WIDTH_FRACTION = 0.86f
 
 // ---------------------------------------------------------------------------
 // Background colour states
@@ -134,11 +134,14 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
  * @param inLeadIn       True while a running race is still in its lead-in. Drops the Sync button for
  *                       the duration: there is nothing to snap to before the signal box has been
  *                       started, and snapping would delete part of the lead (`isInLeadIn`).
- * @param startNotice    Non-null when something about the watch is worth telling the sailor (#13).
- *                       A [NoticeTier.WARNING] renders as a Tier 3 line under the sequence name and
- *                       changes nothing else; a [NoticeTier.BLOCKING] renders as the Tier 2 panel
- *                       *in place of* the Start button. The rule producing it is `startNotice` in
- *                       `shared/` — this screen decides where it goes, never whether it applies.
+ * @param startNotice    Non-null when something about the watch is worth telling the sailor (#13,
+ *                       #96). A [NoticeTier.WARNING] renders as a Tier 3 line under the sequence
+ *                       name and changes nothing else; a [NoticeTier.BLOCKING] renders as the Tier 2
+ *                       panel *in place of* the Start button. Two rules in `shared/` produce it and
+ *                       the caller picks between them by state — `startNotice` before Start,
+ *                       `armedNotice` during a running race, which is the only one that can be
+ *                       non-null while the countdown is live and never returns a blocking notice.
+ *                       This screen decides where it goes, never whether it applies.
  * @param onRemedy       Called with [StartNotice.remedy] when the sailor taps a notice's action.
  * @param onStart        Called when the user taps Start, or Resume when [resumeOffered].
  * @param onStartOver    Called when the user taps Start over. Only reachable when [resumeOffered].
@@ -254,11 +257,20 @@ fun TimerScreen(
                 )
             }
 
-            // A standing fact about the watch rather than about the race (#13). Tier 3, the same
-            // surface and colours as the two lines above, and it yields to both: the discard warning
-            // is about the very next tap and the re-sync prompt is about the clock being wrong, which
-            // outrank a caveat the sailor has already been shown once. That is rule 6 — one message
-            // at a time — resolved here because this is the only place that knows all three are up.
+            // A caveat about the watch rather than about the race (#13), or — while a race is
+            // running — the one caveat that is about the race (#96). Tier 3, the same surface and
+            // colours as the two lines above, and it yields to both: the discard warning is about
+            // the very next tap and the re-sync prompt is about the clock being wrong, which outrank
+            // a caveat about a channel the sailor has a second channel for. That is rule 6 — one
+            // message at a time — resolved here because this is the only place that knows all three
+            // are up.
+            //
+            // The scrim is not optional here and #96 is why. Until then every notice reaching this
+            // branch was confined to the pre-start screen, where navy is the only background; the
+            // Do Not Disturb warning stays up through the amber minute and the red final ten, which
+            // is the exposure that made bare `#FFC107` a defect in #123. `MessageContrastTest`
+            // derives this surface's backgrounds by driving `armedNotice`, so the check follows the
+            // rule rather than a comment.
             //
             // A blocking notice deliberately does *not* render here. It goes in the button zone
             // below, so that it takes Start's place rather than sitting above a Start that still
@@ -271,6 +283,10 @@ fun TimerScreen(
                 Text(
                     text = warningNotice.text,
                     style = MaterialTheme.typography.caption2,
+                    // Explicit rather than inherited (#231). `caption2` is a Wear Compose library
+                    // default this app's theme does not override, so a version bump could have
+                    // moved the size the copy budget is computed from with nothing here to notice.
+                    fontSize = STATUS_LINE_TEXT_SP.sp,
                     color = Color(TIER3_TEXT_ARGB),
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
@@ -317,7 +333,7 @@ fun TimerScreen(
                 Text(
                     text = syncLabel,
                     style = MaterialTheme.typography.caption1,
-                    color = Color(0xFFFFD700),
+                    color = Color(PRIMARY_ARGB),
                     textAlign = TextAlign.Center,
                 )
             } else {
@@ -532,9 +548,12 @@ private fun BlockingNotice(
         Text(
             text = text,
             style = MaterialTheme.typography.caption1,
+            fontSize = BLOCKING_PANEL_TEXT_SP.sp,
             color = Color(TIER2_TEXT_ARGB),
             textAlign = TextAlign.Center,
-            maxLines = 3,
+            // A clip, not a wrap: a fourth line is not crowded, it is gone. `StartPreconditionsTest`
+            // asserts every Tier 2 string wraps inside this, which nothing did before #231.
+            maxLines = MessageSurface.BLOCKING_PANEL.maxLines,
             modifier = Modifier
                 .fillMaxWidth(BLOCKING_PANEL_WIDTH_FRACTION)
                 .background(Color(TIER2_SCRIM_ARGB), shape = RoundedCornerShape(8.dp))
@@ -579,8 +598,8 @@ private fun StartButton(onClick: () -> Unit) {
             .fillMaxWidth(0.68f)
             .height(56.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFFFFD700),
-            contentColor = Color(0xFF1A1A2E),
+            backgroundColor = Color(PRIMARY_ARGB),
+            contentColor = Color(ON_ACCENT_ARGB),
         ),
     ) {
         Text(
@@ -616,8 +635,8 @@ private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
                 .weight(1f)
                 .height(52.dp),
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = Color(0xFFFFD700),
-                contentColor = Color(0xFF1A1A2E),
+                backgroundColor = Color(PRIMARY_ARGB),
+                contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
             Text(
@@ -634,7 +653,7 @@ private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
                 .weight(1f)
                 .height(52.dp),
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = Color(0xFF555577),
+                backgroundColor = Color(NEUTRAL_BUTTON_ARGB),
                 contentColor = Color.White,
             ),
         ) {
@@ -675,8 +694,8 @@ private fun StartWithLeadIn(onStart: () -> Unit, onLeadIn: () -> Unit) {
                 .weight(1f)
                 .height(52.dp),
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = Color(0xFFFFD700),
-                contentColor = Color(0xFF1A1A2E),
+                backgroundColor = Color(PRIMARY_ARGB),
+                contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
             Text(
@@ -693,8 +712,8 @@ private fun StartWithLeadIn(onStart: () -> Unit, onLeadIn: () -> Unit) {
                 .weight(1f)
                 .height(52.dp),
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = Color(0xFF64B5F6),
-                contentColor = Color(0xFF1A1A2E),
+                backgroundColor = Color(SECONDARY_ARGB),
+                contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
             Text(
@@ -723,7 +742,7 @@ private fun WideStopButton(onClick: () -> Unit) {
             .fillMaxWidth(0.68f)
             .height(56.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFF555577),
+            backgroundColor = Color(NEUTRAL_BUTTON_ARGB),
             contentColor = Color.White,
         ),
     ) {
@@ -776,8 +795,8 @@ private fun DoneButton(onClick: () -> Unit) {
             .fillMaxWidth(0.68f)
             .height(56.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFFFFD700),
-            contentColor = Color(0xFF1A1A2E),
+            backgroundColor = Color(PRIMARY_ARGB),
+            contentColor = Color(ON_ACCENT_ARGB),
         ),
     ) {
         Text(
@@ -795,8 +814,8 @@ private fun SyncButton(onClick: () -> Unit) {
         onClick = onClick,
         modifier = Modifier.size(64.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFF64B5F6),
-            contentColor = Color(0xFF1A1A2E),
+            backgroundColor = Color(SECONDARY_ARGB),
+            contentColor = Color(ON_ACCENT_ARGB),
         ),
     ) {
         Text(
@@ -814,7 +833,7 @@ private fun SecondaryButton(label: String, onClick: () -> Unit) {
         onClick = onClick,
         modifier = Modifier.size(56.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color(0xFF555577),
+            backgroundColor = Color(NEUTRAL_BUTTON_ARGB),
             contentColor = Color.White,
         ),
     ) {
@@ -850,7 +869,7 @@ private fun MessageBanner(message: String, modifier: Modifier = Modifier) {
     ) {
         Text(
             text = message,
-            fontSize = 11.sp,
+            fontSize = BANNER_TEXT_SP.sp,
             color = Color(TIER1_TEXT_ARGB),
             textAlign = TextAlign.Center,
             modifier = Modifier

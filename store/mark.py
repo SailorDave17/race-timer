@@ -22,11 +22,16 @@ Coordinates are the adaptive icon's 108dp canvas, centre (54, 54).
 # Ohio State's pair. Scarlet is PMS 200, #BB0000. The field is a charcoal rather than OSU's #666666
 # because the sails are the shape doing the work and white on #666666 measures about 3:1.
 #
-# This replaced navy #1A1A2E and gold #FFD700. Two consequences worth knowing:
-#   - The icon background no longer matches the app's in-race base colour (colors.xml bg_normal is
-#     still #1A1A2E). That tie was deliberate once and is now broken deliberately; the UI is
-#     unchanged, and only the icon and the store artwork moved.
-#   - Scarlet sits next to colors.xml bg_final_ten (#8B0000), the "final ten seconds" alarm. Nothing
+# This replaced the app's navy and gold - BG_NORMAL_ARGB and PRIMARY_ARGB, both in shared/ since
+# #198. Two consequences worth knowing, and the colours are named rather than repeated here: the
+# citations this comment used to carry pointed at wear/res/values/colors.xml, which #198 deleted as
+# a vestige three of whose four values had drifted from the contrast-tested ones.
+#   - The icon background no longer matches the app's in-race base colour (BG_NORMAL_ARGB, in
+#     shared/src/main/kotlin/com/racetimer/shared/MessageContrast.kt). That tie was deliberate once
+#     and is now broken deliberately; the UI is unchanged, and only the icon and the store artwork
+#     moved.
+#   - Scarlet sits next to BG_FINAL_TEN_ARGB in that same file - the "final ten seconds" alarm, and
+#     a shade darker than the value this comment used to quote off colors.xml. Nothing
 #     collides today, because an icon is never on screen during a race - but if this scheme is ever
 #     taken into the countdown UI, that alarm state stops being distinctive. Read that as a
 #     constraint on any future theme change rather than a defect here.

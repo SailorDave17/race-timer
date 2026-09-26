@@ -208,4 +208,52 @@ class MessageContrastTest {
         assertEquals(2.76, bare, 0.01)
         assertFalse("un-scrimmed Tier 2 must not pass, or the scrim proves nothing", bare >= WCAG_NORMAL_TEXT_MIN)
     }
+
+    // --- The Tier 3 line a running race can carry (#96) -----------------------------------------
+
+    /**
+     * The states `armedNotice` will actually speak in, derived by driving it rather than restated.
+     *
+     * The point of deriving it: if that rule ever grows a state — a warning that outlives the gun,
+     * say — this set widens on its own and the legibility assertion below starts checking the
+     * background that state brings with it. A hand-written `setOf(RUNNING)` would have gone on
+     * measuring the old world while passing.
+     */
+    private fun statesTheArmedNoticeSpeaksIn(): Set<TimerState> =
+        TimerState.values().filter { armedNotice(it, cueVolumeRefused = true) != null }.toSet()
+
+    @Test fun `the cue-volume warning is legible on every background it can appear on`() {
+        // #96's surface. It is the second Tier 3 consumer that survives into a running race, so it
+        // meets amber and red the way the re-sync prompt does — and is scrimmed for the same reason.
+        assertLegible(
+            "Tier 3 cue-volume warning", TIER3_TEXT_ARGB, TIER3_SCRIM_ARGB,
+            backgroundsWhen { it in statesTheArmedNoticeSpeaksIn() },
+        )
+    }
+
+    @Test fun `the cue-volume warning would fail un-scrimmed, which is why it has a scrim`() {
+        // The negative control, in the same shape as the re-sync prompt's above. Bare `#FFC107`
+        // clears the bar on navy at 10.46 : 1, so a warning confined to the pre-start screen could
+        // go without a scrim — the discard warning does. This one cannot: it is on screen through
+        // the amber minute, where the same colour lands at 2.93 : 1.
+        val reachable = backgroundsWhen { it in statesTheArmedNoticeSpeaksIn() }
+        assertTrue(
+            "the amber background must be reachable, or this control proves nothing",
+            BG_ONE_MINUTE_ARGB in reachable,
+        )
+        val bare = reachable.minOf { effectiveContrast(TIER3_TEXT_ARGB, null, it) }
+        assertFalse(
+            "un-scrimmed this warning must fail somewhere, at %.2f : 1".format(bare),
+            bare >= WCAG_NORMAL_TEXT_MIN,
+        )
+    }
+
+    @Test fun `the armed warning never reaches the finished green`() {
+        // Ties the surface to the rule: `armedNotice` answers only RUNNING, and green needs
+        // FINISHED or RACE_ENDED. Asserted so that a change letting the warning outlive the gun
+        // fails here — where the contrast case it would add is visible — rather than silently.
+        assertFalse(
+            BG_FINISHED_ARGB in backgroundsWhen { it in statesTheArmedNoticeSpeaksIn() },
+        )
+    }
 }

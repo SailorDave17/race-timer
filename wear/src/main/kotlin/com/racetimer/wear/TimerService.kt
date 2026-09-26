@@ -19,7 +19,11 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
+import com.racetimer.android.HapticManager
+import com.racetimer.android.SystemMonotonicClock
+import com.racetimer.android.ToneManager
 import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.CueLoss
 import com.racetimer.shared.CueStream
 import com.racetimer.shared.CueTiming
 import com.racetimer.shared.cueStream
@@ -166,13 +170,22 @@ class TimerService : Service() {
     private var gunTeardownPending = false
 
     /**
-     * Whether the platform refused to raise the cue stream for this race (#95).
+     * Whether the platform refused to raise the cue stream for **this** race (#95, read by #96).
      *
-     * True only after a [SecurityException] from `setStreamVolume`, which in practice means Do Not
-     * Disturb without `ACCESS_NOTIFICATION_POLICY`. Kept rather than discarded because it is the one
-     * case where the app knows the cues may be too quiet and cannot fix it — which is exactly what #96
-     * has to tell the sailor *before* the start rather than at it. Nothing reads it yet; it exists so
-     * that the condition is observable instead of being swallowed at the point it is discovered.
+     * Not an exception count. [setStreamVolumeChecked] returns false for a documented
+     * [SecurityException] *and* for the refusal this watch actually performs — returning normally
+     * having changed nothing — so this is false only when the volume was read back at the value it
+     * was asked for. That distinction is the whole reason the flag can be trusted: the exception
+     * path alone left it false through a measurably silent start.
+     *
+     * Rewritten on every arm, including the arms that need no raise at all, so it never carries a
+     * previous race's verdict into this one — see [ensureCueStreamAudible], where the reset sits
+     * above the early exits for exactly that reason.
+     *
+     * Read by `MainActivity` through `armedNotice` in `shared/`, which turns it into the Tier 3 line
+     * a sailor sees for the length of the countdown. Deliberately not shown *before* Start: until an
+     * attempt has been made there is nothing measured, and a warning derived from the last race
+     * would be the prediction #96 was rewritten to avoid.
      */
     @Volatile var cueVolumeRefused = false
         private set
@@ -202,6 +215,23 @@ class TimerService : Service() {
         get() = if (this::tone.isInitialized) tone.audioUnavailable else null
 
     /**
+     * Take the cue this race's audio path lost, clearing it — null when nothing is owed (#161).
+     *
+     * A pass-through to `ToneManager.consumeCueLoss`, which owns the record because it is the only
+     * thing that knows a write failed. This service is on the path for the same reason it carries
+     * [audioUnavailable]: the activity binds to the service, not to the tone manager.
+     *
+     * Guarded on `isInitialized` like [audioUnavailable], and for the same reason — [tone] is
+     * `lateinit`, and the activity's refresh can reach a bound service before `onCreate` has
+     * finished. Null here means "nothing to say", which is what the caller does with it anyway.
+     *
+     * Takes no lock. The point of the atomic behind it is that this can be called from the main
+     * thread every 100 ms without ever waiting on the audio path — see `ToneManager.pendingCueLoss`.
+     */
+    fun consumeCueLoss(): CueLoss? =
+        if (this::tone.isInitialized) tone.consumeCueLoss() else null
+
+    /**
      * Runs once the gun cue has finished sounding and "GO!" has had its [GUN_LINGER_MS] on screen.
      *
      * [TimerEngine.reset] is what puts the screen back to the pre-race countdown. The timer face has
@@ -222,7 +252,7 @@ class TimerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        haptic = HapticManager(this)
+        haptic = HapticManager(this, WearHapticUsagePolicy)
         // Pay back a volume a previous process raised and never got to restore (#95). This is the
         // recovery half of the persist-before-writing ordering in [ensureCueStreamAudible], and it is
         // what makes raising a device volume mid-race a keepable promise rather than the unkeepable
@@ -240,7 +270,7 @@ class TimerService : Service() {
         // warm-up rather than a wrong race, but there is no reason to accept even that when the fix is
         // two lines higher up.
         restoreRaisedCueVolume()
-        tone = ToneManager(this).also { it.prepare(currentCueStream()) }
+        tone = ToneManager(this, WearCueAudioProfile).also { it.prepare(currentCueStream()) }
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         engine.addListener(engineListener)
         warmUpPickedSequence()
@@ -297,8 +327,20 @@ class TimerService : Service() {
      * a race changes" true rather than merely intended.
      */
     private fun ensureCueStreamAudible(route: CueStream) {
+        // First, and before any early exit, because the flag is a verdict about **this** race (#96).
+        //
+        // It used to be written only on the path that actually attempted a raise, so the two paths
+        // that return early — no audio service, and the ordinary "already loud enough" case — left
+        // the previous race's answer standing. Harmless while nothing read it; a warning about a race
+        // that already finished the moment #96 did. Every arm now overwrites it, so a stale true
+        // cannot survive a race that was never refused.
+        //
+        // Clearing to false rather than to "unknown" is the same default `DeviceReadiness` takes: a
+        // condition nothing established is reported as fine, because a warning nobody can act on is
+        // worse than silence.
+        cueVolumeRefused = false
         val audio = getSystemService(AudioManager::class.java) ?: return
-        val stream = legacyStreamFor(route)
+        val stream = WearCueAudioProfile.legacyStreamFor(route)
         val target = raisedCueVolume(
             currentVolume = audio.getStreamVolume(stream),
             maxVolume = audio.getStreamMaxVolume(stream),
@@ -453,6 +495,13 @@ class TimerService : Service() {
                 // runs here rather than in `onCreate` for the same reason the route does — the sailor
                 // may have touched the volume since.
                 ensureCueStreamAudible(route)
+
+                // Drop a loss the last race left uncollected, for the reason the line above resets
+                // `cueVolumeRefused`: it is a verdict about **that** race (#161). The activity only
+                // collects while a race is under way, so a cue lost in the last seconds of one — or
+                // any time the activity was not on screen — would otherwise sit in the atomic and
+                // surface as a banner over the *next* start. Read-and-clear is the discard.
+                tone.consumeCueLoss()
 
                 // Backstop only. The render that matters was posted when the sailor picked the
                 // sequence (see [warmUpCues]) — this call is here for the paths that never went
@@ -955,6 +1004,28 @@ class TimerService : Service() {
 
     // --- State persistence ----------------------------------------------------
 
+    /**
+     * Write the race in flight, durably.
+     *
+     * **`commit()`, not `apply()`, and the difference is measured** (#151). `apply()` returns as soon
+     * as the in-memory map is updated and hands the disk write to `QueuedWork`'s single background
+     * thread — where, at `ACTION_START`, it queues behind the rest of a cold launch. Measured on
+     * SM-R925U against this file's own `captured_elapsed_ms` and the prefs file's mtime: the write
+     * landed **20–53 ms** after the call on a warm process and **69–205 ms** on a cold one. A process
+     * killed inside that window comes back with nothing saved — indistinguishable, to the sailor, from
+     * never having tapped Start.
+     *
+     * The write itself is not what takes that long. `commit()` does the same work on the calling
+     * thread in **7–9 ms**, so the tens-to-hundreds of milliseconds `apply()` leaves exposed are queue
+     * latency, not I/O. That is the whole trade: ~8 ms of main thread buys the window shut.
+     *
+     * Those 8 ms delay nothing that matters. The first cue of every sequence is dispatched by the
+     * `engine.tick()` above this call, deliberately (#62), so no cue waits on the write; what follows
+     * it is the wake lock, `startForeground` (a multi-second deadline) and the tick loop.
+     *
+     * `clearPersistedState()` deliberately keeps `apply()`: a lost *clear* leaves a spent snapshot,
+     * which restore already handles as `EXPIRED`, so it fails safe where a lost *write* does not.
+     */
     private fun persistSnapshot() {
         val snap = engine.snapshot() ?: return
         prefs.edit()
@@ -962,7 +1033,7 @@ class TimerService : Service() {
             .putLong(PREF_GUN_ELAPSED, snap.gunElapsedMs)
             .putLong(PREF_GUN_WALL_CLOCK, snap.gunWallMs)
             .putLong(PREF_CAPTURED_ELAPSED, snap.capturedElapsedMs)
-            .apply()
+            .commit()
     }
 
     /**

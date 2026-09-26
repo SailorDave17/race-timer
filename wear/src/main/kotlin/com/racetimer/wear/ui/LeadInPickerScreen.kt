@@ -20,6 +20,9 @@ import androidx.wear.compose.material.Text
 import com.racetimer.shared.BOX_ALERT_NONE
 import com.racetimer.shared.BOX_ALERT_PRESET_SECONDS
 import com.racetimer.shared.leadInSecondsFor
+import com.racetimer.shared.LIST_ROW_ARGB
+import com.racetimer.shared.ON_ACCENT_ARGB
+import com.racetimer.shared.PRIMARY_ARGB
 
 /**
  * Choose the signal box's alert setting, then start.
@@ -131,7 +134,7 @@ private fun AlertChip(
                 text = label,
                 fontSize = 22.sp,
                 fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
-                color = if (current) Color(0xFF1A1A2E) else Color.White,
+                color = if (current) Color(ON_ACCENT_ARGB) else Color.White,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -145,7 +148,7 @@ private fun AlertChip(
                     // "how long will this actually run" number is the least legible thing on a
                     // sunlit screen.
                     color = if (current) {
-                        Color(0xFF1A1A2E).copy(alpha = 0.75f)
+                        Color(ON_ACCENT_ARGB).copy(alpha = 0.75f)
                     } else {
                         Color.White.copy(alpha = 0.7f)
                     },
@@ -155,8 +158,8 @@ private fun AlertChip(
             }
         },
         colors = ChipDefaults.chipColors(
-            backgroundColor = if (current) Color(0xFFFFD700) else Color(0xFF2A2A50),
-            contentColor = if (current) Color(0xFF1A1A2E) else Color.White,
+            backgroundColor = if (current) Color(PRIMARY_ARGB) else Color(LIST_ROW_ARGB),
+            contentColor = if (current) Color(ON_ACCENT_ARGB) else Color.White,
         ),
     )
 }

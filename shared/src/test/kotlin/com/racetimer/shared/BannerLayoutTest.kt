@@ -1,5 +1,6 @@
 package com.racetimer.shared
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -107,5 +108,91 @@ class BannerLayoutTest {
         // banner "for consistency" is undoing a measurement.
         assertTrue(STATUS_LINE_TOP_FRACTION < BANNER_TOP_FRACTION)
         assertTrue(STATUS_LINE_MAX_WIDTH_FRACTION < BANNER_MAX_WIDTH_FRACTION)
+    }
+
+    // --- How much copy each surface holds (#231) ------------------------------------------------
+    //
+    // There is deliberately **no** test here that the three-line status plate fits the circle, and
+    // the reason is worth more than the test would have been. `bannerFitsRoundScreen` measures the
+    // edge furthest from the centre; growing a plate *downwards* from a fixed top moves its bottom
+    // edge towards the equator, so such an assertion passes for any height at all and could never
+    // have gone red. The real plate does not grow downwards — it is inside a centred `Column` and
+    // rises as it grows — and how far it rises is a measurement #231 did not take.
+    // `STATUS_LINE_HEIGHT_BUDGET_FRACTION` carries that gap.
+
+    @Test fun `the character model reproduces the figure the doc already publishes`() {
+        // The calibration, and the reason `AVERAGE_CHAR_WIDTH_EM` is 0.51 rather than a number
+        // looked up in a font table. docs/message-surface.md has said "roughly 34 characters" for
+        // the Tier 1 banner since #102; if this model disagreed with that, one of the two would be
+        // wrong and nobody would find out. Anchoring here means the doc's own sentence is now an
+        // assertion, so moving either without the other turns the suite red.
+        assertEquals(34, MessageSurface.BANNER.charsPerLine)
+    }
+
+    @Test fun `the status line holds far less copy per line than the banner`() {
+        // The whole of #231 in one comparison. Same screen, same font family, and a surface that
+        // holds about three fifths as much — because it is capped a third narrower and set a
+        // point larger. Anyone who reads "keep it under 60" and pictures the banner's 34-character
+        // lines is picturing the wrong surface.
+        assertEquals(20, MessageSurface.STATUS_LINE.charsPerLine)
+        assertTrue(MessageSurface.STATUS_LINE.charsPerLine < MessageSurface.BANNER.charsPerLine)
+    }
+
+    @Test fun `the notice that exposed the gap takes three lines on the surface it renders on`() {
+        // The cross-check, and it is independent of the calibration above: nothing about matching
+        // the doc's 34 forces this to come out at three. *Measured on an SM-R925U* (#96), the Do
+        // Not Disturb warning renders on three lines — so a model that said two would be a model
+        // of nothing, whatever else it reproduced.
+        assertEquals(3, MessageSurface.STATUS_LINE.linesFor(NOTICE_CUE_VOLUME_REFUSED))
+        assertTrue(MessageSurface.STATUS_LINE.holds(NOTICE_CUE_VOLUME_REFUSED))
+    }
+
+    @Test fun `the same notice would have taken two lines on the banner`() {
+        // The negative control for the test above: it pins the *cause* to the width cap rather than
+        // to the string being long. Identical text, identical model, one surface — and the reason
+        // the 60-character ceiling read as a two-line fit for four months.
+        assertEquals(2, MessageSurface.BANNER.linesFor(NOTICE_CUE_VOLUME_REFUSED))
+    }
+
+    @Test fun `every surface has a budget, including any added later`() {
+        // Driven off the enum rather than a list written by hand, so a fourth surface added without
+        // a width, a type size or a line budget fails here instead of silently inheriting the
+        // shared character ceiling — which is the defect this issue is, one surface at a time.
+        for (surface in MessageSurface.values()) {
+            assertTrue("${surface.name} holds no characters", surface.charsPerLine > 0)
+            assertTrue("${surface.name} allows no lines", surface.maxLines > 0)
+        }
+        assertTrue("the enum is empty, so the loop above proves nothing", MessageSurface.values().isNotEmpty())
+    }
+
+    // --- The wrap model itself ------------------------------------------------------------------
+
+    @Test fun `text that fits stays on one line`() {
+        assertEquals(1, linesNeededFor("short", 20))
+        assertEquals(1, linesNeededFor("exactly twenty chars", 20))
+    }
+
+    @Test fun `a word that will not fit starts the next line rather than overflowing`() {
+        // Greedy wrap on spaces, which is what Compose does for a single paragraph of LTR text.
+        assertEquals(2, linesNeededFor("exactly twenty chars!", 20))
+    }
+
+    @Test fun `a word longer than the line is broken across as many as it needs`() {
+        // Compose breaks inside a word rather than letting it run off the plate, so the model has
+        // to as well — otherwise a single long token would report one line and clear every budget.
+        assertEquals(3, linesNeededFor("a".repeat(25), 10))
+        assertEquals(4, linesNeededFor("word " + "b".repeat(25), 10))
+    }
+
+    @Test fun `empty text still occupies its surface`() {
+        assertEquals(1, linesNeededFor("", 20))
+    }
+
+    @Test fun `the wrap model is sensitive to the width it is given`() {
+        // Without this, every assertion above would hold against a model that returned a constant.
+        val notice = NOTICE_CUE_VOLUME_REFUSED
+        assertEquals(1, linesNeededFor(notice, 60))
+        assertEquals(2, linesNeededFor(notice, 30))
+        assertEquals(3, linesNeededFor(notice, 20))
     }
 }

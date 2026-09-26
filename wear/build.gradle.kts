@@ -117,6 +117,15 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+
+    testOptions {
+        unitTests {
+            // Robolectric resolves the merged manifest and this module's resources from the built
+            // test APK. Without it the FGS-type and notification assertions would be asking about an
+            // empty package, and `R.drawable.ic_stat_race_timer` would not resolve.
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 // Retain the release bundle and its R8 mapping outside build/ (#127).
@@ -275,6 +284,11 @@ tasks.matching { it.name == "bundleRelease" }.configureEach { finalizedBy(archiv
 
 dependencies {
     implementation(project(":shared"))
+    // The leaf managers the phone app will consume too (#200, epic #196 D1). It re-exports
+    // :shared via `api`, so the line above is redundant on the classpath and kept anyway: this
+    // module's own code reads :shared types directly, and a dependency that is only reachable
+    // through somebody else's `api` breaks the day that somebody stops needing it.
+    implementation(project(":shared-android"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -292,4 +306,15 @@ dependencies {
     // Compose tooling (debug only)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.wear.compose.ui.tooling)
+
+    // #160: the module's first test source set, four months after the module. Robolectric, scoped
+    // to the non-audio surfaces by the owner decision on that issue — the residue seven extractions
+    // into `:shared` could not reach is orchestration, and an ordering of calls is a property a
+    // shadow answers exactly (it is the framework's own bookkeeping, not physics).
+    //
+    // The boundary is not prose: `AudioHapticBoundaryTest` fails the build if a test under this
+    // source set ever asserts on the audio or haptic path. A green run here says nothing about
+    // #114, #144 or #126 — those are hardware, and this dependency does not make them otherwise.
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
 }

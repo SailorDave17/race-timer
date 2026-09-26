@@ -9,8 +9,9 @@ import org.junit.Test
  * The frame arithmetic behind keeping one audio track playing across a race (#114).
  *
  * Every case here is one that fails *silently* on the device — a wrong answer is a cue a few
- * milliseconds out or a `delivered` figure that does not match the cue, never an exception. `wear/`
- * has no test source set, which is why the rules are in `shared` to begin with.
+ * milliseconds out or a `delivered` figure that does not match the cue, never an exception. The rules
+ * are in `shared` because they cannot be guarded where they came from: `wear/` had no test source set
+ * at all until #160, and the one it has now refuses assertions on the cue path by design.
  */
 class CueTrackPacingTest {
 
@@ -120,7 +121,7 @@ class CueTrackPacingTest {
 
     // --- The three constants, which are only correct relative to each other -----------------------
     //
-    // Each of these was a number sitting in ToneManager, in a module with no test source set, where
+    // Each of these was a number sitting in ToneManager, out of reach of any unit test, where
     // being wrong produces no error at all: too large a budget plays two signals back to back, too
     // small a one flushes on every cue and undoes #114 with everything still green. Pinning the
     // *relationships* is the only thing that can fail.

@@ -16,6 +16,11 @@ horologist = "0.6.6"
 lifecycleRuntime = "2.7.0"
 activityCompose = "1.8.2"
 junit = "4.13.2"
+# Robolectric runs :phone's unit tests against a real Context on the JVM. Scoped deliberately: the
+# audio and haptic path is a firm NO (a shadow AudioTrack is a fourth instrument of the class that
+# reported success through #61 while the watch was silent), and #160's scoped yes covers the
+# non-audio surfaces only. 4.14.1 is the floor for API 35, which is :phone's compileSdk/targetSdk.
+robolectric = "4.14.1"
 junitExt = "1.1.5"
 espressoCore = "3.5.1"
 watchfaceComplications = "1.2.1"
@@ -25,6 +30,7 @@ wear = "1.3.0"
 # AndroidX
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntime" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycleRuntime" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 
 # Compose BOM
@@ -55,6 +61,7 @@ horologist-compose-layout = { group = "com.google.android.horologist", name = "h
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitExt" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
 compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
