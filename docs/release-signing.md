@@ -361,8 +361,8 @@ factors** (epic #196 decision D3) — not one counter per module.
 | Module | `versionCode` | `versionName` | Status |
 |---|---|---|---|
 | `:wear` | 1 | 1.0 | uploaded 2026-08-13, burned |
-| `:wear` | 3 | 1.1 | allocated for the first tagged release (`v1.1`), not yet uploaded |
-| `:phone` | 2 | 1.1 | allocated by #211, not yet uploaded; ships with `v1.1` |
+| `:wear` | 3 | 1.1 | uploaded 2026-09-26 by the `v1.1` tag, burned |
+| `:phone` | 2 | 1.1 | uploaded 2026-09-26 by the `v1.1` tag, burned |
 
 **Why one counter and not one each.** Both modules declare the same `applicationId`
 (`io.github.sailordave17.racetimer`), so Play treats them as **one app** carrying two form-factor
