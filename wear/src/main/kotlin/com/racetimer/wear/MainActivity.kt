@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -32,12 +33,14 @@ import androidx.wear.compose.navigation.composable as wearComposable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.racetimer.android.HapticManager
 import com.racetimer.android.SystemMonotonicClock
+import com.racetimer.android.WearablePairLink
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.DeviceReadiness
 import com.racetimer.shared.ForegroundRefusalLatch
 import com.racetimer.shared.LaunchNotice
 import com.racetimer.shared.NoticeTier
+import com.racetimer.shared.PairStatus
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
@@ -58,6 +61,7 @@ import com.racetimer.shared.launchPlan
 import com.racetimer.shared.leadInBaseId
 import com.racetimer.shared.leadInBaseOf
 import com.racetimer.shared.offersLeadIn
+import com.racetimer.shared.pairStatusLine
 import com.racetimer.shared.resumeOfferRemainingMs
 import com.racetimer.shared.startNotice
 import com.racetimer.shared.withLeadIn
@@ -205,6 +209,17 @@ class MainActivity : ComponentActivity() {
      * the duration. See [isInLeadIn] for why Sync must not act there.
      */
     private var uiInLeadIn by mutableStateOf(false)
+
+    /**
+     * The pair's status row (#219), or null when there is nothing to draw — which is always, on a
+     * watch whose phone does not run the app, except on a debuggable build.
+     */
+    private var uiPairStatus by mutableStateOf<String?>(null)
+
+    private val pairListener: (PairStatus) -> Unit = { status ->
+        val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        uiPairStatus = pairStatusLine(status, peerNoun = "Phone", showAbsent = debuggable)
+    }
 
     private var selectedSequence: RaceSequence = BuiltInSequences.usSailing
 
@@ -397,6 +412,7 @@ class MainActivity : ComponentActivity() {
                             leadInOffered = uiLeadInOffered,
                             inLeadIn = uiInLeadIn,
                             startNotice = uiStartNotice,
+                            pairStatus = uiPairStatus,
                             onRemedy = { handleRemedy(it) },
                             onStart = { handleStart() },
                             onStartOver = { handleStartOver() },
@@ -488,10 +504,20 @@ class MainActivity : ComponentActivity() {
                 ?.registerListener(lightListener, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
         uiHandler.post(uiRefreshRunnable)
+        // #219. The link is the process's and answers the phone whatever is on screen; being on
+        // screen is what makes it ask, so the row it feeds is measured while it can be read.
+        WearablePairLink.get(this).apply {
+            addStatusListener(pairListener)
+            setActive(true)
+        }
     }
 
     override fun onStop() {
         super.onStop()
+        WearablePairLink.get(this).apply {
+            setActive(false)
+            removeStatusListener(pairListener)
+        }
         uiHandler.removeCallbacks(uiRefreshRunnable)
         (getSystemService(Context.SENSOR_SERVICE) as? SensorManager)
             ?.unregisterListener(lightListener)

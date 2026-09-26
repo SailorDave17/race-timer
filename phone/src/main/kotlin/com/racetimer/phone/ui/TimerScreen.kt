@@ -31,6 +31,9 @@ import kotlin.math.min
 const val TAG_KEEP_BRIGHT = "count-up-keep-bright"
 const val TAG_DIM_COUNT_UP = "count-up-dim"
 
+/** Test tag for the pair's status row (#219). */
+const val TAG_PAIR_STATUS = "pair-status"
+
 /**
  * How much of the shorter screen dimension the readout may occupy vertically.
  *
@@ -109,6 +112,10 @@ private const val GLYPH_WIDTH_FRACTION = 0.68f
  *                      the tap and does nothing reads as broken.
  * @param onLeadIn      Tapped to choose the box alert and start. Only reachable when
  *                      [leadInOffered].
+ * @param pairStatus    The pair link's row (#219): the watch, its clock offset and the bound on it.
+ *                      Drawn on the pre-start screen only, small and last, so it moves nothing a
+ *                      running race lays out. Null draws nothing, and is what a phone with no watch
+ *                      gets.
  */
 @Composable
 fun TimerScreen(
@@ -129,6 +136,7 @@ fun TimerScreen(
     leadInOffered: Boolean = false,
     inLeadIn: Boolean = false,
     onLeadIn: () -> Unit = {},
+    pairStatus: String? = null,
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -307,6 +315,16 @@ fun TimerScreen(
                 ) {
                     Text(text = "Start", fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 }
+            }
+
+            if (state == TimerState.IDLE && pairStatus != null) {
+                Text(
+                    text = pairStatus,
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag(TAG_PAIR_STATUS),
+                )
             }
         }
     }

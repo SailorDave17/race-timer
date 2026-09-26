@@ -48,8 +48,11 @@ Each standard type was considered and does not fit:
   Declaring `mediaPlayback` would be a misdeclaration of what the app does, and would expose media
   controls that have no meaning here.
 
-- **`dataSync`** — nothing is synchronised. The app has no network access at all; it does not declare
-  the `INTERNET` permission and contains no networking or third-party SDK code.
+- **`dataSync`** — the service transfers no data. The app does not declare the `INTERNET` permission
+  and contains no networking code. When a paired watch and phone both run the app, they exchange a
+  few clock readings through Google Play services' Wearable Data Layer so that both count down to the
+  same gun. The foreground service does not start, schedule or wait on that exchange, and nothing is
+  uploaded, downloaded, backed up or synchronised.
 
 - **`location`** — no location is used or requested. The app declares no location permission.
 
@@ -80,8 +83,9 @@ standard type for that, which is precisely the case `specialUse` exists to cover
   to resume it.
 - It posts an ongoing-activity notification for the entire time it runs, so the user can always see
   that a race is running and return to it.
-- It has **no network access**, so it cannot transmit anything. This removes the entire class of
-  abuse that scrutiny of `specialUse` is designed to catch.
+- It requests **no network access**. The only thing the app sends anywhere is clock readings to the
+  user's own paired watch or phone, over the direct connection between them, and never to a server.
+  That removes the class of abuse that scrutiny of `specialUse` is designed to catch.
 
 ### Manifest subtype value
 
@@ -165,6 +169,10 @@ Two notes on strategy:
   upload (#79).
 - If a reviewer does push back, the strongest single fact is **no `INTERNET` permission**. Lead with
   it in any appeal. The second strongest is that the service cannot start without a user tap.
+  **Since #219, say in the same breath what the app does send** — clock readings to the user's own
+  paired device — rather than that it sends nothing. The permission fact still holds; the claim
+  that nothing leaves the device does not, and a reviewer who finds the Data Layer after reading
+  "cannot transmit anything" has a reason to doubt the rest.
 
 If the app ever gains network access, a boot receiver, or a health-sensor read, this document is wrong
 and the declaration has to be rewritten before that version ships.
@@ -189,7 +197,19 @@ Three of this document's claims are now covered by that check, and one deliberat
   so it cannot transmit anything"* rests on the dependency graph as well as the manifest. The lock
   records release-runtime coordinates for all four modules, so adding a networking or analytics SDK
   fails CI — *measured 2026-08-18*, adding okhttp to `wear/build.gradle.kts` was refused and the
-  failure named okio's two transitives as well.
+  failure named okio's two transitives as well. **It fired for real on #219** (2026-09-25): adding
+  `play-services-wearable` failed the check, which is what re-opened this document, and the
+  *"cannot transmit anything"* sentence above was rewritten because the app now does send
+  something — clock readings, to the user's own paired device. The permission list did not move.
+
+**Two things #219 leaves for later, recorded here because this is where they will bite:**
+
+- **If the text in Console predates #219, re-paste the declaration at the next upload.** It
+  carried the old `dataSync` bullet, which named "no third-party SDK code".
+- **#220 is where the exchange may start running during a race.** D2 was ratified on the condition
+  that the devices keep exchanging until the gun, and a race is exactly when this service keeps the
+  process alive. On the day that lands, re-read the `dataSync` bullet — the sentence saying the
+  service does not wait on the exchange may stop being true.
 - **NOT covered: the timing bullet.** The 100 ms and 150 ms bounds under *Why it must run in the
   foreground* are a measurement, not a declaration, and nothing in a manifest or a dependency list
   can falsify them. They are re-measured by a race on a wrist (#82) and by nothing else. A green

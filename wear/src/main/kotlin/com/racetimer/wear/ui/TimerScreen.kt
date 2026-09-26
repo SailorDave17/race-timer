@@ -99,6 +99,14 @@ private val BG_FINAL_TEN = Color(BG_FINAL_TEN_ARGB)
 /** The trough the final-ten background pulses down to — see `BG_FINAL_TEN_FLASH_ARGB` (#12). */
 private val BG_FINAL_TEN_FLASH = Color(BG_FINAL_TEN_FLASH_ARGB)
 
+/**
+ * Where the pair's status row (#219) starts, as a fraction of screen height: in the gap between the
+ * readout (ending about 0.42) and Start (beginning about 0.63) that the Tier 1 banner also uses, and
+ * a little lower than the banner's 0.44 so one 10 sp line sits in the middle of it. The row never
+ * shares the gap — it is not drawn while a banner is up.
+ */
+private const val PAIR_ROW_TOP_FRACTION = 0.49f
+
 /** Pick the background colour for the given [remainingMs] and [state]. */
 private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
     Color(backgroundArgbFor(remainingMs, state))
@@ -148,6 +156,13 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
  *                       `armedNotice` during a running race, which is the only one that can be
  *                       non-null while the countdown is live and never returns a blocking notice.
  *                       This screen decides where it goes, never whether it applies.
+ * @param pairStatus     The pair link's row (#219): the phone, its clock offset and the bound on it.
+ *                       Drawn only on the plain pre-start screen — idle, with no notice, no warning,
+ *                       no resume offer and no banner — in the gap between the readout and Start,
+ *                       where the circle is widest. An overlay, so it moves nothing the notice
+ *                       geometry (#233) was measured against; confined to idle, so navy is the only
+ *                       background it meets. Null draws nothing, and is what a watch with no phone
+ *                       running the app gets.
  * @param onRemedy       Called with [StartNotice.remedy] when the sailor taps a notice's action.
  * @param onStart        Called when the user taps Start, or Resume when [resumeOffered].
  * @param onStartOver    Called when the user taps Start over. Only reachable when [resumeOffered].
@@ -174,6 +189,7 @@ fun TimerScreen(
     leadInOffered: Boolean = false,
     inLeadIn: Boolean = false,
     startNotice: StartNotice? = null,
+    pairStatus: String? = null,
     onRemedy: (StartRemedy) -> Unit = {},
     onStart: () -> Unit,
     onStartOver: () -> Unit = {},
@@ -446,6 +462,21 @@ fun TimerScreen(
                     DoneButton(onClick = onStop)
                 }
             }
+        }
+
+        val plainPreStart = state == TimerState.IDLE && startNotice == null && discardWarning == null &&
+            !resumeOffered && !showResyncPrompt && message == null
+        if (pairStatus != null && plainPreStart) {
+            Text(
+                text = pairStatus,
+                style = MaterialTheme.typography.caption3,
+                color = Color.White.copy(alpha = 0.6f),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = configuration.screenHeightDp.dp * PAIR_ROW_TOP_FRACTION),
+            )
         }
 
         // Transient notice / warning banner (e.g. clock adjustment)

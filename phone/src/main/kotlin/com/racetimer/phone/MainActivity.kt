@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.ApplicationInfo
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.os.IBinder
@@ -29,14 +30,17 @@ import com.racetimer.phone.ui.PhoneTheme
 import com.racetimer.phone.ui.SequencePickerScreen
 import com.racetimer.phone.ui.TimerScreen
 import android.os.SystemClock
+import com.racetimer.android.WearablePairLink
 import com.racetimer.shared.BG_NORMAL_ARGB
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
+import com.racetimer.shared.PairStatus
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.formatCountdown
 import com.racetimer.shared.offersLeadIn
+import com.racetimer.shared.pairStatusLine
 import com.racetimer.shared.resumeOfferRemainingMs
 import com.racetimer.shared.withLeadIn
 import kotlinx.coroutines.delay
@@ -117,6 +121,17 @@ class MainActivity : ComponentActivity() {
      * a sequence id.
      */
     private val lastBoxAlertState = mutableStateOf(DEFAULT_BOX_ALERT_SECONDS)
+
+    /**
+     * The pair's status row (#219), or null when there is nothing to draw — which is always, on a
+     * phone with no watch running the app, except on a debuggable build.
+     */
+    private val pairLineState = mutableStateOf<String?>(null)
+
+    private val pairListener: (PairStatus) -> Unit = { status ->
+        val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        pairLineState.value = pairStatusLine(status, peerNoun = "Watch", showAbsent = debuggable)
+    }
 
     /**
      * The officer's display answers, resolved from the **process-scoped** store (#281, #225).
@@ -238,6 +253,7 @@ class MainActivity : ComponentActivity() {
                     // that half, and it stores nothing: the state still dies with the process,
                     // because that is when this store dies.
                     displayChoice = processDisplayChoice,
+                    pairStatus = pairLineState.value,
                 )
             }
         }
@@ -253,9 +269,19 @@ class MainActivity : ComponentActivity() {
             serviceConnection,
             Context.BIND_AUTO_CREATE,
         )
+        // #219. The link is the process's and answers the watch whatever is on screen; being on
+        // screen is what makes it ask, so the row it feeds is measured while it can be read.
+        WearablePairLink.get(this).apply {
+            addStatusListener(pairListener)
+            setActive(true)
+        }
     }
 
     override fun onStop() {
+        WearablePairLink.get(this).apply {
+            setActive(false)
+            removeStatusListener(pairListener)
+        }
         if (serviceBound) {
             unbindService(serviceConnection)
             serviceBound = false
@@ -283,6 +309,9 @@ class MainActivity : ComponentActivity() {
  * fresh-start service intent. [initialBoxAlertSeconds] is where the alert picker opens and
  * [onBoxAlertChosen] is how a chosen alert reaches persistence, the pair [initialCustomMinutes] and
  * [onSequencePicked] are for Custom.
+ *
+ * [pairStatus] is the pair link's row for the pre-start screen (#219), already decided — whether to
+ * draw it at all is `pairStatusLine`'s rule in `:shared`, not this composable's.
  */
 @Composable
 internal fun RaceTimerApp(
@@ -301,6 +330,7 @@ internal fun RaceTimerApp(
     initialBoxAlertSeconds: Int = DEFAULT_BOX_ALERT_SECONDS,
     onBoxAlertChosen: ((Int) -> Unit)? = null,
     displayChoice: DisplayChoiceViewModel = viewModel(),
+    pairStatus: String? = null,
 ) {
     var onTimerScreen by remember { mutableStateOf(false) }
     var onCustomScreen by remember { mutableStateOf(false) }
@@ -625,6 +655,7 @@ internal fun RaceTimerApp(
             onKeepBright = { displayChoice.answerCountUpBrightness(keepBright = true) },
             onDimCountUp = { displayChoice.answerCountUpBrightness(keepBright = false) },
             resumeOffer = if (offerConsumed) null else resumeOffer,
+            pairStatus = pairStatus,
             onResume = {
                 offerConsumed = true
                 startRace()

@@ -54,17 +54,17 @@ warning.
 | Console section | Answer | Evidence |
 |---|---|---|
 | **Privacy policy URL** | `https://sailordave17.github.io/race-timer/privacy-policy` — **live**. *(Corrected 2026-08-17: this row said "Not yet live — publication is #73" for five days after #73 published it on 2026-08-12.)* | Source at `docs/privacy-policy.md`, built to the `gh-pages` branch by `.github/scripts/build-privacy-page.py`. **Fetched 2026-08-17** rather than inherited — it answered, and the maintainer block was correctly absent from the rendered page |
-| **Data safety** | **No data collected. No data shared.** | Long form below — this is the only row whose answer needs an argument |
+| **Data safety** | **No data collected. No data shared.** | Long form below — this is the only row whose answer needs an argument, and since [#219](https://github.com/SailorDave17/race-timer/issues/219)'s link it needs a second one (*The pair link*, below) |
 | **Content ratings** (IARC questionnaire) | Every substantive question **no**; rates as low as the questionnaire allows | Long form below |
 | **Target audience and content** | **13-15, 16-17, and 18 and over.** Owner decision 2026-08-12 — see *Target audience* below | A product decision, not a code fact. **This row said "adults, no child age band" until it was filed**, and the app ships a **Scholastic (ICSA)** sequence, which is high-school sailing |
-| **Ads** | **No ads.** Neither app contains advertising | No ad SDK in the dependencies of **any** of the four modules; no `com.google.android.gms.permission.AD_ID` in **either** merged manifest |
+| **Ads** | **No ads.** Neither app contains advertising | No ad SDK in the dependencies of **any** of the four modules; no `com.google.android.gms.permission.AD_ID` in **either** merged manifest. Re-read 2026-09-25 after #219 brought in Google Play services: none of the four `play-services-*` libraries it added is an ads library, and neither manifest gained `AD_ID` |
 | **Advertising ID** | **Not used** | `com.google.android.gms.permission.AD_ID` is not declared in the merged manifest. From `targetSdk` 33 an app must declare it to read the ID at all, so its absence is the answer. **Check the merged manifest, not the source** — Console's own page warns that an SDK's library manifest can inject this permission, which is precisely the check this document already does |
 | **News apps** | No | Not a news or magazine app |
 | **COVID-19 contact tracing and status apps** | No | No contact-tracing or health-status function |
 | **Government apps** | No | Not published on behalf of, or in association with, a government entity |
 | **Financial features** | **None.** No in-app purchases, no subscriptions, no financial products | No billing or payments dependency in any of the four build files; no purchase flow in `wear/src` or `phone/src` |
 | **Health apps** | **No.** Neither app reads health or fitness data | No `BODY_SENSORS`, no `ACTIVITY_RECOGNITION`, no health permission in **either** merged manifest; no Health Services dependency. It is a sports app that measures **time**, not the athlete |
-| **Data deletion** | No account exists, so there is nothing held off-device to delete. Local data is removed by uninstalling the app or clearing its storage from the device's settings | No account or sign-in code in `wear/src` or `phone/src`; neither app transmits anything (no `INTERNET` permission in either merged manifest) |
+| **Data deletion** | No account exists, so there is nothing held off-device to delete. Local data is removed by uninstalling the app or clearing its storage from the device's settings | No account or sign-in code in `wear/src` or `phone/src`; no `INTERNET` permission in either merged manifest. Since #219 the one thing either app sends is clock readings to the user's own paired device, held in memory and never stored, so it adds nothing to delete. *(Until 2026-09-25 this said "neither app transmits anything", which #219 made false)* |
 | **Foreground service permissions** | `specialUse`, with the written justification | `docs/play-store-fgs-justification.md` — paste that document's *Declaration text* section. **This is the only row with real rejection risk**, and the phone raises the stakes rather than changing the answer: **both** artifacts declare `FOREGROUND_SERVICE_SPECIAL_USE`, for the same reason (a race-start countdown is none of the enumerated FGS types), so one rejected argument rejects both. The phone's subtype string is in `phone/src/main/AndroidManifest.xml`; check that the justification document still reads as true of a phone and not only of a wrist before pasting it |
 | **App access** | **All functionality is available without any special access.** No login, no region lock, no unlocked-content gate; no reviewer credentials needed — true of **both** apps | No account/sign-in code in `wear/src` or `phone/src`; on the watch the only `startActivity` leaves for a **system settings screen**, never a login or a web page |
 
@@ -227,6 +227,108 @@ this is ever queried**, and use 1 and 2 as support. Setting `allowBackup="false"
 question, but is not required by this analysis, and would cost a sailor their sequence preference
 when they move to a new watch.
 
+## The pair link — re-checked for #219, 2026-09-25
+
+[#219](https://github.com/SailorDave17/race-timer/issues/219) links the watch and the phone over the
+Wearable Data Layer, so that the two agree about the gun. It is the change *What would change* below
+predicted would move this document, and it puts the repo's first Google Play services dependency into
+**both** artifacts. Re-checked against the story's branch — `develop` at `6ff147f` plus #219's diff —
+with `:wear:bundleRelease :phone:bundleRelease` in a clean worktree, unsigned as CI builds them.
+
+### What entered the build
+
+| | Watch (`:wear`) | Phone (`:phone`) |
+|---|---|---|
+| New release-runtime libraries | `play-services-wearable`, `-base`, `-basement`, `-tasks` | the same four, plus `androidx.fragment` and the androidx libraries it brings (`docs/declared-surface.lock` lists them) |
+| New permissions | **none** | **none** |
+| Merged manifest | the two entries below | the same two |
+| Bundle (`.aab`) | 2,375,725 → 2,677,644 bytes: **+301,919 (+12.7 %)** | 2,029,043 → 2,326,640 bytes: **+297,597 (+14.7 %)** |
+| of which `classes.dex` | +223,224 bytes | +221,612 bytes |
+| of which `resources.pb` | +122,420 bytes | +122,448 bytes |
+
+The whole merged-manifest delta, identical in the two apps, verbatim:
+
+```xml
+<activity
+    android:name="com.google.android.gms.common.api.GoogleApiActivity"
+    android:exported="false"
+    android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+<meta-data
+    android:name="com.google.android.gms.version"
+    android:value="@integer/google_play_services_version" />
+```
+
+`GoogleApiActivity` is Play services' own resolution screen, the "update Google Play services" kind.
+It is not exported, so nothing outside the app can start it, and `WearablePairLink` asks Play services
+whether it is usable **before** building any client: a device where it is not never reaches the code
+that would raise it. The meta-data is a version number. No `<queries>`, no receiver, no provider, no
+service, no permission.
+
+**Most of the resource growth is Play services' own strings.** *Measured* in the phone's merged
+release resources: 81 locale directories carry Play services strings, 567 entries in all — its error
+and resolution messages, and the name of the notification channel it would post them on. That channel
+is the path the check above keeps the app off.
+
+The bundle figures are the **uploaded** artifact. Play splits a bundle per device, so a sailor
+downloads less than the `.aab` total; the per-device split was not measured.
+
+### Every declaration, re-read
+
+| Console section | After #219 | Why |
+|---|---|---|
+| **Privacy policy URL** | Same URL, **revised content** | `docs/privacy-policy.md` revised in the same change: a section on the clock readings, the third-party library named, effective date 25 September 2026. The live page updates when #219 merges — confirm the date there before the next upload |
+| **Data safety** | **No data collected. No data shared** — re-argued below, not inherited | The app now sends data itself, which the Auto Backup argument above never had to cover |
+| **Content ratings** | Unchanged | No user-to-user interaction — one user's own two devices are not two users. No user-generated content, no internet access by the app, nothing shared with third parties |
+| **Target audience** | Unchanged | A product decision; nothing here touches it |
+| **Ads** | Unchanged — no ads | See the main table's row |
+| **Advertising ID** | Unchanged — not used | No `AD_ID` in either merged manifest, re-read 2026-09-25 |
+| **Government apps**, **Financial features** | Unchanged | Nothing here touches either |
+| **Health apps** | Unchanged — no | No health permission, and no Health Services dependency: the Wearable library is the Data Layer, not Health Services |
+| **App access** ("Sign in details") | Unchanged | No sign-in. Pairing a watch to a phone is Wear OS's own setup, done in the system, not in the app |
+| **Data deletion** | Unchanged; evidence restated in the main table | Nothing is kept off the device by the app; the readings live in memory |
+| **Foreground service permissions** | **Text revised** | `docs/play-store-fgs-justification.md`: its `dataSync` bullet and its "cannot transmit anything" bullet are rewritten |
+| **Photo and video permissions** | Unchanged — not applicable | No media permission in either merged manifest |
+
+The watch's `com.google.android.wearable.standalone=true` stays true: it says the watch app works
+without a phone, which is still so, and not that it never talks to one.
+
+### Data safety, re-argued
+
+The answer stays **no data collected, no data shared**, on different grounds from the Auto Backup
+argument above — that transfer is the platform's, and this one is the app's own. Each device sends
+the other readings of its clock, so Play's definition, "transmitting data from your app off a user's
+device", is met in the letter. Play's page says nothing about data passing between one user's own
+devices (*read 2026-09-25*), so no exemption covers it by name.
+
+What carries the answer, strongest first:
+
+1. **Nothing sent is any Data safety data type.** Each field is a device's time since boot in
+   milliseconds, or a random number matching a question to its answer. The format is `PairMessage` in
+   `shared/src/main/kotlin/com/racetimer/shared/PairLink.kt`: three message kinds, every field a
+   number. None of it is location, personal info, financial info, health and fitness, messages,
+   photos and videos, audio, files and docs, calendar, contacts, app activity, web browsing, app info
+   and performance, or a device or other ID. Auto Backup's reason 3 has the same shape, and like it
+   this does not depend on reading a definition a particular way. **Lead with it.**
+2. **It goes to the user's own other device and nowhere else.** Race Timer has no server. The
+   destination is the device the user paired, never the developer or a third party, so there is
+   nothing to disclose as *shared* even on a reading that called it collected.
+3. **The app sends nothing while the devices can reach each other only through the internet.** It
+   asks and answers only a peer the Data Layer reports as directly connected (`Node.isNearby()`), and
+   `PairLinkTest` pins both halves by tests #219's mutation pass made fail on purpose.
+4. **It is held in memory only**, used in real time to line up the gun, and gone when the app stops.
+   That is close to Play's *ephemeral processing*, but that exemption is written about servicing a
+   request, not about an exchange between devices — so it is support here, not the argument.
+
+**The one gap, stated rather than papered over.** Play makes the developer answer for what an SDK
+collects ("You must reflect data collection or sharing carried out by such third-party code").
+Google's own disclosure page lists `play-services-base`, `-basement` and `-tasks` and says they
+"don't collect any end-user data". **`play-services-wearable` is not on that page**, and no page found
+on 2026-09-25 says what it collects. One statement that looks like the answer — the Wear OS release
+notes on the *Wearable Support Library* — is about a different artifact and is not relied on here. So
+*the Wearable library itself collects nothing* is **not established**. It is the claim to settle
+first if Console or a reviewer asks.
+
 ## Content ratings — the questionnaire
 
 Answers go to IARC, and ratings are then issued per-territory automatically. Every substantive
@@ -262,7 +364,7 @@ change that, on the day it merges, makes something above **wrong**.
 | **Ads or an ads SDK** | The **Ads** declaration flips. **Advertising ID** likely becomes used and must be declared. **Target audience** acquires ad-serving obligations. Data safety gains sharing with a third party. The content rating changes. The privacy policy's "no advertising networks" is false |
 | **In-app purchases or subscriptions** | **Financial features** and the content rating both change, and the store listing must say so |
 | **Free-text entry** (naming a custom sequence, say) | The content rating's user-generated-content answer changes, and Data safety may gain a type depending on where the text goes |
-| **Data Layer sync between the watch and the phone** ([#219](https://github.com/SailorDave17/race-timer/issues/219)) | Data leaves a device **by the app's own action** — the reasoning in *the part that is not obvious* above no longer applies, and Data safety must be re-answered from scratch rather than edited. The watch's standalone `meta-data` declaration would also need re-reading, though it describes *not requiring* a phone rather than *not talking to* one |
+| **Data Layer sync between the watch and the phone** ([#219](https://github.com/SailorDave17/race-timer/issues/219)) | **Landed 2026-09-25.** Data does now leave a device by the app's own action — clock readings, to the user's other device — and Data safety was re-answered from scratch in *The pair link* above rather than edited: same answer, new grounds, one gap named. The privacy policy and the FGS justification were rewritten where they said the app transmits nothing; no permission moved in either manifest. The watch's standalone `meta-data` was re-read and stays true, as predicted |
 | **Haptics on the phone** ([#208](https://github.com/SailorDave17/race-timer/issues/208)) | **Landed 2026-09-05.** Added `VIBRATE` to the phone manifest. Nothing in this document moved — the permission was already declared by the watch and already in the app-wide set — and `docs/privacy-policy.md`'s permission table, which said `VIBRATE` was **watch-only**, was corrected in the same change, with its effective date. Kept as the worked example of a manifest change that moves one document and not the other |
 
 **One row of this table has already been half-resolved, and the correction is instructive.** It
@@ -285,7 +387,10 @@ the gate rather than silently falsifying a declaration.
 ## Maintainer notes — not for Play Console
 
 Every claim above was checked against `develop` at `aafa5de` on **2026-08-11**, and **re-derived
-for both form factors against `develop` at `f953e97` on 2026-08-17** (#212).
+for both form factors against `develop` at `f953e97` on 2026-08-17** (#212). **Re-checked on
+2026-09-25 for #219's Play services dependency**, against `6ff147f` plus that story's diff — see
+*The pair link*. That pass re-read both merged release manifests and re-ran the four-tree sweep
+below, which still finds only the two Auto Backup comments.
 
 **Check the merged manifest, not the source file.** The shipped permission set is what
 `wear/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml`
@@ -341,7 +446,8 @@ the same enumeration hazard one level up.
 | `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` (androidx-injected) | yes | yes |
 | `INTERNET`, `AD_ID`, any media/storage/health permission | no | no |
 | `uses-feature` | `android.hardware.type.watch`; `android.hardware.audio.output` `required="false"` | **none at all** |
-| `meta-data` | `com.google.android.wearable.standalone=true`, plus androidx startup initialisers | androidx startup initialisers only (emoji2, lifecycle, profileinstaller) |
+| `meta-data` | `com.google.android.wearable.standalone=true`, plus androidx startup initialisers; since #219 also `com.google.android.gms.version` | androidx startup initialisers (emoji2, lifecycle, profileinstaller); since #219 also `com.google.android.gms.version` |
+| A library's activity | since #219, `com.google.android.gms.common.api.GoogleApiActivity`, `exported="false"` | the same |
 | `allowBackup` | `true` | `false` (D5) |
 
 **The phone's permission set is a strict subset of the watch's.** That single fact is why the
