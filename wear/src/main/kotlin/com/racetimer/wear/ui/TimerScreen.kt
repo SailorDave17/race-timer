@@ -240,10 +240,15 @@ fun TimerScreen(
             .background(renderedBg),
         contentAlignment = Alignment.Center,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(8.dp),
+        // The centred column this screen has always had, told that the screen is round (#311). It is
+        // measured and placed as the `Column` it replaced was, so every child sits on the rows it
+        // did. The differences are the sequence name and the pre-start controls, marked
+        // `staysInsideRoundScreen` and `fitsRoundScreen`, which are drawn only as wide as the circle
+        // is where they sit.
+        RoundScreenColumn(
+            isRound = configuration.isScreenRound,
+            modifier = Modifier.fillMaxSize(),
+            padding = 8.dp,
         ) {
 
             // Sequence name label — tappable to change the sequence when not running, counting up,
@@ -251,12 +256,19 @@ fun TimerScreen(
             val canPick = state != TimerState.RUNNING &&
                 state != TimerState.COUNTING_UP &&
                 state != TimerState.RACE_ENDED
-            Text(
+            // Kept inside the circle at its own height (#311). It sits near the top, where a round
+            // screen is narrowest: on a 438 px watch at 340 dpi a long name ran under the bezel at
+            // the default font size, and at the largest on the SM-R925U too. A name wider than the
+            // circle there is drawn a little smaller rather than cut, owner's decision, because the
+            // end of the name is what tells "Race Manager" from "5-4-1-Go". One line, in the slot a
+            // full-size line takes, so the column above #233's plate does not grow.
+            FittedText(
                 text = if (canPick) "$sequenceName  ▾" else sequenceName,
                 style = MaterialTheme.typography.caption1,
                 color = Color.White.copy(alpha = 0.7f),
-                textAlign = TextAlign.Center,
-                modifier = if (canPick) Modifier.clickable(onClick = onPickSequence) else Modifier,
+                modifier = Modifier
+                    .staysInsideRoundScreen()
+                    .let { if (canPick) it.clickable(onClick = onPickSequence) else it },
             )
 
             // Degraded-recovery prompt: gun was reconstructed best-effort, confirm against the flag.
@@ -647,19 +659,16 @@ private fun StartButton(onClick: () -> Unit) {
     Button(
         onClick = onClick,
         modifier = Modifier
-            .fillMaxWidth(0.68f)
+            // 0.68 of the column where the circle has room, as before #311, and narrower where it
+            // does not. On every screen measured so far it has room, and #311 checks it anyway.
+            .fitsRoundScreen(maxWidthFraction = 0.68f)
             .height(56.dp),
         colors = ButtonDefaults.buttonColors(
             backgroundColor = Color(PRIMARY_ARGB),
             contentColor = Color(ON_ACCENT_ARGB),
         ),
     ) {
-        Text(
-            text = "Start",
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-        )
+        FittedLabel(text = "Start", fontSize = 18.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -678,7 +687,8 @@ private fun StartButton(onClick: () -> Unit) {
 @Composable
 private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(0.92f),
+        // The same slot and the same sizing as [StartWithLeadIn], whose note says why.
+        modifier = Modifier.fitsRoundScreen(maxWidthFraction = 0.92f),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Button(
@@ -691,13 +701,7 @@ private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
                 contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
-            Text(
-                text = "Resume",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-            )
+            FittedLabel(text = "Resume", fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
         Button(
             onClick = onStartOver,
@@ -709,13 +713,9 @@ private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
                 contentColor = Color.White,
             ),
         ) {
-            Text(
-                text = "Start over",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-            )
+            // The label #311 found cut to "Start" at the largest font on a 438 px watch, once the
+            // row was narrowed to the circle. FittedLabel steps it down instead.
+            FittedLabel(text = "Start over", fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -733,11 +733,19 @@ private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
  *
  * Tapping Start here is byte-for-byte what it was: same anchor, same cues, same screen. The lead-in
  * is reached only through its own control.
+ *
+ * **Only as wide as the circle where it sits** (#311). This row was 0.92 of the column on every
+ * watch, and it sits low, where a round screen narrows fast: on the Wear emulator at the SM-R925U's
+ * metrics the bezel cut both outer corners, and a tester's Galaxy Watch 9 showed the same cut.
+ * [RoundScreenColumn] now narrows it to the chord at its own height, less a small gap, and keeps
+ * 0.92 as the cap for a screen with room to spare. The halves stay equal. The height does not move,
+ * so neither control drops below the 48 dp touch target to make the row fit. What gives instead,
+ * at the larger font sizes on the smaller watches, is the labels' type size: see [FittedLabel].
  */
 @Composable
 private fun StartWithLeadIn(onStart: () -> Unit, onLeadIn: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(0.92f),
+        modifier = Modifier.fitsRoundScreen(maxWidthFraction = 0.92f),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Button(
@@ -750,13 +758,7 @@ private fun StartWithLeadIn(onStart: () -> Unit, onLeadIn: () -> Unit) {
                 contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
-            Text(
-                text = "Start",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-            )
+            FittedLabel(text = "Start", fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
         Button(
             onClick = onLeadIn,
@@ -768,13 +770,7 @@ private fun StartWithLeadIn(onStart: () -> Unit, onLeadIn: () -> Unit) {
                 contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
-            Text(
-                text = "Lead-in",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-            )
+            FittedLabel(text = "Lead-in", fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
