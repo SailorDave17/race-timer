@@ -121,11 +121,14 @@ was removed rather than ticked, because this table's job is to list what is *not
 that has become true is a row that has to go, and leaving it would make the next reader cut a line
 the build supports. The empty table stays so the next contingent line has somewhere to land.
 
-One caveat survives the table: the phone's vibration is **built but not measured** on the phone —
-its usage declaration is provisional until [#210](https://github.com/SailorDave17/race-timer/issues/210)
-reads delivery off the owner's handset under DND and silent mode. That does not touch the line
-above, which claims a distinct vibration per signal and not delivery under any condition; it is
-why the *feel the gun* line below stays declined.
+One caveat survives the table: the phone's cues are **measured, and fail one condition**.
+[#210](https://github.com/SailorDave17/race-timer/issues/210) read delivery off the owner's handset
+on 2026-09-25 (`docs/phone-cue-delivery.md`). Tones and buzzes both reached the officer 30 of 30 in
+vibrate mode, silent mode, with another app's music playing and with the screen off, and **0 of 30
+under total-silence Do Not Disturb** —
+[#315](https://github.com/SailorDave17/race-timer/issues/315) owns that. It does not touch the line
+above, which claims a distinct vibration per signal and not delivery under any condition; it is why
+the *feel the gun* line below stays declined.
 
 Everything else in the draft is true of the phone today: the countdown, the cue audio, cueing with
 the screen off, Sync, Custom, restore-after-kill, the officer's screen choice, the race-manager
@@ -272,17 +275,19 @@ are not visible from the text itself.
   - **One watch, one OS version.** The baseline is an SM-R925U on API 36. A listing sentence is read
     as a claim about every device it installs on — the same reason the timing figure stays out, where
     a median-shaped number would be read as a bound.
-  - **The draft revision above is two-form-factor, and the phone's haptics are unmeasured.**
-    [#208](https://github.com/SailorDave17/race-timer/issues/208) built the path on 2026-09-05 with
-    a *provisional* usage declaration — the honest `USAGE_ALARM`, the very class that measured 0 of
-    30 on the watch — and [#210](https://github.com/SailorDave17/race-timer/issues/210) is where a
-    phone gets its own DND table. Until then a shared line would over-claim on the device it was
-    never measured on. *(This bullet said "no haptic path at all" and "unbuilt" until #208 landed;
-    the reason moved from absence to non-measurement and the decision did not move.)*
+  - **The draft revision above is two-form-factor, and the phone fails under DND.**
+    [#210](https://github.com/SailorDave17/race-timer/issues/210) gave the phone its own DND table on
+    2026-09-25: the honest `USAGE_ALARM` it declares delivered **0 of 30** buzzes under total silence,
+    the watch's #144 result on a second device, while `USAGE_TOUCH` delivered 30 of 30 and was not
+    adopted, for costs [#315](https://github.com/SailorDave17/race-timer/issues/315) weighs
+    (`docs/phone-cue-delivery.md`). A shared line would claim of the phone what it measurably does
+    not do. *(This bullet said "no haptic path at all" until #208 landed, then "unmeasured" until #210
+    measured it; the reason moved from absence to non-measurement to a measured failure, and the
+    decision did not move.)*
 
   What would make it available: a re-check that holds across a `targetSdk` bump and a platform
-  upgrade, or arm 3 retiring the mislabel — plus the phone's haptics landing, if the line is to sit in
-  copy that describes both.
+  upgrade, or arm 3 retiring the mislabel — plus #315 delivering the phone's cues under DND, if the
+  line is to sit in copy that describes both.
 
 Nothing in the listing describes a feature on the roadmap rather than in the build: no Tile, no
 complication, no phone companion, no named custom presets.

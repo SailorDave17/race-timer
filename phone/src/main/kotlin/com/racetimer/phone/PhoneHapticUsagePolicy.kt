@@ -5,44 +5,49 @@ import com.racetimer.android.HapticUsage
 import com.racetimer.android.HapticUsagePolicy
 
 /**
- * What this phone's vibrations are declared as — **provisional, pending measurement** (#208,
- * measured by #210).
+ * What this phone's vibrations are declared as — **measured** on the owner's phone (#210).
  *
- * ### These values are a choice made for the phone, not an inheritance from the watch
+ * ### The measured table
  *
- * [HapticUsagePolicy] exists so that each form factor states its own answer (#200), and this is
- * the phone's: the **honest** declarations, chosen because nothing has been measured on a phone
- * yet and the documented meaning of each usage is the only ground there is. A race cue is an
- * alarm — something that must reach the person whatever else the device is doing — so it is
- * declared `USAGE_ALARM`; a tap confirmation is touch feedback, so it is declared `USAGE_TOUCH`.
+ * SM-S918U, Android 16 (API 36), `develop @ a4972fe`, 2026-09-25. One full US Sailing 5-4-1-Go race
+ * per condition (30 cues), read per buzz from `dumpsys vibrator_manager` — the only instrument that
+ * says a buzz reached the hand. Procedure and the audio half in `docs/phone-cue-delivery.md`.
+ *
+ * | Condition | `USAGE_ALARM` (what ships) | `USAGE_TOUCH` |
+ * |---|---|---|
+ * | normal | 30 of 30 `finished` | — |
+ * | vibrate mode | 30 of 30 | — |
+ * | silent mode | 30 of 30 | — |
+ * | another app's music holding audio focus | 30 of 30 | — |
+ * | screen off, on (reported) battery | 30 of 30 | — |
+ * | **total-silence Do Not Disturb** | **0 of 30** — every one `ignored_app_ops` | **30 of 30** |
+ *
+ * So a cue is declared `USAGE_ALARM`: the honest declaration, and the one measured to reach the hand
+ * in five of the six conditions. The sixth is the watch's #144 finding reproduced on a phone — the
+ * accurate class is the one total-silence DND restricts, and `USAGE_TOUCH` is the one it lets
+ * through. **It is not adopted here, on purpose** (owner decision, 2026-09-25): on this phone the
+ * touch class vibrates at `MEDIUM` intensity where the alarm class gets `HIGH`, it follows a
+ * touch-feedback setting a user can switch off entirely — which would silence every cue buzz in
+ * *every* condition — and it has not been run in the other five. #315 owns that decision, with
+ * these numbers. Until it lands, a race under total-silence DND buzzes nothing on the phone.
+ *
+ * ### Why the watch's answer is still not copied
+ *
+ * The watch declares `USAGE_TOUCH` for **both** usages, a known lie taken on its own evidence (see
+ * `WearHapticUsagePolicy` and #144/#186/#187). The phone's numbers say the lie would buy the same
+ * delivery here; they also say what it would cost here that it did not cost there. That is a
+ * decision about this device, taken in #315 — not a value to inherit.
+ *
+ * ### Feedback is declared, not measured
+ *
  * The phone issues no [HapticUsage.FEEDBACK] vibration today (it has no sync buzz — on a
- * console-sized readout the display snapping to the minute is the confirmation), but the seam
- * has two members and both are answered, so a feedback buzz added later arrives declared rather
- * than inferred.
+ * console-sized readout the display snapping to the minute is the confirmation), so #210 had
+ * nothing to measure there. The seam has two members and both are answered, so a feedback buzz
+ * added later arrives declared as touch feedback rather than inferred — and owes a measurement of
+ * its own when it does.
  *
- * This is the same stance [PhoneCueAudioProfile] takes for the tones, for the same reason.
- *
- * ### Why the watch's answer is deliberately NOT copied
- *
- * The watch declares `USAGE_TOUCH` for **both** usages, and that is a known lie taken on evidence:
- * on an SM-R925U at API 36, total-silence Do Not Disturb dropped every `USAGE_ALARM` cue
- * (0 of 30) and passed every `USAGE_TOUCH` one (30 of 30). Every number in that table is a
- * reading of *one watch's* zen policy — duration-class inference and DND behaviour are
- * device-measured facts — and a phone's is a different policy. Importing the lie here would pay
- * its taxonomy cost with no evidence that it buys the delivery it was traded for; importing the
- * *honest* value with a note is what makes #210's measurement a decision rather than a
- * confirmation. See `WearHapticUsagePolicy` for the watch's table and #144/#186/#187 for how it
- * was taken.
- *
- * ### Provisional until #210
- *
- * #210 runs cue delivery on the owner's phone under DND, silent mode, focus loss and screen-off,
- * reads vibration delivery from `dumpsys vibrator_manager` per condition — the only instrument
- * that says a buzz reached the hand — and **sets this declaration to the measured winner in its
- * own change**, removing the provisional marker here and the test that pins it
- * (`PhoneHapticUsageDeclarationTest`). Until then treat both values as placeholders that have
- * never been proven to reach a human: `USAGE_ALARM` delivering 0 of 30 under DND on the watch is
- * the standing proof that the accurate declaration can be the one that silences you.
+ * `PhoneCueDeclarationTest` pins both values, so a change here is a red build and a reason to
+ * re-run the procedure, not a silent edit.
  */
 object PhoneHapticUsagePolicy : HapticUsagePolicy {
 
