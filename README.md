@@ -137,6 +137,9 @@ an instruction as a signal.
   against measured worsts of 61 ms and 101 ms); the store listing deliberately still does the latter,
   and the reasoning for keeping them different is in [`docs/store/listing.md`](docs/store/listing.md)
 - **Foreground service + Ongoing Activity** — the countdown survives screen-off and backgrounding
+- **The time of day on the watch** — Wear OS's curved clock at the top rim, above the sequence name,
+  in every timer state. It gives way while a warning line or a blocking notice is on screen
+  ([`docs/message-surface.md`](docs/message-surface.md), #303)
 - **Screen policy is a table, not a habit** — keep-awake and max-brightness are two pure functions of
   timer state in `shared/ScreenPolicy.kt`, and they deliberately disagree on exactly one state so a
   test can assert the divergence
