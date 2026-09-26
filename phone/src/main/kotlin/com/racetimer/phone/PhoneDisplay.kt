@@ -13,10 +13,11 @@ import android.view.WindowManager
  * where the countdown is.
  *
  * **The phone deliberately does not share the watch's display rules, and the divergence is the
- * decision rather than a shortcut.** On the watch both properties are pure functions of the engine
- * state, living in `shared/`, reasoned and hardware-verified (#65, #100 and the sun test that closed
- * it) — correct for a wrist that is *glanced at*, on a small battery, by one person who can be
- * decided for. A phone propped on a committee-boat console is a different instrument: it is watched
+ * decision rather than a shortcut.** On the watch both properties are decided *for* the wearer by a
+ * table in `shared/` — keyed on the engine state, and since #300 keep-screen-on also on which screen
+ * is up — reasoned and hardware-verified (#65, #100 and the sun test that closed it). That is correct
+ * for a wrist that is *glanced at*, on a small battery, by one person who can be decided for.
+ * A phone propped on a committee-boat console is a different instrument: it is watched
  * continuously by a boat full of people, may or may not have a charger aboard, and has to last a
  * start day (#216). That makes the battery-versus-legibility trade a property of **the day** — this
  * sun, this boat, this much racing left — which is why the officer makes it and this path applies it

@@ -34,7 +34,11 @@ A third observation from the same session, which is a behavioural fact rather th
 
 > when on the pre start screen the app does not stay awake. This is how it is supposed to function.
 
-That is confirmed by the source, and it is load-bearing for how the runs below should be read.
+That was confirmed by the source, and it is load-bearing for how the runs below should be read.
+**It is no longer how the app behaves.** On 2026-09-25 the owner decided that the pre-start screen
+should stay awake until Start is pressed, with no timeout
+([#300](https://github.com/SailorDave17/race-timer/issues/300)). Pressing Start on the signal had
+meant waking the watch first. The quote is kept because it describes the build both runs were taken on.
 
 ## The second run did more and cost less, and that is two separate facts
 
@@ -55,36 +59,50 @@ is the countdown plus a margin, not the race. What is left running for that hour
 service, its ongoing notification and the tick loop, with the panel dark.
 
 So the honest reading of the pair is: **the sequence costs at or below 5 points, and the count-up hour
-is close to free.** The display is the dominant load, and it is only lit for the countdown itself —
-which is the outcome the display policy was designed for, now with a number against it.
+is close to free.** The display is the dominant load, and in both runs it was lit only for the
+countdown itself — which is the outcome the display policy was designed for, now with a number
+against it. Since #300 the display is also held on the pre-start screen for as long as the sailor waits
+there, and neither run contains that load (see the next section).
 
 ## The profile matrix #16 asked for, and what the watch actually permits
 
-#16 defined four profiles on 2026-07-25. Two of them assume a control that does not exist on the
-watch, which is why the runs above do not map onto them one-for-one.
+#16 defined four profiles on 2026-07-25. The two runs above were taken before #300 changed what
+waiting in the app costs, which is why they do not map onto the profiles one-for-one.
 
 | #16's profile | Status |
 |---|---|
 | **Baseline** — battery % at start and end of session | Covered by both runs |
 | **Session** — from 100%, one full sequence, screen on throughout, haptics enabled | Run 1 |
-| **Extended** — 30 min idle-in-app, then a full sequence | Covered in substance by run 2, in the opposite order |
-| **Screen-off** — the same with keep-screen-on disabled | **Not selectable on this app** |
+| **Extended** — 30 min idle-in-app, then a full sequence | **Not measured on the current build.** Since #300, idle-in-app on the pre-start screen is a lit panel, and neither run has one |
+| **Screen-off** — the same with keep-screen-on disabled | Covered in substance by run 2, in the opposite order, on a build where every wait in the app slept. On the current build it is the same wait on the sequence picker |
+| **Pre-start hold** *(added by #300, not one of #16's)* — an hour on the pre-start screen, untouched | **Not measured** |
 
-**There is no keep-screen-on setting on the watch.** `ScreenPolicy.keepsScreenOn(state)` is a pure
-function of `TimerState` — true for `RUNNING` and `RACE_ENDED`, false for `IDLE`, `PAUSED`, `FINISHED`
-and `COUNTING_UP` — and nothing in `:wear` overrides it. The toggle exists only in the phone module
-(`DisplayChoice`, [#225](https://github.com/SailorDave17/race-timer/issues/225)), which is a different
-app on different hardware.
+**There is still no keep-screen-on setting on the watch, but since #300 there are two ways to wait in
+the app.** `ScreenPolicy.keepsScreenOn(state, onTimerScreen)` decides for the wearer. It is true for
+`RUNNING` and `RACE_ENDED`, and false for `PAUSED`, `FINISHED` and `COUNTING_UP`. For `IDLE` it
+depends on the screen: true on the timer screen, which in `IDLE` is the pre-start screen, and false on
+the sequence picker and the other screens stacked over it. Nothing in `:wear` overrides it. The toggle
+still exists only in the phone module (`DisplayChoice`,
+[#225](https://github.com/SailorDave17/race-timer/issues/225)), which is a different app on different
+hardware.
 
-**Which collapses the extended and screen-off profiles into one run here.** Sitting in the app before
-the start is `IDLE`, and `IDLE` is already a screen-sleep, no-brightness-override state — so an
-idle-in-app arm *is* the screen-off arm, and there is no way to produce a screen-on idle arm to
-contrast it against. That is precisely what the owner's third observation records, and it is the
-policy working rather than a fault.
+**So a screen-on idle arm can now be produced, and it has its own control.** Until #300, sitting in the
+app before the start was `IDLE` with the screen allowed to sleep, so an idle-in-app arm *was* the
+screen-off arm and the two profiles collapsed into one. Now waiting on the pre-start screen holds the
+panel on at the system's brightness. The brightness override stays off, because `forcesMaxBrightness`
+is unchanged. And the app takes no wake lock of its own, because the service's `PARTIAL_WAKE_LOCK`
+belongs to a race and nothing is being timed. Waiting on the sequence picker is the same wait with the
+screen allowed to sleep, so that is the screen-off arm.
 
-Run 2 puts its long stretch after the gun instead of before it. For power that is the same test: on
-both sides of the gun the display is asleep, the brightness override is off, and no wake lock is
-held.
+Run 2 puts its long stretch after the gun instead of before it. When it ran, that was the same test for
+power, because both sides of the gun had the display asleep. **It is not the same test now.** A
+stretch waited out on the pre-start screen keeps a lit panel that run 2's count-up hour never had.
+
+**The cost of an hour held on the pre-start screen is unmeasured.** Neither run contains a lit idle
+stretch, so nothing in this file bounds it. Extrapolating from run 1's five lit minutes would multiply
+a number this file already calls overstated, and run 1 was lit at full brightness where the hold is
+not. Measuring it takes an hour off the charger with no adb attached. *How to re-run this* below
+covers it as step 5.
 
 ## Recommendation
 
@@ -94,7 +112,9 @@ held.
   overstatement for the reason above.
 - **A full committee day should start above roughly 50%** — several sequences plus hours of count-up
   and idle. That figure is a projection from two runs, not a measurement, and is offered as a rigging
-  guideline rather than a result.
+  guideline rather than a result. It predates #300: its idle hours were a sleeping screen, and time
+  now waited on the pre-start screen is lit and unmeasured. A postponement waited out there is the
+  case to measure before leaning on the 50%.
 
 **Should the app warn on low battery at sequence start? No — not at these numbers.**
 
@@ -147,5 +167,10 @@ question should be reopened as a story under epic
    could not.
 4. For a count-up arm, use a race-manager sequence and End Race at a recorded elapsed time, so the
    hour is a known quantity rather than an estimate.
-5. Add the row to the table above rather than replacing it. Two dated rows that disagree are more
+5. For a pre-start arm (#300), open the app on the pre-start screen, put the watch down untouched for
+   a timed hour, and read the percentage when the hour is up. The screen should still be on at the
+   end, and if it is not, the run did not measure the hold. For its control, do the same hour on the
+   sequence picker, where the screen sleeps. Only the picker hour needs a tap to wake the watch
+   before reading the percentage.
+6. Add the row to the table above rather than replacing it. Two dated rows that disagree are more
    useful than one that has been overwritten.
