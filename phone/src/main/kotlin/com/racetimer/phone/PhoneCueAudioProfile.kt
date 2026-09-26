@@ -6,31 +6,49 @@ import com.racetimer.android.CueAudioProfile
 import com.racetimer.shared.CueStream
 
 /**
- * What a [CueStream] means on a phone — **provisional, pending measurement** (#202, measured by
- * #210).
+ * What a [CueStream] means on a phone — **measured** on the owner's phone (#210).
  *
- * ### These values are a choice made for the phone, not an inheritance from the watch
+ * ### The measured table
  *
- * [CueAudioProfile] exists so that each form factor states its own answer (#200), and this is the
- * phone's: the platform-documented mappings, chosen because nothing has been measured yet and the
- * documented behaviour is the only ground there is. `USAGE_ALARM` is documented to be exempt from
- * ringer mode and to carry on the stream users keep up for things that must be heard; `USAGE_MEDIA`
- * is the documented landing on `STREAM_MUSIC` for the rerouted case.
+ * SM-S918U, Android 16 (API 36), `develop @ a4972fe`, 2026-09-25. One full US Sailing 5-4-1-Go race
+ * per condition (30 cues), each cue counted as heard by a microphone reading that cue's own pitch,
+ * with the player's `mutedState` from `dumpsys audio` alongside. Procedure, instrument and its
+ * negative control in `docs/phone-cue-delivery.md`.
  *
- * They happen to name the same constants as `WearCueAudioProfile`. That is coincidence of the
- * starting point, not a copy: the watch's values are *kept* because of device-measured facts (its
- * alarm stream is aliased into the ringer-affected set — a Samsung Wear customisation), and none of
- * those measurements transfers here. Neither does the watch's haptic answer — `USAGE_TOUCH` was
- * measured to survive DND *on that watch*, and importing it here as "the value that works" would be
- * exactly the untransferable inheritance #200 built this interface to prevent.
+ * | Condition | `USAGE_ALARM` (what ships) | `USAGE_ASSISTANCE_ACCESSIBILITY` |
+ * |---|---|---|
+ * | normal | 30 of 30 heard, player unmuted | — |
+ * | vibrate mode | 30 of 30 | — |
+ * | silent mode | 30 of 30 | — |
+ * | another app's music holding audio focus | 30 of 30, never ducked or faded | — |
+ * | screen off, on (reported) battery | 30 of 30 | — |
+ * | **total-silence Do Not Disturb** | **0 of 30** — `mutedState=opPlayAudio` throughout | **30 of 30** |
  *
- * ### Provisional until #210
+ * ### What the table settles, and what it leaves to #315
  *
- * The phone's real answer is owed to a measurement nobody has taken: #210 runs cue delivery on the
- * owner's phone under DND, silent mode, focus loss and screen-off, and records the device it
- * measured on. Until that lands, treat every value below as a placeholder that has never been
- * proven to reach a human — the same epistemic state the watch's values were in before #95's
- * hardware runs, which is what found the aliasing that rewrote them.
+ * **Ringer mode does not reach the alarm stream on this phone.** Vibrate and silent both left
+ * `STREAM_ALARM` unmuted and every cue audible — the opposite of the SM-R925U, whose alarm stream
+ * is aliased into the ringer-affected set (see `WearCueAudioProfile`). That is the measurement
+ * [PhoneCueSounder] was waiting on before deciding whether the phone needs the watch's #95 reroute,
+ * and the answer is no.
+ *
+ * **Total-silence DND does reach it**, and there no stream choice helps: DND mutes `STREAM_MUSIC`
+ * too, so [CueStream.MEDIA] is no way out. The accessibility usage is the one DND leaves alone, and
+ * it delivered every cue in its one race — but it plays at the accessibility volume (5 of 15 on this
+ * phone, set by nobody), a slider Samsung's volume panel may not show, where the alarm stream is the
+ * one #61's loudness was verified on; and it has not been run in the other five conditions. So it is
+ * **not** adopted here (owner decision, 2026-09-25); #315 owns that decision with these numbers.
+ *
+ * ### These values are the phone's, not an inheritance from the watch
+ *
+ * [CueAudioProfile] exists so that each form factor states its own answer (#200). These happen to
+ * name the same constants as `WearCueAudioProfile`, for different reasons: the watch keeps them
+ * *despite* a device-measured aliasing that forced a reroute, the phone keeps them because nothing
+ * here needed one. [CueStream.MEDIA]'s mapping is the documented landing on `STREAM_MUSIC` and is
+ * **unmeasured** on the phone — [PhoneCueSounder] never routes there.
+ *
+ * `PhoneCueDeclarationTest` pins these values, so a change here is a red build and a reason to
+ * re-run the procedure, not a silent edit.
  */
 object PhoneCueAudioProfile : CueAudioProfile {
 

@@ -13,7 +13,7 @@ import com.racetimer.shared.SignalPattern
  * how the usage is attached — lives in `:shared-android`, where the watch measured it on a wrist
  * and re-verified it after the extraction (#144, #187, #201). This class contributes exactly one
  * phone-side decision: **what the vibrations are declared as**, which is [PhoneHapticUsagePolicy]
- * and is provisional until #210 measures this phone. Nothing else here is the phone's to say.
+ * and was measured on this phone by #210. Nothing else here is the phone's to say.
  */
 class PhoneCueBuzzer(context: Context) : CueBuzzer {
 
