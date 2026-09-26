@@ -40,6 +40,8 @@ import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import androidx.wear.compose.material.TimeText
+import androidx.wear.compose.material.TimeTextDefaults
 import com.racetimer.shared.BANNER_MAX_WIDTH_FRACTION
 import com.racetimer.shared.BANNER_TEXT_SP
 import com.racetimer.shared.BANNER_TOP_FRACTION
@@ -49,6 +51,8 @@ import com.racetimer.shared.MessageSurface
 import com.racetimer.shared.STATUS_LINE_MAX_WIDTH_FRACTION
 import com.racetimer.shared.STATUS_LINE_TEXT_SP
 import com.racetimer.shared.BG_FINAL_TEN_ARGB
+import com.racetimer.shared.BG_FINAL_TEN_FLASH_ARGB
+import com.racetimer.shared.COUNTDOWN_DIGIT_ARGB
 import com.racetimer.shared.NoticeTier
 import com.racetimer.shared.StartNotice
 import com.racetimer.shared.StartRemedy
@@ -59,11 +63,14 @@ import com.racetimer.shared.TIER2_SCRIM_ARGB
 import com.racetimer.shared.TIER2_TEXT_ARGB
 import com.racetimer.shared.TIER3_SCRIM_ARGB
 import com.racetimer.shared.TIER3_TEXT_ARGB
+import com.racetimer.shared.TIME_OF_DAY_TEXT_ARGB
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.backgroundArgbFor
 import com.racetimer.shared.bannerFitsRoundScreen
 import com.racetimer.shared.formatCountdown
+import com.racetimer.shared.isFinalTenFlash
 import com.racetimer.shared.formatElapsed
+import com.racetimer.shared.showsTimeOfDay
 import com.racetimer.shared.NEUTRAL_BUTTON_ARGB
 import com.racetimer.shared.ON_ACCENT_ARGB
 import com.racetimer.shared.PRIMARY_ARGB
@@ -92,6 +99,17 @@ private const val BLOCKED_READOUT_ALPHA = 0.4f
 // `shared/MessageContrast.kt` — the contrast guard has to measure the same values the screen
 // renders, so there is one definition and this file reads it (#123).
 private val BG_FINAL_TEN = Color(BG_FINAL_TEN_ARGB)
+
+/** The trough the final-ten background pulses down to — see `BG_FINAL_TEN_FLASH_ARGB` (#12). */
+private val BG_FINAL_TEN_FLASH = Color(BG_FINAL_TEN_FLASH_ARGB)
+
+/**
+ * Where the pair's status row (#219) starts, as a fraction of screen height: in the gap between the
+ * readout (ending about 0.42) and Start (beginning about 0.63) that the Tier 1 banner also uses, and
+ * a little lower than the banner's 0.44 so one 10 sp line sits in the middle of it. The row never
+ * shares the gap — it is not drawn while a banner is up.
+ */
+private const val PAIR_ROW_TOP_FRACTION = 0.49f
 
 /** Pick the background colour for the given [remainingMs] and [state]. */
 private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
@@ -142,6 +160,13 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
  *                       `armedNotice` during a running race, which is the only one that can be
  *                       non-null while the countdown is live and never returns a blocking notice.
  *                       This screen decides where it goes, never whether it applies.
+ * @param pairStatus     The pair link's row (#219): the phone, its clock offset and the bound on it.
+ *                       Drawn only on the plain pre-start screen — idle, with no notice, no warning,
+ *                       no resume offer and no banner — in the gap between the readout and Start,
+ *                       where the circle is widest. An overlay, so it moves nothing the notice
+ *                       geometry (#233) was measured against; confined to idle, so navy is the only
+ *                       background it meets. Null draws nothing, and is what a watch with no phone
+ *                       running the app gets.
  * @param onRemedy       Called with [StartNotice.remedy] when the sailor taps a notice's action.
  * @param onStart        Called when the user taps Start, or Resume when [resumeOffered].
  * @param onStartOver    Called when the user taps Start over. Only reachable when [resumeOffered].
@@ -168,6 +193,7 @@ fun TimerScreen(
     leadInOffered: Boolean = false,
     inLeadIn: Boolean = false,
     startNotice: StartNotice? = null,
+    pairStatus: String? = null,
     onRemedy: (StartRemedy) -> Unit = {},
     onStart: () -> Unit,
     onStartOver: () -> Unit = {},
@@ -188,16 +214,45 @@ fun TimerScreen(
         label = "bgColor"
     )
 
+    // The final-ten flash (#12). It lives on the background rather than on the digits, because in
+    // sunlight dimming the glyph is the one thing that cannot be afforded — the reasoning, and the
+    // measured ratios, are on `BG_FINAL_TEN_FLASH_ARGB`.
+    //
+    // Modulated *after* the 300 ms state tween rather than fed through it: `animateColorAsState`
+    // exists to smooth navy → amber → red, and pushing a 400 ms pulse through a 300 ms tween would
+    // smear the pulse into a wash. The two animations compose here instead of fighting.
+    val flashFraction = if (isFinalTenFlash(state, remainingMs)) {
+        val flashTransition = rememberInfiniteTransition(label = "finalTenFlash")
+        val fraction by flashTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 400, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "finalTenFlashFraction",
+        )
+        fraction
+    } else {
+        0f
+    }
+    val renderedBg = lerp(animatedBg, BG_FINAL_TEN_FLASH, flashFraction)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(animatedBg),
+            .background(renderedBg),
         contentAlignment = Alignment.Center,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(8.dp),
+        // The centred column this screen has always had, told that the screen is round (#311). It is
+        // measured and placed as the `Column` it replaced was, so every child sits on the rows it
+        // did. The differences are the sequence name and the pre-start controls, marked
+        // `staysInsideRoundScreen` and `fitsRoundScreen`, which are drawn only as wide as the circle
+        // is where they sit.
+        RoundScreenColumn(
+            isRound = configuration.isScreenRound,
+            modifier = Modifier.fillMaxSize(),
+            padding = 8.dp,
         ) {
 
             // Sequence name label — tappable to change the sequence when not running, counting up,
@@ -205,12 +260,19 @@ fun TimerScreen(
             val canPick = state != TimerState.RUNNING &&
                 state != TimerState.COUNTING_UP &&
                 state != TimerState.RACE_ENDED
-            Text(
+            // Kept inside the circle at its own height (#311). It sits near the top, where a round
+            // screen is narrowest: on a 438 px watch at 340 dpi a long name ran under the bezel at
+            // the default font size, and at the largest on the SM-R925U too. A name wider than the
+            // circle there is drawn a little smaller rather than cut, owner's decision, because the
+            // end of the name is what tells "Race Manager" from "5-4-1-Go". One line, in the slot a
+            // full-size line takes, so the column above #233's plate does not grow.
+            FittedText(
                 text = if (canPick) "$sequenceName  ▾" else sequenceName,
                 style = MaterialTheme.typography.caption1,
                 color = Color.White.copy(alpha = 0.7f),
-                textAlign = TextAlign.Center,
-                modifier = if (canPick) Modifier.clickable(onClick = onPickSequence) else Modifier,
+                modifier = Modifier
+                    .staysInsideRoundScreen()
+                    .let { if (canPick) it.clickable(onClick = onPickSequence) else it },
             )
 
             // Degraded-recovery prompt: gun was reconstructed best-effort, confirm against the flag.
@@ -220,7 +282,9 @@ fun TimerScreen(
             // amber text it used to be computed 2.93 : 1 against a 4.5 : 1 bar, on the screen a
             // sailor reads under stress. The scrim is Tier 1's, opaque, so the tier has one contrast
             // case rather than four; `MessageContrastTest` asserts it and asserts the old bare text
-            // failing, so removing this reddens the suite.
+            // failing. Since #277 darkened the amber, bare text would clear there (7.12 : 1), so the
+            // scrim is margin rather than rescue, and it stays under rule 1. The failing control is
+            // pinned to the amber it was measured on.
             if (showResyncPrompt) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -268,7 +332,8 @@ fun TimerScreen(
             // The scrim is not optional here and #96 is why. Until then every notice reaching this
             // branch was confined to the pre-start screen, where navy is the only background; the
             // Do Not Disturb warning stays up through the amber minute and the red final ten, which
-            // is the exposure that made bare `#FFC107` a defect in #123. `MessageContrastTest`
+            // is the exposure that made bare `#FFC107` a defect in #123. (#277's darker amber
+            // would pass bare text, and the scrim stays anyway under rule 1.) `MessageContrastTest`
             // derives this surface's backgrounds by driving `armedNotice`, so the check follows the
             // rule rather than a comment.
             //
@@ -294,7 +359,10 @@ fun TimerScreen(
                         // Capped so the scrim stays inside the bezel. Measured on an SM-R925U: left
                         // uncapped this drew from x=30 to x=420 at y=40, where the round display's
                         // visible chord is only x=97 to x=353 — the plate's top corners were cut.
-                        // The arithmetic and the negative control are in `shared/BannerLayout.kt`.
+                        // The arithmetic and the negative control are in `shared/BannerLayout.kt`,
+                        // with where the plate sits per line count (#233). Those figures were
+                        // measured on this column as it is, so changing what it holds above or
+                        // below the plate, or the 2 dp spacer, moves `StatusLineScreen`'s numbers.
                         .widthIn(max = configuration.screenWidthDp.dp * STATUS_LINE_MAX_WIDTH_FRACTION)
                         .background(Color(TIER3_SCRIM_ARGB), shape = RoundedCornerShape(6.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -412,6 +480,34 @@ fun TimerScreen(
             }
         }
 
+        val plainPreStart = state == TimerState.IDLE && startNotice == null && discardWarning == null &&
+            !resumeOffered && !showResyncPrompt && message == null
+        if (pairStatus != null && plainPreStart) {
+            Text(
+                text = pairStatus,
+                style = MaterialTheme.typography.caption3,
+                color = Color.White.copy(alpha = 0.6f),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = configuration.screenHeightDp.dp * PAIR_ROW_TOP_FRACTION),
+            )
+        }
+
+        // The time of day at the top rim (#303), in the band above the sequence name. Wear OS's own
+        // curved clock: HH:MM with no seconds, following the watch's 12/24-hour setting, which is
+        // `TimeText`'s default time source. It gives way to every Tier 3 line and to a Tier 2
+        // panel, because either one grows the column above up into this band. The rule is
+        // `showsTimeOfDay` in `shared/`, where `TimeOfDayTest` asserts it. The colour is passed in
+        // rather than inherited, because it is drawn with no scrim and `MessageContrastTest` holds
+        // that constant to every background.
+        if (showsTimeOfDay(showResyncPrompt, discardWarning != null, startNotice)) {
+            TimeText(
+                timeTextStyle = TimeTextDefaults.timeTextStyle(color = Color(TIME_OF_DAY_TEXT_ARGB)),
+            )
+        }
+
         // Transient notice / warning banner (e.g. clock adjustment)
         if (message != null) {
             // The dwell is counted here, from the composition that puts the banner on screen, and
@@ -447,7 +543,6 @@ private fun CountdownText(
     previewElapsed: Boolean = false,
     dimAlpha: Float = 1f,
 ) {
-    val isFinalTen = state == TimerState.RUNNING && remainingMs in 1..10_000L
     val isFinished = state == TimerState.FINISHED
     // Same elapsed-time display in all three: live while COUNTING_UP, frozen once RACE_ENDED
     // (elapsedMs itself carries that distinction — see the frozen-getter note on
@@ -463,29 +558,15 @@ private fun CountdownText(
         else -> formatCountdown(remainingMs)
     }
 
-    // Only the alpha differs between flashing and steady, so the branch decides that one value and
-    // the countdown itself is written once.
-    val flashAlpha = if (isFinalTen) {
-        val infiniteTransition = rememberInfiniteTransition(label = "flash")
-        val flashAlpha by infiniteTransition.animateFloat(
-            initialValue = 1f,
-            targetValue = 0.3f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 400, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse,
-            ),
-            label = "flashAlpha",
-        )
-        flashAlpha
-    } else {
-        1f
-    }
-
-    // Multiplied rather than replaced, so the two reasons to dim compose instead of one silently
-    // winning. They cannot currently co-occur — [dimAlpha] is only below 1 under a blocking notice,
-    // which is pre-start, and the flash needs RUNNING — but a branch that picks one of the two would
-    // be wrong the first time that stops being true, and nothing would report it (#13).
-    val alpha = flashAlpha * dimAlpha
+    // [dimAlpha] is the only thing that may fade these digits, and it is a pre-start concern — the
+    // blocking notice dimming what it covers (#13).
+    //
+    // The final-ten flash used to be multiplied in here as well, animating the numerals to
+    // `alpha = 0.3`. #12 moved it to the background: in sun the digits' emitted luminance is the
+    // whole budget, and spending 70 % of it twice a second took the readout to about 1.07 : 1 at
+    // the trough — unreadable, in the last ten seconds before the gun. The pulse is still there,
+    // and it is now the thing *behind* the numbers that moves.
+    val alpha = dimAlpha
 
     // Smaller than the countdown's 52 sp: formatElapsed grows an extra "H:" group past an hour,
     // and sizing for that up front keeps the readout a constant size rather than shrinking the
@@ -494,7 +575,7 @@ private fun CountdownText(
         text = displayText,
         fontSize = if (showsElapsed) 40.sp else 52.sp,
         fontWeight = FontWeight.Bold,
-        color = Color.White.copy(alpha = alpha),
+        color = Color(COUNTDOWN_DIGIT_ARGB).copy(alpha = alpha),
         textAlign = TextAlign.Center,
     )
 }
@@ -595,19 +676,16 @@ private fun StartButton(onClick: () -> Unit) {
     Button(
         onClick = onClick,
         modifier = Modifier
-            .fillMaxWidth(0.68f)
+            // 0.68 of the column where the circle has room, as before #311, and narrower where it
+            // does not. On every screen measured so far it has room, and #311 checks it anyway.
+            .fitsRoundScreen(maxWidthFraction = 0.68f)
             .height(56.dp),
         colors = ButtonDefaults.buttonColors(
             backgroundColor = Color(PRIMARY_ARGB),
             contentColor = Color(ON_ACCENT_ARGB),
         ),
     ) {
-        Text(
-            text = "Start",
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-        )
+        FittedLabel(text = "Start", fontSize = 18.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -626,7 +704,8 @@ private fun StartButton(onClick: () -> Unit) {
 @Composable
 private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(0.92f),
+        // The same slot and the same sizing as [StartWithLeadIn], whose note says why.
+        modifier = Modifier.fitsRoundScreen(maxWidthFraction = 0.92f),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Button(
@@ -639,13 +718,7 @@ private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
                 contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
-            Text(
-                text = "Resume",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-            )
+            FittedLabel(text = "Resume", fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
         Button(
             onClick = onStartOver,
@@ -657,13 +730,9 @@ private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
                 contentColor = Color.White,
             ),
         ) {
-            Text(
-                text = "Start over",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-            )
+            // The label #311 found cut to "Start" at the largest font on a 438 px watch, once the
+            // row was narrowed to the circle. FittedLabel steps it down instead.
+            FittedLabel(text = "Start over", fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -681,11 +750,19 @@ private fun ResumeChoice(onResume: () -> Unit, onStartOver: () -> Unit) {
  *
  * Tapping Start here is byte-for-byte what it was: same anchor, same cues, same screen. The lead-in
  * is reached only through its own control.
+ *
+ * **Only as wide as the circle where it sits** (#311). This row was 0.92 of the column on every
+ * watch, and it sits low, where a round screen narrows fast: on the Wear emulator at the SM-R925U's
+ * metrics the bezel cut both outer corners, and a tester's Galaxy Watch 9 showed the same cut.
+ * [RoundScreenColumn] now narrows it to the chord at its own height, less a small gap, and keeps
+ * 0.92 as the cap for a screen with room to spare. The halves stay equal. The height does not move,
+ * so neither control drops below the 48 dp touch target to make the row fit. What gives instead,
+ * at the larger font sizes on the smaller watches, is the labels' type size: see [FittedLabel].
  */
 @Composable
 private fun StartWithLeadIn(onStart: () -> Unit, onLeadIn: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(0.92f),
+        modifier = Modifier.fitsRoundScreen(maxWidthFraction = 0.92f),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Button(
@@ -698,13 +775,7 @@ private fun StartWithLeadIn(onStart: () -> Unit, onLeadIn: () -> Unit) {
                 contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
-            Text(
-                text = "Start",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-            )
+            FittedLabel(text = "Start", fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
         Button(
             onClick = onLeadIn,
@@ -716,13 +787,7 @@ private fun StartWithLeadIn(onStart: () -> Unit, onLeadIn: () -> Unit) {
                 contentColor = Color(ON_ACCENT_ARGB),
             ),
         ) {
-            Text(
-                text = "Lead-in",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-            )
+            FittedLabel(text = "Lead-in", fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
     }
 }

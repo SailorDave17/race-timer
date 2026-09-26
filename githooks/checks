@@ -30,14 +30,30 @@
 # #160 put the watch module's orchestration under test, and the step goes in BOTH
 # places on purpose: a local gate that runs a different graph from CI is green on
 # one machine and red on the other for reasons outside the tracked tree. Measured
-# at ~10 s warm, which is the whole argument for it being here and
-# :wear:assembleDebug not.
-#
-# :phone:testDebugUnitTest is NOT here, and that is a gap rather than a decision -
-# it costs about the same and CI runs it. Left alone because #160 is not the issue
-# in which to change what the phone module's gate is; noted so the absence reads
-# as unfinished rather than considered.
+# at ~10 s warm when #160 added it, and 16-18 s warm on 2026-09-25 (#309) - the
+# whole argument for it being here and :wear:assembleDebug not.
 ./gradlew :wear:testDebugUnitTest --no-watch-fs --rerun-tasks
+#
+# #309. The phone module's unit tests, here for the same reason: CI runs them, so a
+# local gate without them passes a phone test that CI then fails. #160 left this
+# out as "a gap rather than a decision", because it was not the issue in which to
+# change the phone module's gate. Measured 28-30 s warm on 2026-09-25, about 1.7x
+# the wear line rather than the "about the same" #160 assumed, taking a hand run
+# from ~43 s to ~72 s. Still well short of the minutes that keep
+# :wear:assembleDebug out.
+./gradlew :phone:testDebugUnitTest --no-watch-fs --rerun-tasks
+#
+# #83. The declared-surface lock, and it is here for a different reason from the test lines above: those
+# are tests, this is a POLICY gate. A permission or dependency that contradicts
+# docs/privacy-policy.md is not a failing test, it is a published document that has stopped being
+# true about the shipped app - so the cheapest place to catch it is before the push rather than
+# after a CI round trip. Measured ~7 s: two manifest-merge tasks and four dependency reports, no
+# compilation. Same command string as the CI step in .github/workflows/ci.yml on purpose.
+#
+# No GRADLE_ARGS here, unlike CI. That flag points Gradle at setup-java's JDK 8 so :shared's
+# toolchain resolves from disk on the runner; locally the foojay resolver in settings.gradle.kts
+# handles it, which is why none of the other lines in this file pass it either.
+python3 .github/scripts/declared-surface.py --check
 #
 # :wear:assembleDebug is deliberately NOT here. CI runs it and it costs minutes;
 # a pre-push slow enough to be worth skipping gets skipped, and a gate that is

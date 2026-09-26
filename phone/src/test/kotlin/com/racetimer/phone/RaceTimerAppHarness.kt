@@ -1,5 +1,9 @@
 package com.racetimer.phone
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
@@ -7,8 +11,10 @@ import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.racetimer.phone.ui.PhoneReadout
 import com.racetimer.phone.ui.TAG_CONTINUE
+import com.racetimer.phone.ui.TAG_FULL_BRIGHTNESS
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.MonotonicClock
 import com.racetimer.shared.RaceSequence
@@ -45,16 +51,101 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
     /** The runner the app is driven through, so a test can assert engine state as well as screen. */
     val runner = PhoneRaceRunner(clock)
 
-    /** Compose the whole app and answer the display surface, leaving the sequence picker up. */
-    fun launch() {
+    /**
+     * The display choice, held **outside** the composition so it survives [recreateActivity] (#281).
+     *
+     * This is the harness's model of the process-scoped store `RaceTimerPhoneApplication` owns: in
+     * production `MainActivity` resolves the view-model from the Application, so the instance
+     * outlives any one activity and dies with the process. Holding it here rather than letting
+     * `RaceTimerApp` default to `viewModel()` is what makes the two lifetimes distinguishable in a
+     * test — the composition can be thrown away while this object is not, which is exactly the
+     * asymmetry #281 is about.
+     *
+     * Each harness gets its own, so tests stay isolated from one another.
+     */
+    val displayChoice = DisplayChoiceViewModel()
+
+    /**
+     * Bumped by [recreateActivity]. The app is composed under `key(generation)`, so changing it
+     * disposes the whole subtree and builds it again with every `remember` fresh.
+     */
+    private var generation by mutableStateOf(0)
+
+    /**
+     * Compose the whole app and answer the display surface, leaving the sequence picker up.
+     *
+     * [fullBrightness] answers the launch surface's second switch, and [applyDisplay] records what
+     * reaches the display mechanism — both defaulted, so every test that does not care about the
+     * screen reads exactly as it did before #279. A test that *does* care has to be able to open on
+     * the officer having asked for the panel, because that is the only condition under which a
+     * count-up has anything to release.
+     */
+    fun launch(
+        fullBrightness: Boolean = DisplayChoice.INITIAL.fullBrightness,
+        applyDisplay: (DisplayChoice) -> Unit = {},
+    ) {
         compose.setContent {
             // The #239 flush loop rides the same frame pump that would otherwise spin forever —
             // see GlobalSnapshotFlushLoop for the measured mechanism. Composed before the app so
-            // it exists from the first composition, which is where the hang bites.
+            // it exists from the first composition, which is where the hang bites. Outside the key
+            // deliberately: it must survive a recreation, since the hang it prevents does not care
+            // which composition is running.
             GlobalSnapshotFlushLoop()
-            RaceTimerApp(applyDisplay = {}, runner = runner)
+            key(generation) {
+                RaceTimerApp(
+                    applyDisplay = applyDisplay,
+                    runner = runner,
+                    displayChoice = displayChoice,
+                )
+            }
+        }
+        if (fullBrightness != DisplayChoice.INITIAL.fullBrightness) {
+            compose.onNodeWithTag(TAG_FULL_BRIGHTNESS).performClick()
         }
         compose.onNodeWithTag(TAG_CONTINUE).performClick()
+        // The choice is applied from a LaunchedEffect, so the tap alone does not land it.
+        compose.waitForIdle()
+    }
+
+    /**
+     * Throw the composition away and build it again — an activity recreation, as the app sees one
+     * (#281).
+     *
+     * **What this reproduces, and what it does not.** Every `remember` in `RaceTimerApp` is
+     * discarded and every `LaunchedEffect` re-runs, which is the whole of what a destroy-and-recreate
+     * does to the composition — and `onTimerScreen`, the state whose loss #281 is about, is a
+     * `remember`. What survives is what production arranges to survive: the engine (it is in the
+     * service) and [displayChoice] (the Application owns its store). Robolectric's compose rule
+     * cannot destroy and rebuild a real activity, so the *cause* is simulated; the state the app is
+     * then in is identical, and that state is what every assertion here is about.
+     *
+     * Deliberately does not touch either clock: a recreation takes no time in the officer's day.
+     */
+    fun recreateActivity() {
+        generation++
+        compose.waitForIdle()
+    }
+
+    /**
+     * Put the runner past the gun **before anything is composed** (#279).
+     *
+     * This is the state a launch lands in when the service already holds a count-up: the engine is
+     * past the gun before anything is composed. Robolectric's compose rule cannot recreate an
+     * activity, so the state is arranged rather than caused — the part under test is what the app
+     * does *given* that state, which is identical either way.
+     *
+     * *(Until #281 this KDoc went on to say "and the fresh composition opens on the picker, because
+     * `onTimerScreen` is `remember`ed rather than saved". That was the defect, and it is fixed: the
+     * composition now opens on the **timer screen**, from the engine's own state. [recreateActivity]
+     * is the way to reach a fresh composition over a live race deliberately.)*
+     *
+     * Deliberately does not touch the composition clock: there is no composition yet.
+     */
+    fun runnerAlreadyCountingUp(sequence: RaceSequence = BuiltInSequences.scholasticRaceManager) {
+        runner.select(sequence)
+        runner.start()
+        clock.nowMs += sequence.totalMs + PAST_GUN_MS
+        runner.tick()
     }
 
     /**
@@ -65,7 +156,10 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
      * it every assertion downstream would hold just as well on a countdown that never started.
      */
     fun startRace(sequence: RaceSequence = BuiltInSequences.usSailing) {
-        compose.onNodeWithText(sequence.name).performClick()
+        // Scrolled to first. Since #206 the picker offers five sequences rather than three, so an
+        // entry low in the list sits below the fold on a small phone and a bare click lands on
+        // nothing — the same thing `CustomSequenceRoutingTest` measured for the Custom entry.
+        compose.onNodeWithText(sequence.name).performScrollTo().performClick()
         compose.onNodeWithText("Start").performClick()
         compose.onNodeWithText("Stop").assertIsDisplayed()
     }
@@ -78,15 +172,32 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
      * and a slice well under one second guarantees the display poll runs several times per displayed
      * second rather than once per assertion.
      */
-    fun advance(totalMs: Long) {
-        require(totalMs > 0 && totalMs % STEP_MS == 0L) {
-            "advance() takes a positive whole multiple of $STEP_MS ms, got $totalMs"
+    fun advance(totalMs: Long, stepMs: Long = STEP_MS) {
+        require(stepMs > 0 && totalMs > 0 && totalMs % stepMs == 0L) {
+            "advance() takes a positive whole multiple of its step ($stepMs ms), got $totalMs"
         }
-        repeat((totalMs / STEP_MS).toInt()) {
-            clock.nowMs += STEP_MS
-            compose.mainClock.advanceTimeBy(STEP_MS)
+        repeat((totalMs / stepMs).toInt()) {
+            clock.nowMs += stepMs
+            compose.mainClock.advanceTimeBy(stepMs)
         }
         compose.waitForIdle()
+    }
+
+    /**
+     * Run the clock from the top of a sequence to just past its gun, in whole seconds (#206).
+     *
+     * A coarser step than [advance]'s default, and safe to be coarse for one reason worth stating:
+     * `TimerEngine.tick` drains **every** cue whose boundary has passed on the tick that crosses
+     * it, so a stride cannot step over the gun — it can only make the display change in bigger
+     * jumps on the way there, which no assertion here is about. The fine slice still matters where
+     * the readout itself is under test, and that is what [advance]'s default is for.
+     *
+     * Deliberately overshoots by [PAST_GUN_MS] rather than landing exactly on zero: a race-manager
+     * sequence's whole subject is what happens *after* the gun, and an assertion taken at the
+     * instant of it would be reading the boundary rather than the state it opens.
+     */
+    fun runPastTheGun(sequence: RaceSequence) {
+        advance(sequence.totalMs + PAST_GUN_MS, stepMs = 1_000L)
     }
 
     /**
@@ -115,8 +226,15 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
         override fun elapsedMs(): Long = nowMs
     }
 
-    private companion object {
+    // Not private since #279: a test that has to land *inside* a timed window needs to know how
+    // much of it [runPastTheGun] has already spent, and re-stating the number in the test is the
+    // duplication that makes the window drift out from under it.
+    companion object {
         const val STEP_MS = 250L
+
+        /** How far past the gun [runPastTheGun] lands — a few whole seconds of count-up. */
+        const val PAST_GUN_MS = 4_000L
+
         val READOUT_SHAPE = Regex("""\d+:\d{2}""")
     }
 }

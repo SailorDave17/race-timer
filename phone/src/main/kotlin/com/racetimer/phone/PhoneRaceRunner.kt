@@ -11,6 +11,8 @@ import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.isInLeadIn
+import com.racetimer.shared.leadInBaseOf
 
 /**
  * The race and its cue path, owned by whoever must outlive the screen (#202, #203).
@@ -36,14 +38,16 @@ import com.racetimer.shared.TimerState
  * and can never double-fire. What it must never be is the thing the cue path relies on, and the
  * unit test proves it is not by driving a whole race through the scheduler with no poll running.
  *
- * [cueSounder] and [cueScheduler] default to no-ops so a test or preview can construct this without
- * an audio stack; production construction is [PhoneTimerService.onCreate], which supplies the real
- * pair.
+ * [cueSounder], [cueScheduler] and [cueBuzzer] default to no-ops so a test or preview can construct
+ * this without an audio or haptic stack; production construction is [PhoneTimerService.onCreate],
+ * which supplies the real three.
  */
 class PhoneRaceRunner(
     clock: MonotonicClock = SystemMonotonicClock,
     private val cueSounder: CueSounder = CueSounder.SILENT,
     private val cueScheduler: CueScheduler = CueScheduler.NONE,
+    private val journal: DayJournal = DayJournal.OFF,
+    private val cueBuzzer: CueBuzzer = CueBuzzer.STILL,
 ) {
 
     val engine = TimerEngine(clock)
@@ -55,15 +59,32 @@ class PhoneRaceRunner(
         private set
 
     /**
-     * Sounds each cue as the engine fires it, whichever path noticed it was due.
+     * Buzzes and sounds each cue as the engine fires it, whichever path noticed it was due.
      *
      * Registered for the life of the runner rather than per race, so a cue can never fire into
-     * a gap between races where nobody was listening. Haptics are deliberately absent — that is
-     * #208, and the watch's ordering lesson (vibration first, audio best-effort) arrives with it.
+     * a gap between races where nobody was listening.
+     *
+     * **Vibration first, always** — the watch's ordering (#208, ported from `TimerService`): the
+     * buzz is one binder call that returns at once, the tone is posted to its own thread and is
+     * best-effort, and audio must never gate the haptic. Both take shared's own pattern, voice
+     * intact, so a cue felt and a cue heard are one definition rather than two.
      */
     private val cueListener = object : TimerListener {
         override fun onCue(cue: SequenceCue) {
+            cueBuzzer.buzz(cue.signal, isGun = cue.isGun)
             cueSounder.playCue(cue.signal)
+            // The journal record goes *after* the sound is asked for, so an armed run cannot put
+            // itself in front of a cue. Lateness is `offsetMs - remainingMs` and both come from the
+            // engine's own monotonic anchor, read inside this callback before the state flips — one
+            // clock, no subtraction across two (#216).
+            journal.record(
+                "cue",
+                "seq" to selected.id,
+                "offsetMs" to cue.offsetMs,
+                "lateMs" to cue.offsetMs - engine.remainingMs,
+                "gun" to if (cue.isGun) 1 else 0,
+                "label" to cue.signal.label,
+            )
         }
 
         override fun onGun() {}
@@ -93,9 +114,89 @@ class PhoneRaceRunner(
         cueSounder.warmUp(selected.cues.map { it.signal })
     }
 
-    /** Choose the sequence to run. Loading it is what puts its full duration on the idle screen. */
-    fun select(sequence: RaceSequence) {
+    /**
+     * True while a select would destroy a race the officer is running (#281).
+     *
+     * RUNNING and COUNTING_UP and no other state. FINISHED and RACE_ENDED are races that are over —
+     * a frozen summary is something to read, not something to lose — and PAUSED has no route to it
+     * in this app. This is the whole difference between choosing the *next* race and discarding the
+     * current one, and nothing else in the module may re-derive it.
+     */
+    val raceInProgress: Boolean
+        get() = engine.currentState == TimerState.RUNNING ||
+            engine.currentState == TimerState.COUNTING_UP
+
+    /**
+     * True while the running race is still in its two-stage lead-in (#207).
+     *
+     * What drops the Sync control for the duration: the engine already refuses a sync here on its
+     * own terms (`isInLeadIn` — there is nothing to snap *to* before the sequence proper begins,
+     * and snapping 4:07 to 4:00 deletes seven seconds of the run-up), so a button left on screen
+     * would take the tap and do nothing, which is the watch's definition of a broken control.
+     *
+     * Read from the engine's own loaded sequence and live clock rather than from [selected]: the
+     * rule is shared's, and this only asks it.
+     */
+    val inLeadIn: Boolean
+        get() = engine.currentState == TimerState.RUNNING &&
+            engine.loadedSequence?.let { isInLeadIn(it, engine.remainingMs) } == true
+
+    /**
+     * Choose the sequence to run, and report whether it was taken (#281 AC 4).
+     *
+     * Loading a sequence is what puts its full duration on the idle screen — and [TimerEngine.load]
+     * sets the engine IDLE whatever it was doing, so the same call that picks the next race also
+     * discards one in progress. That is what #281 measured: the officer's only obvious tap after a
+     * recreated activity killed the running race and its cue queue.
+     *
+     * A `false` return means **nothing moved**. The caller owes the officer a question rather than a
+     * silent loss, and [endRaceAndSelect] is what to call when the answer is yes.
+     *
+     * Deliberately **not** a guard inside [TimerEngine.load]: the watch loads through that same call
+     * (`TimerService`'s ACTION_START, twice), it is the product already on Play with its cue
+     * delivery re-verified on hardware in #201, and #281 is a defect in what the phone's UI does
+     * with the engine rather than in the engine. #281 AC 4 authorises the caller explicitly.
+     */
+    fun select(sequence: RaceSequence): Boolean {
+        if (raceInProgress) return false
+        applySelection(sequence)
+        return true
+    }
+
+    /**
+     * Abandon the race in progress and select [sequence] — the officer confirmed (#281 AC 4).
+     *
+     * The one sanctioned way past [select]'s refusal, and it exists so the destructive path has a
+     * name a reader can grep for.
+     *
+     * **There is no `engine.stop()` here, and that is deliberate.** [TimerEngine.load] — which
+     * [applySelection] calls — sets the engine IDLE unconditionally, which is the very property
+     * [select] exists to guard against; here it is the wanted behaviour, so ending the race and
+     * choosing the next one are one call rather than two. A `stop()` first was written, and
+     * *measured indistinguishable*: removing it reddened **0 of 132**, because both paths leave the
+     * engine IDLE with the new sequence's full duration on the clock. A line no observation can
+     * separate from its own absence cannot be guarded by any test, so it is not kept as
+     * belt-and-braces. What is guarded is the outcome —
+     * `SelectGuardsLiveRaceTest#endRaceAndSelect abandons the running race and takes the selection`
+     * asserts the IDLE state directly, so a future `load` that stopped resetting would redden there
+     * rather than fail silently here.
+     *
+     * The re-arm is load-bearing and is not redundant: it disarms the pending cue dispatch, so
+     * nothing queued for the abandoned race can sound into the one being chosen. Deleting it
+     * reddens its own test.
+     */
+    fun endRaceAndSelect(sequence: RaceSequence) {
+        applySelection(sequence)
+        armCueDispatch()
+    }
+
+    /**
+     * Load [sequence] and get its cues rendered — what both selection paths do once the decision
+     * about any race in progress has been taken.
+     */
+    private fun applySelection(sequence: RaceSequence) {
         selected = sequence
+        journal.record("race_load", "seq" to sequence.id, "totalMs" to sequence.totalMs)
         engine.load(sequence)
         // Render the new pick now, seconds ahead of any Start — the head start #98 measured the
         // first cue losing without. Shapes are cached, so re-picking re-renders almost nothing.
@@ -103,6 +204,11 @@ class PhoneRaceRunner(
     }
 
     fun start() {
+        // Ahead of the engine, so the schedule is on the record before the first cue can fire
+        // against it. This is what makes "zero missed cues" checkable rather than remembered: the
+        // parse compares what fired against what *this race* was going to fire, so a sequence that
+        // changes later cannot rewrite the expectation a past race was judged on (#216 AC 1).
+        journal.record("race_start", "seq" to selected.id, "schedule" to cueSchedule(selected))
         // Re-prepare at arm, the watch's twice-called pattern: the construction-time track can have
         // been torn down by an audio-stack hiccup, and rebuilding it here still lands ahead of the
         // first cue. In the ordinary case this costs one comparison (#114).
@@ -116,14 +222,54 @@ class PhoneRaceRunner(
     }
 
     /**
+     * End a race-manager count-up, freezing the elapsed time for the committee to read (#206).
+     *
+     * Delegates the whole rule to [TimerEngine.endRace], which refuses outside
+     * [TimerState.COUNTING_UP] — so this is unconditional for the same reason [sync] is: the engine
+     * owns when it applies, and a second copy of that condition here is the duplicated-rule defect
+     * this module keeps out of its own code.
+     *
+     * The re-arm is not ceremony. After the gun there is nothing left in the queue, so it disarms
+     * the scheduler rather than aiming it — which is exactly what must happen, because a pending
+     * dispatch surviving into a frozen summary would sound a cue into a race that is over.
+     */
+    fun endRace() {
+        engine.endRace()
+        armCueDispatch()
+        // After the engine, because `endRace` is what freezes the elapsed time this records. The
+        // flush is here rather than only on the battery sample: End Race is the end of a race
+        // cycle, and it is the natural point at which the day's record should be safe from a
+        // process death in the gap that follows.
+        journal.record("race_end", "seq" to selected.id, "elapsedMs" to -engine.remainingMs)
+        journal.flush()
+    }
+
+    /**
      * Abandon the run and return to a fresh copy of the same sequence.
      *
      * `stop()` alone leaves the engine IDLE with a zeroed readout; reloading is what puts the full
      * duration back on screen, so a stopped race and a not-yet-started one look the same — which is
      * what they are.
+     *
+     * Also the way out of a [TimerState.RACE_ENDED] summary the committee has finished reading —
+     * the Done control — which is why it is reachable from more than the running states.
      */
     fun stop() {
+        journal.record("race_stop", "seq" to selected.id)
+        journal.flush()
         engine.stop()
+        // A lead-in is a per-race choice, never a sticky one (#104, #207). The armed variant sits
+        // in [selected] only while its race is the engine's; the moment that race is over the
+        // selection drops back to the base sequence, so the next plain Start runs a clean 3:00
+        // rather than silently carrying an alert nobody re-chose — the invisible state the
+        // two-tap picker exists to rule out. The watch measured exactly that: after three lead-in
+        // races the remembered pick was still the plain sequence, and Start ran it plain.
+        //
+        // `leadInBaseOf` passes an unarmed sequence through unchanged, so every other race is
+        // byte-for-byte what it was here. Null only if the base id resolves to nothing, which a
+        // sequence built by arming one cannot produce; the selection is better left than cleared
+        // on a surprise.
+        selected = leadInBaseOf(selected) ?: selected
         engine.load(selected)
         // With nothing running, msUntilNextCue is null and this only disarms the pending dispatch —
         // a cue must not fire out of a race the officer just ended.
@@ -140,6 +286,10 @@ class PhoneRaceRunner(
      */
     fun restore(sequence: RaceSequence, snapshot: TimerEngine.Snapshot): com.racetimer.shared.RestoreOutcome {
         selected = sequence
+        // A restored race is a race for the parse's purposes — it has a schedule and it will fire
+        // cues — so it records one, marked as a restore. Without this a day containing a process
+        // death would show cues belonging to no race and read as an instrument fault.
+        journal.record("race_start", "seq" to sequence.id, "schedule" to cueSchedule(sequence), "restored" to 1)
         cueSounder.prepare()
         cueSounder.warmUp(sequence.cues.map { it.signal })
         val outcome = engine.restore(sequence, snapshot)
@@ -209,28 +359,38 @@ class PhoneRaceRunner(
         cueScheduler.armIn(dueInMs.coerceAtLeast(0L), cueDispatch)
     }
 
-    /** Tear the cue path down. The owner is going away; nothing plays after this. */
+    /**
+     * The cues [sequence] is going to fire, as one field: `offset:offset:…`, largest first (#216).
+     *
+     * Offsets only. The label is on each `cue` record already, and putting it here too would be a
+     * second copy of a cue list inside the phone module — the very drift `ModuleBoundaryTest` keeps
+     * out — where an offset is the identity the parse actually matches on.
+     */
+    private fun cueSchedule(sequence: RaceSequence): String =
+        sequence.cues.map { it.offsetMs }.sortedDescending().joinToString(separator = ":")
+
+    /** Tear the cue path down. The owner is going away; nothing plays or buzzes after this. */
     fun release() {
         cueScheduler.cancel()
         engine.removeListener(cueListener)
+        cueBuzzer.cancel()
         cueSounder.release()
     }
 
     companion object {
         /**
-         * The sailor sequences the console clock offers.
+         * The sequences the console clock offers: [BuiltInSequences.all], in the shared order.
          *
-         * Not [BuiltInSequences.all]: that list also carries the two race-manager variants, whose
-         * defining behaviour is counting *up* after the gun (#206), and a mode listed before its
-         * post-gun half exists would look shipped and end the race at the gun.
+         * This was a curated three-entry list until #206, holding the two race-manager variants
+         * back because a mode listed before its post-gun half exists would look shipped and end the
+         * race at the gun. #206 *is* that post-gun half, so the reason to curate is spent and the
+         * list defers to shared — which is the point worth keeping: an enumeration here would be a
+         * second copy of the sequence set, free to drift from the one the watch offers, on an epic
+         * whose product *is* the two devices never disagreeing.
          *
          * A companion rather than instance-only state so the picker can render before the service
          * binding lands — the list is a fact about the app, not about a particular race.
          */
-        val CONSOLE_SEQUENCES: List<RaceSequence> = listOf(
-            BuiltInSequences.usSailing,
-            BuiltInSequences.scholastic,
-            BuiltInSequences.club,
-        )
+        val CONSOLE_SEQUENCES: List<RaceSequence> = BuiltInSequences.all
     }
 }

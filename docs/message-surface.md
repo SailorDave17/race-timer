@@ -28,7 +28,7 @@ follows from two facts:
    | State | Colour | When |
    |---|---|---|
    | Normal | `#1A1A2E` deep navy | idle, or running above 1:00 |
-   | One minute | `#A0660A` amber | running, ≤ 60 s |
+   | One minute | `#553000` dark amber (`#A0660A` until #277) | running, ≤ 60 s |
    | Final ten | `#7B0000` dark red | running, ≤ 10 s |
    | Finished | `#005000` dark green | gun fired |
 
@@ -38,6 +38,19 @@ follows from two facts:
 
    Amber-on-amber is the case that bites. Any message that relies on the background being navy will
    disappear at exactly the moment the race gets tense.
+
+   **Why the amber is dark (#277).** `#A0660A` was the only state background bright enough to cost
+   its own digits contrast. White on it was 4.77 : 1, barely over the bar, and in sun it emitted
+   enough light to raise the floor under the numerals as well as under itself. `#553000` keeps the
+   hue, which is what signals the state, and cuts the luminance to under a quarter. The digits are now
+   **11.61 : 1**, asserted by `MessageContrastTest`. The one remaining check is whether it still
+   reads as "inside a minute" on a wrist in real sun, and that needs the watch outdoors. The candidates
+   and the sunlight figures, which are modelled rather than measured, are on
+   [#277](https://github.com/SailorDave17/race-timer/issues/277).
+
+   Most of the figures and defects below were measured against the old amber and are labelled where
+   that matters. On the dark amber, bare `#FFC107` clears the bar (7.12 : 1). The scrims stay because
+   of rule 1, not because the text would otherwise fail.
 
 ## Three tiers
 
@@ -170,7 +183,7 @@ occupies, and Start is not on screen to be tapped.
 | Readout | Stays visible at `alpha = 0.4f` — communicates "not armed" without removing context |
 | Panel | Scrim `#E6000000` (90 % black), 8 dp rounded, 1 dp `#D32F2F` border. The border carries "this is blocking"; the text stays amber so it never becomes red-on-red |
 | Type | `caption1`, amber `#FFB74D`, centre-aligned, **max 3 lines** |
-| Contrast | 11.38 : 1 worst case, 11.95 : 1 best — computed by `MessageContrast.kt`, asserted by `MessageContrastTest`. The 90 % scrim makes the background nearly irrelevant, and the border is held to WCAG's **non-text** 3 : 1 (it lands at 3.96 : 1) rather than the 4.5 : 1 the copy clears |
+| Contrast | 11.73 : 1 worst case (finished green; amber was the worst at 11.38 until #277), 11.95 : 1 best — computed by `MessageContrast.kt`, asserted by `MessageContrastTest`. The 90 % scrim makes the background nearly irrelevant, and the border is held to WCAG's **non-text** 3 : 1 (it lands at 4.08 : 1) rather than the 4.5 : 1 the copy clears |
 | Primary button | Labelled by the **remedy**, not the problem: "Settings", "Grant", "Retry". Never "OK" |
 | Secondary button | None. The pre-start screen has exactly one control ([#55](https://github.com/SailorDave17/race-timer/issues/55) removed Reset), and the remedy takes its place |
 | Start | **Absent**, not disabled. A greyed Start on a watch invites repeated taps |
@@ -206,16 +219,18 @@ used to give were both wrong by more than a hundred lines before anyone noticed.
 #96 is why it needed the scrim. Until then every notice it carried was confined to the pre-start
 screen, where navy is the only background and bare `#FFC107` clears the bar at 10.46 : 1 — the
 discard warning still goes without a scrim for exactly that reason. #96's warning stays up through
-the amber minute, where the same colour lands at 2.93 : 1. The rule that decides which states each
-notice can appear in lives in `shared/StartPreconditions.kt`, and `MessageContrastTest` derives the
-backgrounds by *driving* it rather than by restating them here.
+the amber minute, where the same colour landed at 2.93 : 1 on the amber before #277. The rule that
+decides which states each notice can appear in lives in `shared/StartPreconditions.kt`, and
+`MessageContrastTest` derives the backgrounds by *driving* it rather than by restating them here.
 
 Use this tier for anything mid-sequence that needs a *sustained* action or a standing caveat, and Tier 1
 for anything that is merely news.
 
 ### The amber-on-amber defect — fixed in #123
 
-Bare `#FFC107` on the four backgrounds, which is what the re-sync prompt drew until #123:
+Bare `#FFC107` on the four backgrounds, which is what the re-sync prompt drew until #123. The
+one-minute row is the amber of that time, `#A0660A`. On `#553000`, since #277, it is 7.12 : 1 and
+passes:
 
 | Background state | Contrast | | Prompt reachable there? |
 |---|---|---|---|
@@ -276,14 +291,75 @@ Two assertions now stop that drifting again, and they fail for different reasons
 - It also pins #96's notice to **three** lines on Tier 3 — the render the watch actually drew. That
   check is independent of the calibration, which is what makes it more than circular.
 
-### What is still a measurement rather than arithmetic
+### Where the Tier 3 plate sits, per line count (#233)
 
-`STATUS_LINE_HEIGHT_BUDGET_FRACTION` is a **two-line** figure and has not been re-measured. The Tier 3
-plate sits inside a vertically centred `Column`, so a third line does not simply extend it downwards —
-it lifts the top edge onto a narrower chord, by an amount nothing in `shared/` can compute. The
-evidence that the three-line plate clears the bezel is #96's check on the wrist, not the geometry
-test. Scaling the constant by 3/2 would produce a number that *looked* derived and was not, which is
-the defect this section exists to record.
+Until #233 the plate's geometry was two constants: a top edge of 0.09, and a height of 0.23 described
+as two lines. Neither held up when measured again. The top edge has moved down to 0.113–0.122, and
+0.23 is about what **three** lines measure, not two, which come to 0.16. *Measured on an SM-R925U*
+from `screencap` pixels, where the plate's opaque scrim is its own edge:
+
+| Screen | Lines | Plate top | Plate height | Button row |
+|---|---|---|---|---|
+| Pre-start | 0 | — | — | Start 119 px |
+| Pre-start | 2 | 55 px | 72 px | Start **111 px** |
+| Running | 0 | — | — | Sync 136 px |
+| Running | 3 | 51 px | 106 px | Sync **81 px** |
+
+The plate sits in a vertically centred `Column`, so a taller plate *does* sit higher — but only while
+the column has room to spare, and it has less than any notice that ships needs (68 px pre-start,
+56 px running). Past that point the column is pinned at its top padding, the label and the plate hold
+their place, and the overflow comes out of the button row. The top edge stops rising and the plate
+grows downwards, so for every shipped notice the top edge alone decides the bezel. It clears with
+11 px to spare at the corner. Had the column kept centring, the three-line plate's top would sit at
+24 px and the bezel would cut it.
+
+`statusLineTopFraction` and `statusLineHeightFraction` in `shared/BannerLayout.kt` carry this per
+line count and per screen, and `BannerLayoutTest` proves every line count the surface allows against
+the circle. The unbounded-centring case is asserted to fail. The model is also checked against
+something it was not built from: it predicts the button squeeze the watch drew, 8 px and 55 px.
+
+**The squeeze is real and is not fixed here.** A three-line notice mid-race turns Sync and Stop into
+81 px pills. The notice covers nothing and clears the bezel, and that is all #96 checked. #301 owns
+what to do about it.
+
+## The time of day at the rim (#303)
+
+Not a message and not a tier, but it lives in the band the tiers grow into, so its rules are here.
+Wear OS draws no clock over an app, so until #303 nothing on the timer showed the time of day.
+
+| | |
+|---|---|
+| Surface | Wear OS's curved `TimeText` at the top rim, in the band above the sequence name. At the rim it cannot be mistaken for the countdown |
+| Format | Hours and minutes, no seconds, following the watch's 12/24-hour setting: `HH:mm` in 24-hour, `h:mm` with no AM/PM in 12-hour. That is `TimeText`'s own default time source |
+| Type | The theme's `caption1`, 12 sp, and `TimeText`'s 2 dp padding. Both read out of Wear Compose Material 1.3.0's compiled classes, since no sources jar is cached |
+| Colour | `TIME_OF_DAY_TEXT_ARGB`, opaque white, passed in rather than inherited. Drawn straight onto the background, so rule 1 applies: `MessageContrastTest` asserts it on every background it can render on, the flash trough included, after compositing its alpha |
+| States | Every timer state |
+| Gives way to | **Every Tier 3 line, and a Tier 2 panel.** The column is vertically centred, so either one grows it up into this band and the sequence name moves with it. Rule 6, one message at a time: the clock hides while the message is up and returns when it clears. #303 named Tier 3 only; Tier 2 was added when the clock was seen touching the name under the panel |
+
+The rule is `showsTimeOfDay` in `shared/TimeOfDay.kt`, and `TimeOfDayTest` asserts it by driving
+`startNotice` and `armedNotice`, so a notice the catalogue gains later is checked whichever tier it
+lands on. Hiding the clock in the final minute was rejected, because it would vanish exactly when
+someone glances for it. Showing it pre-start only was rejected, because a count-up would then have
+no clock (owner decisions on #303).
+
+### Where it fits, and where it does not yet
+
+*Measured on the Wear emulator*, with the density changed and no `wm size` override, so the mask is a
+true circle. The rows are read off `screencap` against that circle. These are not SM-R925U frames:
+the watch captures are still owed on #303.
+
+| Screen | Clock clears the circle by | Clock to sequence name |
+|---|---|---|
+| 450 px at density 340 (the SM-R925U's metrics): pre-start | 12.7 px | 29 px |
+| the same: running, and the final-ten flash | 12.6–12.7 px | 16 px |
+| the same: count-up / race ended | 12.7 px | 38 / 39 px |
+| 450 px at density 375 (192 dp, the smallest round screen): pre-start | 13.6 px | 14 px |
+| the same: running | 13.6 px | **0 px, touching** |
+
+The clock is an overlay, so at one density it draws on the same rows in every state; only the name
+moves. The running screen on the smallest watch is the one place the two meet: the Sync and Stop
+row makes that column taller. It is recorded here rather than fixed, because fitting the running
+screen at the smallest size is #312's (owner decision on #303).
 
 ## Rules any new message must follow
 
@@ -297,7 +373,8 @@ the defect this section exists to record.
    border. Red text would collide with `BG_FINAL_TEN`.
 5. **Say the consequence, not the cause.** "The gun will be silent" beats "AudioTrack init failed".
 6. **One message at a time.** `uiMessage` is a single nullable — a second message replaces the first.
-   That is correct; two stacked banners on a 45 mm screen is worse than losing one.
+   That is correct; two stacked banners on a 45 mm screen is worse than losing one. The time of
+   day at the rim gives way to a Tier 3 line on the same rule (#303).
 7. **Budget against the tier, not against the number.** 60 characters is the shared ceiling and it
    is two lines on Tier 1 and three on Tier 3 — see [the copy budget](#the-copy-budget-and-which-surface-it-was-derived-for).
    Add the string to `StartPreconditionsTest` and let it derive the surface from the tier the rule
@@ -455,9 +532,13 @@ call; what has not been demonstrated is the tail-write site setting the notice.
 
 ---
 
-Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144.
+Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144, #277,
+#303.
 Owner: SailorDave17.
-Last reviewed: 2026-08-13 (#231 — the copy budget gained the surface it was derived for. The
+Last reviewed: 2026-09-26 (#303 added the time of day at the rim, which gives way to Tier 3 and
+Tier 2, and rule 6 now names it. Before that, 2026-09-25: #277 darkened the one-minute amber to `#553000`. The state table, the
+Tier 2 worst case and border figure, and the old-amber labels on the defect history were updated to
+match. Before that, 2026-08-13: #231 — the copy budget gained the surface it was derived for. The
 ~60-character rule was Tier 1's arithmetic applied to all three surfaces; the per-surface figures now
 live in `shared/BannerLayout.kt` as `MessageSurface` and are asserted, and this document's own "34
 characters" is one of the two assertions pinning them. Previously #96 — Tier 3 gained its first

@@ -13,23 +13,22 @@ import com.racetimer.shared.SignalPattern
  * lives in `:shared-android`, where the watch already proved it on hardware (#61, #98, #114). This
  * class contributes exactly two phone-side decisions and nothing else:
  *
- * - **Which platform constants a route means**: [PhoneCueAudioProfile], provisional pending #210's
- *   measurement. See there.
+ * - **Which platform constants a route means**: [PhoneCueAudioProfile], measured by #210. See there.
  * - **Which route to use**: always [CueStream.ALARM], and deliberately *not* the shared
  *   `cueStream()` rule the watch runs. That rule's reroute half exists because one watch's alarm
- *   stream is aliased into the ringer-affected set — a Samsung Wear customisation. Whether this
- *   phone silences `USAGE_ALARM` in any mode is exactly what #210 measures, and wiring the
- *   watch-shaped reroute here first would ship half of #95 (the routing) without the half that made
- *   it safe (the volume floor and its persisted receipt) on the strength of a premise measured on a
- *   different device. Until #210 answers, the phone routes to the platform-documented
- *   ringer-exempt stream and says so.
+ *   stream is aliased into the ringer-affected set — a Samsung Wear customisation. #210 measured
+ *   whether this phone does the same, and it does not: vibrate and silent mode both left the alarm
+ *   stream unmuted and delivered 30 of 30 cues. So the reroute stays unwired on evidence now, not
+ *   only on caution. The one condition that does silence the alarm stream here — total-silence Do
+ *   Not Disturb — silences `STREAM_MUSIC` with it, so the reroute would not help there either; #315
+ *   owns that condition.
  */
 class PhoneCueSounder(context: Context) : CueSounder {
 
     private val tone = ToneManager(context, PhoneCueAudioProfile)
 
     override fun prepare() {
-        // Provisional route — see the class doc and #210. Re-preparing with the same route costs
+        // The measured route — see the class doc and #210. Re-preparing with the same route costs
         // one comparison, so calling this at launch and again at arm is cheap on purpose (#114).
         tone.prepare(CueStream.ALARM)
     }

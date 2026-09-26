@@ -61,15 +61,17 @@ a message that reads as a bad backup and cost a wrong diagnosis before a `grep` 
 is scoped to release tasks, so an unfilled file never blocks `:shared:test` or a debug build, and CI
 has no such file at all so it can never fire there.
 
-The release `signingConfig` is only created when that file exists, so CI — which has no
-`keystore.properties` — still configures and builds. Signing is local-only by decision (#71): the
-move to CI signing is deferred as #81 until the release process is boring.
+The release `signingConfig` is only created when that file exists, so a workflow with no
+`keystore.properties` still configures and builds. Signing was local-only by decision (#71) until
+**#81 moved it into CI** — see *Signing in CI* below. Local signing still works exactly as described
+here and remains the fallback when GitHub is unavailable.
 
-One consequence worth stating, because it makes a local run of the CI gate misleading: **CI and this
-machine execute different task graphs for `:wear:bundleRelease`.** CI has no `keystore.properties`,
-so no release `signingConfig` exists and the bundle builds unsigned; locally the file exists and the
-build takes a signing path CI never runs. A `bundleRelease` failure here therefore does not imply a
-CI failure, and a pass here does not prove CI's path works. To reproduce CI's, move
+One consequence worth stating, because it makes a local run of the CI gate misleading: **the
+workflows execute different task graphs for `:wear:bundleRelease`, and there are now three of them.**
+`ci.yml` writes no `keystore.properties`, so no release `signingConfig` exists and its bundle builds
+unsigned; `release.yml` materialises one from secrets and signs; locally the file exists and signs. A
+`bundleRelease` failure here therefore does not imply a `ci.yml` failure, and a pass here does not
+prove either CI path works. To reproduce `ci.yml`'s, move
 `keystore.properties` **outside the repo** — never rename it in place, since a `.bak` beside it would
 hold both passwords in the repo root (the exact defect the #133 rehearsal found; `.gitignore` now
 globs `keystore.properties*`).
@@ -117,6 +119,82 @@ Two consequences worth stating rather than rediscovering:
 The APK also carries a cruder tell in its filename: `wear-release.apk` when signed,
 `wear-release-unsigned.apk` when not. That one needs no tooling, but it says only that *something*
 signed it, never *with what*.
+
+## Signing in CI (#81)
+
+`.github/workflows/release.yml` produces an uploadable, signed bundle without anyone opening a
+terminal. It runs on a **tag push** (`v*`), or by hand from the Actions tab.
+
+What it does, in order: refuse the run if the tag disagrees with `versionName`; decode the upload
+keystore from secrets into `RUNNER_TEMP`; build `:wear:bundleRelease` pointed at that keystore;
+**verify the resulting bundle's certificate against the fingerprint recorded above**; upload the
+`.aab` and `mapping.txt` as workflow artifacts; publish to Play; and shred the keystore in an
+`always()` step.
+
+### The four secrets
+
+| Secret | Holds |
+|---|---|
+| `UPLOAD_KEYSTORE_BASE64` | the `.jks`, base64 with no line wrapping |
+| `UPLOAD_KEYSTORE_STORE_PASSWORD` | store password |
+| `UPLOAD_KEYSTORE_KEY_ALIAS` | key alias |
+| `UPLOAD_KEYSTORE_KEY_PASSWORD` | key password |
+
+All four come from the same password-manager entry as the local config. Re-create the first with
+`base64 -w0 <the .jks>`; **`-w0` matters** — wrapped base64 decodes to a corrupt keystore, and the
+symptom is an unsigned bundle rather than an error.
+
+The keystore never lands in the workspace. It is written to `RUNNER_TEMP`, outside the checkout, so
+it cannot be picked up by an artifact glob or a later step, and `keystorePropertiesFile` is passed
+as a Gradle property pointing there.
+
+### Why the fingerprint check is the load-bearing step
+
+`BUILD SUCCESSFUL` does not mean signed — the whole of *Always check the bundle is actually signed*
+above applies just as much on a runner, where nobody is watching. The workflow therefore asserts the
+certificate itself, and it reads the expected value **out of this document** rather than carrying a
+second copy of it. If this file and the key ever disagree, that step is what says so.
+
+*Proven able to fail, 2026-08-18, three mutations each red as predicted*: an unsigned bundle (built
+by pointing `keystorePropertiesFile` at a path that does not exist) trips the `Not a signed jar file`
+branch; an altered fingerprint here trips the mismatch branch; a removed fingerprint trips the
+missing-value branch. Gradle exits 0 and `keytool` exits 0 in the first case — only the output
+differs, which is why the check reads output and never an exit code.
+
+### Publishing
+
+A fifth secret, `PLAY_SERVICE_ACCOUNT_JSON`, holds a Google Cloud service account key.
+`.github/scripts/play-publish.py` uses it to open a Play *edit*, upload the bundle, assign it to a
+track, validate, and commit. Nothing an edit contains is visible until the commit, so any failure
+before that point leaves the account untouched — and the script deletes the edit on the way out.
+
+**Tracks are per form factor, and the names are not interchangeable.** *Measured 2026-08-18 against
+the live account*: `wear:internal` holds the completed versionCode 1 release, and the plain
+`internal` track was **empty** — because it is the **non-Wear** form factor's internal track and no
+phone artifact had ever existed. Publishing the watch to `internal` would have succeeded, reported
+success, and reached nobody.
+
+Since #211 the workflow builds, signs, verifies and publishes **both** modules, each to its own
+track:
+
+| Module | Track | versionCode |
+|---|---|---|
+| `:wear` | `wear:internal` | 1 |
+| `:phone` | `internal` | 2 |
+
+Both carry `--expected-version-code`, so a bundle from a stale build is refused rather than uploaded.
+The two numbers necessarily differ (one shared counter, epic #196 D3), which is what makes a mix-up
+impossible to mistake for a correct upload.
+
+A **tag push rolls out** (`status: completed`); a **manual dispatch uploads as a draft**. The
+asymmetry is deliberate and is #81's own reasoning — the tag is the explicit act, so it is the one
+allowed to reach testers; the manual path exists for rehearsal.
+
+The service account is `race-timer-play-publisher@race-timer-release.iam.gserviceaccount.com`, in
+the Google Cloud project `race-timer-release`. It holds **exactly one release permission — release
+to testing tracks** — and deliberately not production. It has no Cloud IAM role at all: its entire
+authority comes from the Play Console invitation, so revoking it is one action in *Users and
+permissions*.
 
 ## Release artefacts and crash reports
 
@@ -239,9 +317,14 @@ Generalised into cairn as `running-a-procedure-finds-what-writing-it-cannot-2026
 
 ## Losing the upload key: which side of the line this project is on
 
-**Nothing has been uploaded to Play yet** — `versionCode` is still `1` and no track has received a
-bundle. That places this project on the **cheap** side of the line, and it is worth knowing the line
-moves permanently at the first upload:
+**This project crossed the line on 2026-08-13**, when `versionCode` 1 was accepted onto the
+`wear:internal` track. It sat on the cheap side of the line for as long as nothing had been
+uploaded; it does not any more, and the move is permanent:
+
+*(This paragraph read "Nothing has been uploaded to Play yet — `versionCode` is still `1` and no
+track has received a bundle" until #211. It was written true, and the upload falsified it the same
+week while the sentence went on describing the cheap case — which is the one a reader most wants to
+be true.)*
 
 - **Before the first upload** — losing the upload key costs a `keytool` run. Generate a new keystore,
   update `keystore.properties`, record the new fingerprint here. No one outside this repo has seen
@@ -272,7 +355,28 @@ or its fingerprint — stays available and was explicitly not ruled out.
 
 ## Version strategy
 
-Set in `wear/build.gradle.kts` `defaultConfig`, currently `versionCode = 1` / `versionName = "1.0"`.
+Set in each app module's `defaultConfig`. **One monotonic counter is shared across both form
+factors** (epic #196 decision D3) — not one counter per module.
+
+| Module | `versionCode` | `versionName` | Status |
+|---|---|---|---|
+| `:wear` | 1 | 1.0 | uploaded 2026-08-13, burned |
+| `:wear` | 3 | 1.1 | allocated for the first tagged release (`v1.1`), not yet uploaded |
+| `:phone` | 2 | 1.1 | allocated by #211, not yet uploaded; ships with `v1.1` |
+
+**Why one counter and not one each.** Both modules declare the same `applicationId`
+(`io.github.sailordave17.racetimer`), so Play treats them as **one app** carrying two form-factor
+artifacts — and a `versionCode` is permanently unique *within an app*. Two modules each starting at 1
+is therefore not a tidy parallel scheme, it is an upload Play refuses.
+
+**The number is allocated, not derived.** Which module takes the next value depends on which one
+ships next, and no build can know that. `:phone` holds 2 because it is expected to ship next (#214);
+if `:wear` ships an update first it takes 3, and `docs/releases.md` records who took what.
+
+**The invariant is enforced, not remembered**: `./gradlew checkVersionCodeCollision` refuses two app
+modules declaring the same `versionCode` under one `applicationId`, and every `bundleRelease` depends
+on it. The identity it compares is the *(applicationId, versionCode)* pair — two modules under
+different applicationIds would be separate Play apps and may legitimately share a number.
 
 - **`versionCode`** is a monotonic integer, bumped by **+1 for every bundle uploaded to Play** —
   any track, including internal testing. Play rejects a duplicate `versionCode` permanently and a

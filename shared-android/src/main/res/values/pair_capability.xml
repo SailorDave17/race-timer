@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Data Layer capability both apps advertise (#219), so each finds the device running the other
+     app rather than whatever else is paired. It must equal WearablePairLink.CAPABILITY. Here once,
+     in the module both apps depend on, and merged into each. tools:keep because the Data Layer reads
+     it by name, which a resource shrinker cannot see. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@array/android_wear_capabilities">
+    <string-array name="android_wear_capabilities" translatable="false">
+        <item>race_timer_pair</item>
+    </string-array>
+</resources>

@@ -20,7 +20,6 @@ import org.robolectric.Shadows.shadowOf
 import org.w3c.dom.Element
 import java.io.File
 import java.time.Duration
-import java.util.Properties
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
@@ -173,16 +172,31 @@ class ForegroundNotificationTest {
     }
 
     private fun mergedManifestServiceElement(nameSuffix: String): Element {
-        // `javaClass` is read here rather than inside `Properties().apply { }`, where it resolves
-        // against the Properties receiver -- a bootstrap-loaded class whose loader is null.
-        val loader = javaClass.classLoader ?: error("no classloader to read the AGP test config from")
-        val config = Properties().apply {
-            val stream = loader.getResourceAsStream("com/android/tools/test_config.properties")
-                ?: error("AGP wrote no test_config.properties; there is no merged manifest to read")
-            stream.use { load(it) }
-        }
-        val manifest = File(config.getProperty("android_merged_manifest"))
-        assertTrue("no merged manifest at ${manifest.absolutePath}", manifest.isFile)
+        // Read the APP variant's merged manifest by path, NOT AGP's `android_merged_manifest`
+        // from com/android/tools/test_config.properties.
+        //
+        // That property used to be the right answer and stopped being one at AGP 8.13 (#192).
+        // Measured on the bump: AGP 8.6.1 pointed it at
+        //   packaged_manifests/debug/processDebugManifestForPackage/AndroidManifest.xml    (1 service)
+        // and AGP 8.13.2 points it at
+        //   packaged_manifests/debugUnitTest/processDebugUnitTestManifest/AndroidManifest.xml (0)
+        // -- the UNIT TEST variant's manifest, which carries the androidx-injected provider and
+        // receiver but none of the application's own components. Nothing about the app changed; the
+        // property now names a different document, and the test that reads it goes quietly blind.
+        //
+        // This is the path family `.github/scripts/declared-surface.py` reads, for the same reason
+        // (#83): the question is what a Play reviewer sees in the shipped manifest, so the subject
+        // has to be the app variant's merged output. `:wear:processDebugMainManifest` is already in
+        // this task's graph, so the file is present whenever this test runs.
+        val manifest = File(
+            "build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml",
+        )
+        assertTrue(
+            "no merged manifest at ${manifest.absolutePath} -- if AGP moved this output again, " +
+                "find the app variant's merged manifest and re-point this path rather than " +
+                "falling back to the source manifest",
+            manifest.isFile,
+        )
 
         val document = DocumentBuilderFactory.newInstance()
             .apply { isNamespaceAware = true }

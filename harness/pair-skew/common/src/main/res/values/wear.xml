@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The capability each app advertises (Harness.CAPABILITY), so each side finds the node running the
+     harness rather than whatever else happens to be connected. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@array/android_wear_capabilities">
+    <string-array name="android_wear_capabilities" translatable="false">
+        <item>pairskew</item>
+    </string-array>
+</resources>

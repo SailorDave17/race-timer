@@ -4,6 +4,18 @@ The three text fields Play asks for, held here so the next release **edits a fil
 retyping into a web form**. Entered in Play Console by [#79](https://github.com/SailorDave17/race-timer/issues/79);
 this document is the source, the Console is the copy.
 
+**This file now holds two revisions, and only one of them is in Console.**
+
+| Section | Status |
+|---|---|
+| *App name*, *Short description*, *Full description* | **Live in Console.** Watch-only, correct for the build on the internal track |
+| *Draft — the two-form-factor revision* | **Not in Console.** Written by [#212](https://github.com/SailorDave17/race-timer/issues/212) for the phone upload ([#214](https://github.com/SailorDave17/race-timer/issues/214)) to paste |
+
+The live fields are deliberately **not** overwritten: the watch app is on the internal track now
+and its listing describes it correctly, so replacing the copy before the phone artifact exists
+would make this document disagree with Console for as long as the upload takes. The draft replaces
+them in one action at #214, and this table is what says which is which.
+
 Limits are Play's: app name **30**, short description **80**, full description **4000**. The counts
 below are computed from the fields in this file by `docs/store/count-listing.py`, not typed by hand —
 a hand-typed count is the claim that goes stale first.
@@ -69,6 +81,128 @@ Mad Cow Race Timer is a training and convenience aid. Under the Racing Rules of 
 
 ---
 
+# Draft — the two-form-factor revision
+
+**Not in Console.** Paste at [#214](https://github.com/SailorDave17/race-timer/issues/214), after
+the *Before pasting* checks below.
+
+**App name is unchanged** — *Mad Cow Race Timer*. Only the two descriptions move, so there is no
+draft name field and nothing to re-check against the developer-verification row.
+
+## What this draft leads with, and what it deliberately does not
+
+It leads with **the two form factors** — one app that runs standalone on a watch *and* standalone
+on a phone — with the watch-standalone claim kept as the secondary truth it has always been.
+
+It says **nothing about the two devices talking to each other**. That is the epic's signature
+moment and it is [#219](https://github.com/SailorDave17/race-timer/issues/219)–[#223](https://github.com/SailorDave17/race-timer/issues/223),
+none of which is built; the two apps do not exchange anything today. Putting it in the listing
+would break this document's own standing rule — *nothing in the listing describes a feature on the
+roadmap rather than in the build* — which is the same rule that keeps the sun-legibility and
+timing-figure claims out. When the link ships, the listing gets a third revision and that is where
+the pair belongs. *(Owner decision, 2026-08-17, taken against the alternative reading of #212's
+AC 4.)*
+
+## Before pasting — the claims that were contingent
+
+This draft is written for the state the epic is being held for: a phone app coherent enough to
+ship. It carried a table of lines **not yet true of the phone**, each to be checked against the
+build being uploaded and cut if its story had not landed. **The table is empty as of 2026-09-05.**
+
+| Line in the copy | True only after |
+|---|---|
+| *(none)* | |
+
+The *FOR THE RACE COMMITTEE* line was the third row here until **#206** shipped the count-up past
+the gun and End Race on 2026-08-18; the signal-box lead-in was the second until **#207** shipped it
+on the phone on 2026-09-05; and *a distinct vibration for every signal* being said of **both**
+devices was the last until **#208** buzzed the three cue voices on the phone the same day. Each row
+was removed rather than ticked, because this table's job is to list what is *not* yet true — a row
+that has become true is a row that has to go, and leaving it would make the next reader cut a line
+the build supports. The empty table stays so the next contingent line has somewhere to land.
+
+One caveat survives the table: the phone's cues are **measured, and fail one condition**.
+[#210](https://github.com/SailorDave17/race-timer/issues/210) read delivery off the owner's handset
+on 2026-09-25 (`docs/phone-cue-delivery.md`). Tones and buzzes both reached the officer 30 of 30 in
+vibrate mode, silent mode, with another app's music playing and with the screen off, and **0 of 30
+under total-silence Do Not Disturb** —
+[#315](https://github.com/SailorDave17/race-timer/issues/315) owns that. It does not touch the line
+above, which claims a distinct vibration per signal and not delivery under any condition; it is why
+the *feel the gun* line below stays declined.
+
+Everything else in the draft is true of the phone today: the countdown, the cue audio, cueing with
+the screen off, Sync, Custom, restore-after-kill, the officer's screen choice, the race-manager
+count-up through End Race, and the signal-box lead-in have all landed.
+
+## Short description (draft)
+
+<!-- FIELD:short-draft -->
+Sailing start-sequence timer. Runs standalone on your watch and on your phone.
+<!-- /FIELD:short-draft -->
+
+## Full description (draft)
+
+<!-- FIELD:full-draft -->
+Mad Cow Race Timer runs the sailing start sequence on your wrist and on your phone. Two standalone apps, one download, the same clock. Wear it on the water, prop it on the committee boat, or both — neither device needs the other, and neither needs a signal.
+
+ON THE WATCH
+
+Standalone on Wear OS. No phone, no pairing, nothing else to carry on the water.
+
+ON THE PHONE
+
+The same countdown at committee-boat size, propped on the console where everyone aboard can read it. A sailor with no watch gets the complete timer, not a cut-down version of one.
+
+SEQUENCES SAILORS ACTUALLY USE
+
+• US Sailing 5-4-1-Go (RRS 26) — 5:00
+• Scholastic / ICSA — 3:00
+• Club 3-2-1-Go — 3:00
+• Custom — any whole number of minutes, from 1:00
+
+US Sailing sounds long above the minute and short below it: a long blast is a signal the committee is sounding, a short one is your wrist counting. Every sequence shares the same final five seconds, doubled from 0:05 to 0:01, so you never have to remember which sequence is loaded to know what the last five mean.
+
+FOR THE RACE COMMITTEE
+
+US Sailing — Race Manager and Scholastic — Race Manager are the committee side of those sequences, not a re-skin:
+
+• Voiced for someone sounding the signals rather than counting them
+• The gun is not the end. The clock keeps running as an elapsed-time race clock, up to H:MM:SS,
+until you tap End Race, which freezes the finish time on screen
+• A two-stage signal-box lead-in, so the timer and an external signal box start in step. Set the
+box's own alert window: none, 15 s, 60 s, or any value you dial from 5 s to 2:00
+
+SYNC
+
+Tap Sync during the countdown to snap to a whole minute. That absorbs the lag between the Race Committee's flag reaching the top of the staff and your thumb landing on the screen.
+
+BUILT TO BE TRUSTED WITH A START
+
+• Cues are scheduled against a monotonic clock rather than sampled by a tick loop, so they land
+sub-second on real hardware — measured, not estimated
+• The countdown survives the screen going dark and the app going to the background, held by a
+foreground service
+• The clock is anchored to elapsed time, so a network time correction or a time-zone change cannot
+move your gun
+• Killed mid-sequence, the app comes back on the same clock and offers Resume or Start over rather
+than deciding for you
+
+ON SCREEN
+
+• Large MM:SS readout, driven bright while a race is on
+• Colour states readable at a glance: navy, amber through the last minute, red through the final
+ten seconds, green at the gun
+• A distinct vibration pattern for every signal, matched to what you hear, so a cue feels the shape
+it sounds
+• Large Sync and Stop targets, one swipe or tap back to the sequence picker
+
+A NOTE ON THE RULES
+
+Mad Cow Race Timer is a training and convenience aid. Under the Racing Rules of Sailing the Race Committee's visual signals are definitive, and sound signals are only for attention. Sail the flags, not the watch.
+<!-- /FIELD:full-draft -->
+
+---
+
 ## The name decision
 
 **The store name is "Mad Cow Race Timer", and `app_name` in `wear/src/main/res/values/strings.xml`
@@ -99,23 +233,61 @@ proguard rule and start renaming frames out of crash reports.
 Kept here because the next person to edit the listing will be tempted by all three, and the reasons
 are not visible from the text itself.
 
-- **No timing figure.** The README and `docs/timing-accuracy.md` carry **±13 ms**, and the #126 run
-  measured median 2 ms / max 4 ms across 30 screen-off cues — but those are **median-shaped figures,
-  and a store listing is read as a bound**. The same #114 run recorded one cue at `lateMs=66`, with a
-  documented `queuedMs=10` ceiling on top, so the defensible bound is roughly **66 ms**, not 13. The
-  listing says **sub-second**, which is true with two decimal orders of margin and survives a bad cue.
-  This is the same reasoning [#82](https://github.com/SailorDave17/race-timer/issues/82) applies to
-  the Play FGS justification; if that story tightens its wording, it does not follow that this one
-  should.
+- **No timing figure.** The figures now live in `docs/timing-accuracy.md`: measured 2026-08-18 across
+  150 cues in five full sequences, dispatch is **median 2 ms, worst 61 ms**, and tone onset reaches
+  **101 ms** including the deliberate 40 ms lead-in. Those are real worst cases rather than the
+  median-shaped **±13 ms** this bullet used to cite — but a store listing is still read as a **bound**,
+  by a sailor, on one device they have not bought yet. The listing says **sub-second**, which is true
+  with an order of margin over the worst cue ever measured here and survives a bad one.
+
+  **[#82](https://github.com/SailorDave17/race-timer/issues/82) has since tightened the Play FGS
+  justification to explicit numbers (100 ms dispatch / 150 ms tone), and that does *not* propagate
+  here** — settled, not still open. The two documents have different readers and different failure
+  costs: a reviewer can check a declaration against a measurement, and a disappointed sailor cannot be
+  argued out of a number on a store page. This bullet previously stated that independence as a
+  prediction (*"if that story tightens its wording, it does not follow that this one should"*); it is
+  recorded as an outcome now, because a condition that has fired stops being a guess.
 - **No sun-legibility claim.** The listing says the app *drives the panel to maximum brightness*,
   which is a mechanism `shared/ScreenPolicy.kt` implements and a test asserts. It does not say the
   screen is readable in direct sun, because the contrast audit that would establish that is
   **unfinished** — [#121](https://github.com/SailorDave17/race-timer/issues/121) is open.
-- **No promise you will always hear or feel the gun.** Under Do Not Disturb the watch currently loses
-  both channels ([#144](https://github.com/SailorDave17/race-timer/issues/144)), and there is no
-  pre-start warning for it ([#96](https://github.com/SailorDave17/race-timer/issues/96)). The copy
-  describes the cue mechanism and stops there. Once #144 and #96 close, a line about feeling the gun
-  through a sleeve becomes available and would be worth adding.
+- **No promise you will always hear or feel the gun.** Under Do Not Disturb the tones are silent —
+  `setStreamVolume` is refused, and the watch says so during the race, since
+  [#96](https://github.com/SailorDave17/race-timer/issues/96) shipped the Tier 3 line *"Do Not
+  Disturb — cues silent, wrist still buzzing"*. The wrist is the channel that survives: cues are
+  declared `USAGE_TOUCH`, and **30 of 30 were delivered at `zen_mode=2`, the 3000 ms gun included**
+  ([#144](https://github.com/SailorDave17/race-timer/issues/144) →
+  [#187](https://github.com/SailorDave17/race-timer/pull/187)). The copy still describes the cue
+  mechanism and stops there.
+
+  **The trigger fired, and the line was declined** — owner decision, 2026-08-17, taken on
+  [#236](https://github.com/SailorDave17/race-timer/issues/236). This bullet used to say that once
+  #144 and #96 closed, *"a line about feeling the gun through a sleeve becomes available and would be
+  worth adding"*. Both closed; the line is still not being added, for three reasons the reversal did
+  not touch:
+
+  - **The delivery is a dependency, not a property.** Every cue reaching the wrist under DND rests on
+    this platform continuing to permit the feedback class — the declaration is a deliberate mislabel,
+    and `USAGE_ALARM`, the honest class, measured **0 of 30**. Nothing CI runs can reach a `vibrate`
+    call, so if the policy moves, the promise goes false with no error and no failing build. The check
+    is manual: [`dnd-haptics-recheck.md`](../dnd-haptics-recheck.md)
+    ([#186](https://github.com/SailorDave17/race-timer/issues/186)).
+  - **One watch, one OS version.** The baseline is an SM-R925U on API 36. A listing sentence is read
+    as a claim about every device it installs on — the same reason the timing figure stays out, where
+    a median-shaped number would be read as a bound.
+  - **The draft revision above is two-form-factor, and the phone fails under DND.**
+    [#210](https://github.com/SailorDave17/race-timer/issues/210) gave the phone its own DND table on
+    2026-09-25: the honest `USAGE_ALARM` it declares delivered **0 of 30** buzzes under total silence,
+    the watch's #144 result on a second device, while `USAGE_TOUCH` delivered 30 of 30 and was not
+    adopted, for costs [#315](https://github.com/SailorDave17/race-timer/issues/315) weighs
+    (`docs/phone-cue-delivery.md`). A shared line would claim of the phone what it measurably does
+    not do. *(This bullet said "no haptic path at all" until #208 landed, then "unmeasured" until #210
+    measured it; the reason moved from absence to non-measurement to a measured failure, and the
+    decision did not move.)*
+
+  What would make it available: a re-check that holds across a `targetSdk` bump and a platform
+  upgrade, or arm 3 retiring the mislabel — plus #315 delivering the phone's cues under DND, if the
+  line is to sit in copy that describes both.
 
 Nothing in the listing describes a feature on the roadmap rather than in the build: no Tile, no
 complication, no phone companion, no named custom presets.

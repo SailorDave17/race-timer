@@ -2,7 +2,7 @@
 # 8.6 is the floor for `compileSdk = 35`, which #69 needs before the 2026-08-31 Wear OS
 # target-API deadline. Kotlin stays at 1.9.22 so `composeOptions.kotlinCompilerExtensionVersion`
 # (1.5.8, pinned to exactly this Kotlin) keeps working — see the note on `kotlin` below.
-agp = "8.6.1"
+agp = "8.13.2"
 # Held deliberately. Kotlin 2.x replaces `composeOptions` with the
 # `org.jetbrains.kotlin.plugin.compose` Gradle plugin and switches on K2, which is a real upgrade
 # but a separate one. Stacking it on a deadline-driven AGP bump mixes two failure modes.
@@ -19,12 +19,19 @@ junit = "4.13.2"
 # Robolectric runs :phone's unit tests against a real Context on the JVM. Scoped deliberately: the
 # audio and haptic path is a firm NO (a shadow AudioTrack is a fourth instrument of the class that
 # reported success through #61 while the watch was silent), and #160's scoped yes covers the
-# non-audio surfaces only. 4.14.1 is the floor for API 35, which is :phone's compileSdk/targetSdk.
-robolectric = "4.14.1"
+# non-audio surfaces only. 4.16.1 is the floor for API 36, :phone's compileSdk/targetSdk since #261
+# (4.14.1 caps at 35 outright: "Package targetSdkVersion=36 > maxSdkVersion=35"). The SDK 36 sandbox
+# also demands a Java 21 test JVM, which :phone's build script provides by toolchain (#275).
+robolectric = "4.16.1"
 junitExt = "1.1.5"
 espressoCore = "3.5.1"
 watchfaceComplications = "1.2.1"
 wear = "1.3.0"
+# #219: the Wearable Data Layer, and the repo's first Google Play services dependency. It ships in
+# both apps, so it is on the release classpaths docs/declared-surface.lock records, and adding it
+# re-opened the three Play documents that lock names. 20.0.1 is the version #218's harness measured
+# the link on. It sets no minimum compileSdk, needs minSdk 23, and brings androidx.core.
+playServicesWearable = "20.0.1"
 
 [libraries]
 # AndroidX
@@ -55,6 +62,9 @@ wear-input = { group = "androidx.wear", name = "wear-input", version.ref = "wear
 
 # Wear Ongoing Activity
 wear-ongoing = { group = "androidx.wear", name = "wear-ongoing", version = "1.0.0" }
+
+# Google Play services
+play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
 
 # Horologist (optional Wear OS utilities)
 horologist-compose-layout = { group = "com.google.android.horologist", name = "horologist-compose-layout", version.ref = "horologist" }

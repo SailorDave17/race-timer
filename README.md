@@ -1,7 +1,9 @@
 # Mad Cow Race Timer — Sailing Start-Sequence Timer
 
-A precise, glanceable start-sequence timer for sailboat racing that runs **standalone on a Wear OS
-watch** (no phone required on the water).
+A precise, glanceable start-sequence timer for sailboat racing. It runs **standalone on a Wear OS
+watch** — no phone required on the water — and, since [epic #196](https://github.com/SailorDave17/race-timer/issues/196),
+**standalone on an Android phone** for the committee-boat console. Standalone on both: the phone is
+not a companion, and neither device needs the other.
 
 Two audiences, one app: a **sailor** counting down to the gun, and a **race committee** sounding the
 signals the fleet is counting down to. The race-manager sequences are not a re-skin — they are voiced
@@ -74,7 +76,8 @@ The alert window is the **box's** setting, not a total — that is the number pr
 on the back of the unit. Presets are **none / 15 s (iStart Dinghy) / 60 s (iStart Rule 26)**, or dial
 any value from 5 s to 2:00. Reached through the **Lead-in** button, which appears next to Start on
 race-manager sequences only: a sailor has no box to sync to, and a sailor who triggers it by accident
-starts their race late.
+starts their race late. The phone offers the same control, the same presets and the same two taps
+(#207); the numbers and the eligibility rule live once, in `shared/LeadIn.kt`.
 
 Like Custom, the setting lives inside the sequence id (`scholastic_race_manager_alert60s`), so a
 process death during the run-up comes back on the right clock.
@@ -109,7 +112,7 @@ an instruction as a signal.
 
 ### Haptics-first watch UI
 
-- Big high-contrast MM:SS readout, driven to **maximum panel brightness** while a race is on screen
+- Big high-contrast MM:SS readout, driven to maximum panel brightness while a race is on screen — released above ~3000 lux so automatic brightness can reach the panel's sunlight range, which the forced maximum cannot (#12; `OVERRIDE_RELEASE_LUX` in ScreenPolicy.kt)
 - Colour-state background: navy → amber (last minute) → red flash (final 10 s) → green (gun)
 - Distinct haptic patterns per signal, per the voice table above
 - Large **Sync** / **Stop** buttons, **End Race** in race-manager count-up; one swipe to the picker
@@ -123,14 +126,20 @@ an instruction as a signal.
   piece, so blast lengths are exactly what `CueTiming` states. The `ToneGenerator` path this replaced
   treated its duration as a *cap*: 500 ms delivered 512 ms five times and 520 ms once in the same race
 - **Scheduled cues, not polled** — cues are scheduled against the anchor rather than sampled by a
-  tick loop, which took cue accuracy from ±200 ms to ±13 ms on hardware. **±13 ms is a median, not a
-  bound** — the #114 run recorded one cue at `lateMs=66`, with a documented `queuedMs=10` ceiling on
-  top of it, so the defensible worst case is nearer **66 ms**. Anywhere the number is read as a
-  *guarantee* rather than a description — a Play declaration, the store listing, anything a reviewer
-  or a sailor sees — say **sub-second** instead of quoting this figure. That is the whole of
-  [#82](https://github.com/SailorDave17/race-timer/issues/82), and the reasoning is worked through in
-  [`docs/store/listing.md`](docs/store/listing.md)
+  tick loop, which took cue accuracy from ±200 ms to single-digit milliseconds at the median on
+  hardware. **Measured 2026-08-18 over 150 cues in five full sequences** ([#82](https://github.com/SailorDave17/race-timer/issues/82)):
+  dispatch median 2 ms and **worst 61 ms**; the audible start misses its mark by 11 ms at the median
+  and **61 ms at worst**; tone onset including the deliberate 40 ms lead-in reaches **101 ms**. Method
+  and full tables in [`docs/timing-accuracy.md`](docs/timing-accuracy.md)
+- **Never quote a median as a bound** — the ±13 ms this section used to carry was a *median* from #58,
+  and a Play declaration or a store listing is read as a **guarantee**. Quote a measured bound with
+  real headroom, or say **sub-second**. The FGS justification now does the former (100 ms / 150 ms,
+  against measured worsts of 61 ms and 101 ms); the store listing deliberately still does the latter,
+  and the reasoning for keeping them different is in [`docs/store/listing.md`](docs/store/listing.md)
 - **Foreground service + Ongoing Activity** — the countdown survives screen-off and backgrounding
+- **The time of day on the watch** — Wear OS's curved clock at the top rim, above the sequence name,
+  in every timer state. It gives way while a warning line or a blocking notice is on screen
+  ([`docs/message-surface.md`](docs/message-surface.md), #303)
 - **Screen policy is a table, not a habit** — keep-awake and max-brightness are two pure functions of
   timer state in `shared/ScreenPolicy.kt`, and they deliberately disagree on exactly one state so a
   test can assert the divergence
@@ -209,13 +218,46 @@ hold is any answer that was measured on one device: `USAGE_TOUCH` and the `CueSt
 mapping are supplied by the app module through `HapticUsagePolicy` and `CueAudioProfile`, with no
 default, so a second form factor is made to measure its own rather than inherit the watch's.
 
+## Branches
+
+Three long-lived branches. The rule underneath is that **the branch a deploy is built from is
+never pushed to by hand**.
+
+| Branch | What it is | How it is entered |
+|---|---|---|
+| `develop` | Integration, and the repo default. Branch from here; merge back here. | A pull request from a feature branch, merged by the owner. |
+| `release` | **Production.** | A pull request from `develop`, merged by the owner. Nothing else. |
+| `main` | The **backup branch**: a known-good working version to fall back to if `release` breaks and cannot be fixed in place. Never a working branch and never a base. | A pull request **from `release`**, merged by the owner — from the branch production actually ran, never from `develop`. |
+
+`main` is promoted **from `release`** rather than from `develop`, and that is the whole
+mechanism: `release` is the branch production actually ran, so a copy of it is known-good **by
+construction** rather than by anyone remembering to be careful. A copy of `develop` would be a
+copy of something nobody has run, which is the one thing a fallback must not be.
+
+Two things follow. **Do not take a backup while production is broken** — the point is to keep
+the last good copy, not to record the bad one. And `main` is **allowed to sit behind**
+`release`: a backup is a copy of a past good state, so lagging is expected rather than a
+defect. *Measured 2026-09-01*: `main` is 64 commits behind `release`. A `main` that has moved is the backup being taken,
+not drift — nothing should file it or offer to freeze it.
+
+`release` is what an uploadable bundle is cut from — see [`docs/releases.md`](docs/releases.md),
+whose first row records a bundle rebuilt from `release` at `089f216` as the artifact Play
+accepted. The `Release` workflow itself fires on a `v*` **tag**, not on a branch push.
+
+`githooks/pre-push` refuses direct pushes to `develop`, `main` and `master`. Enable it once per
+clone: `git config core.hooksPath githooks`.
+
+*`main`'s role is an owner directive of 2026-09-01 and applies to every repo in this workspace,
+not just this one; cairn's `memory/global/branch-off-current-develop-2026-07-30.md` carries it.*
+
 ## Build
 
 ### Requirements
 
 - Android Studio Hedgehog (2023.1) or newer, **or** VS Code with the Gradle for Java extension
-- JDK 17 (AGP 8.x refuses anything lower); `:shared` declares a JVM 8 toolchain, which
-  `settings.gradle.kts` resolves via the Foojay plugin rather than requiring a local install
+- JDK 17 (AGP 8.x refuses anything lower); `:shared` declares a JVM 8 toolchain and `:phone`'s
+  unit tests a Java 21 launcher (Robolectric refuses an SDK 36 sandbox on anything lower — #275),
+  both resolved via `settings.gradle.kts`'s Foojay plugin rather than requiring a local install
 - Android SDK with a Wear OS emulator image (API 30 / Wear OS 3.5+) and Build-tools 34
 
 ### After cloning
@@ -272,12 +314,19 @@ is in [`docs/watch-setup.md`](docs/watch-setup.md). Proving that a race killed m
 Not Disturb — the two-arm race procedure, its triggers, the measured baseline, and why that check is
 permanently manual — is in [`docs/dnd-haptics-recheck.md`](docs/dnd-haptics-recheck.md).
 
+Proving the console phone lasts a whole scholastic start day on one charge — the scenario, which was
+authored before the instrument existed, the on-device journal that records the day without an adb
+session attached, and what the measurement cannot see — is in
+[`docs/start-day-battery.md`](docs/start-day-battery.md). The run itself has not happened yet; the
+journal is armed with `adb shell setprop log.tag.RaceDayJournal DEBUG` and read back with
+`python .github/scripts/parse-start-day.py`, whose `--selftest` runs in CI.
+
 ## Tech stack
 
 | Layer | Technology |
 |-------|-----------|
 | Language | Kotlin 1.9.22 |
-| Build | Gradle 8.9 / AGP 8.6.1 |
+| Build | Gradle 8.13 / AGP 8.13.2 |
 | Watch UI | Jetpack Compose for Wear OS 1.3 |
 | Navigation | Wear Compose Navigation |
 | Timing | `SystemClock.elapsedRealtimeNanos()` (monotonic) |
@@ -285,20 +334,23 @@ permanently manual — is in [`docs/dnd-haptics-recheck.md`](docs/dnd-haptics-re
 | Background | Android `ForegroundService` (`specialUse`) + Wear `OngoingActivity` |
 | State | `SharedPreferences` (boot-anchored gun snapshot) |
 | Min SDK | 30 (Wear OS 3.5 / Android 11) |
-| Compile / Target SDK | 35 |
+| Compile / Target SDK | 35 (wear, shared-android) / 36 (phone, #261) |
 
 ## Status and roadmap
 
-The app is feature-complete for its own use and runs on hardware. The current push is **getting it
-distributable** — [epic #66](https://github.com/SailorDave17/race-timer/issues/66), Google Play
-internal testing.
+The app is feature-complete for its own use and runs on hardware. The first internal-testing build is
+**out** — `versionCode 1` on the `wear:internal` track since 2026-08-13, with release signing and
+upload now running from CI. The current push is finishing
+[epic #66](https://github.com/SailorDave17/race-timer/issues/66): the wider Google Play rollout.
 
 | Milestone | Scope |
 |---|---|
-| **Shipped** | Six sequences including both race-manager modes, signal-box lead-in, Sync, rendered cue audio, scheduled cues, foreground service, screen policy, restore-after-kill, the `:phone` companion module ([#197](https://github.com/SailorDave17/race-timer/issues/197)) — built and in the CI gate, not published |
-| **Play internal testing** ([#66](https://github.com/SailorDave17/race-timer/issues/66)) | Developer account, upload keystore, icon set, store listing and screenshots, privacy policy, App content declarations, first internal build |
-| **Shipped toward that** | `compileSdk`/`targetSdk` 35 ([#116](https://github.com/SailorDave17/race-timer/pull/116), closing [#69](https://github.com/SailorDave17/race-timer/issues/69)) on the AGP 8.6.1 / Gradle 8.9 toolchain ([#111](https://github.com/SailorDave17/race-timer/pull/111), closing [#68](https://github.com/SailorDave17/race-timer/issues/68)) — the 2026-08-31 Wear OS deadline is met |
-| **Known open defects** | Under Do Not Disturb the watch loses **both** channels, so the gun never fires ([#144](https://github.com/SailorDave17/race-timer/issues/144)), with no pre-start warning that the cues will be silent ([#96](https://github.com/SailorDave17/race-timer/issues/96)); a cue dropped or truncated mid-race says nothing ([#161](https://github.com/SailorDave17/race-timer/issues/161)); the Settings remedy cannot clear the foreground-service block it raises ([#165](https://github.com/SailorDave17/race-timer/issues/165)). The display can still stick 180° off — a device fault, not the app: [#115](https://github.com/SailorDave17/race-timer/issues/115) is closed but **the remedy did not hold**, and [#147](https://github.com/SailorDave17/race-timer/issues/147) runs the control arm that would settle the cause |
+| **Shipped (watch)** | Six sequences including both race-manager modes, signal-box lead-in, Sync, rendered cue audio, scheduled cues, foreground service, screen policy, restore-after-kill |
+| **In progress: the phone app** ([epic #196](https://github.com/SailorDave17/race-timer/issues/196)) | A **standalone** phone timer, not a companion — the same `TimerEngine` on the same monotonic anchor, shipping under the same Play listing. A sailor with no watch gets the complete timer, which is a hard requirement of the epic rather than a fallback. Built and in the CI gate, **not published**: countdown, cue audio, screen-off cueing, Sync, Custom, restore-after-kill, the officer's screen choice and the race-manager count-up through End Race have landed ([#197](https://github.com/SailorDave17/race-timer/issues/197), #199, #202–#206, #209, #225), and a count-up now asks once whether to keep that brightness, dimming if nobody answers ([#279](https://github.com/SailorDave17/race-timer/issues/279), open until its panel-cost measurement lands with [#216](https://github.com/SailorDave17/race-timer/issues/216)). Reopening the app on a race that is still running comes back to that race rather than to the picker, and a selection that would discard one has to be confirmed ([#281](https://github.com/SailorDave17/race-timer/issues/281)); the two-stage signal-box lead-in landed with [#207](https://github.com/SailorDave17/race-timer/issues/207), and the three cue voices now buzz the hand holding the phone on the shared manager's waveforms ([#208](https://github.com/SailorDave17/race-timer/issues/208)) — measured on the owner's phone by [#210](https://github.com/SailorDave17/race-timer/issues/210): every cue heard and felt in vibrate and silent mode, with another app's music playing and with the screen off, and none under total-silence Do Not Disturb, which [#315](https://github.com/SailorDave17/race-timer/issues/315) owns ([`docs/phone-cue-delivery.md`](docs/phone-cue-delivery.md)) |
+| **Then: the pair** | Linking watch and phone over the Wearable Data Layer so a race started on either counts to the same gun ([#219](https://github.com/SailorDave17/race-timer/issues/219)–[#223](https://github.com/SailorDave17/race-timer/issues/223)). **Nothing of this is built**, and the two apps do not talk to each other today |
+| **Play internal testing** ([#66](https://github.com/SailorDave17/race-timer/issues/66)) | Developer account, upload keystore, icon set, store listing and screenshots, privacy policy, App content declarations, ~~first internal build~~ (shipped, see below) |
+| **Shipped toward that** | `compileSdk`/`targetSdk` 35 ([#116](https://github.com/SailorDave17/race-timer/pull/116), closing [#69](https://github.com/SailorDave17/race-timer/issues/69)) on the AGP 8.6.1 / Gradle 8.9 toolchain ([#111](https://github.com/SailorDave17/race-timer/pull/111), closing [#68](https://github.com/SailorDave17/race-timer/issues/68)); the toolchain has since moved to Gradle 8.13 / AGP 8.13.2 ([#192](https://github.com/SailorDave17/race-timer/issues/192)) and `:phone` to compileSdk/targetSdk 36 ([#261](https://github.com/SailorDave17/race-timer/issues/261)) — the 2026-08-31 Wear OS deadline is met. The **first internal build shipped**: `versionCode 1` (Wear, [`089f216`](https://github.com/SailorDave17/race-timer/commit/089f216)) uploaded to the `wear:internal` track on 2026-08-13 ([#79](https://github.com/SailorDave17/race-timer/issues/79), closed), and **rolled out to internal testers on 2026-08-17 — owner-asserted, not re-queried against Play**. Release signing and bundle upload then moved into CI on 2026-08-18 ([#81](https://github.com/SailorDave17/race-timer/issues/81), closed, [PR #270](https://github.com/SailorDave17/race-timer/pull/270) / [#271](https://github.com/SailorDave17/race-timer/pull/271)), so a tag now publishes both modules. Every uploaded bundle is logged in [`docs/releases.md`](docs/releases.md) |
+| **Known open defects** | Under Do Not Disturb the tones are silent and the watch says so during the race ([#96](https://github.com/SailorDave17/race-timer/issues/96), shipped), while every cue still reaches the wrist — the gun included ([#144](https://github.com/SailorDave17/race-timer/issues/144) → [#187](https://github.com/SailorDave17/race-timer/pull/187)); that rests on DND policy continuing to permit the feedback class, which no test can reach and [`docs/dnd-haptics-recheck.md`](docs/dnd-haptics-recheck.md) re-checks by hand ([#186](https://github.com/SailorDave17/race-timer/issues/186)); a cue dropped or truncated mid-race says nothing ([#161](https://github.com/SailorDave17/race-timer/issues/161)); the Settings remedy cannot clear the foreground-service block it raises ([#165](https://github.com/SailorDave17/race-timer/issues/165)). The display can still stick 180° off — a device fault, not the app: [#115](https://github.com/SailorDave17/race-timer/issues/115) is closed but **the remedy did not hold**, and [#147](https://github.com/SailorDave17/race-timer/issues/147) runs the control arm that would settle the cause |
 | **Later** | Named custom presets, round-down sync toggle, Wear Tile + complication, rolling/chained starts |
 
 The Google Play account the app publishes under — and why publishing from a different one would create

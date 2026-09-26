@@ -13,38 +13,76 @@ disagree with Play, which is the one thing it cannot afford to do.
 So a row with an empty **Uploaded** cell is a *prepared build*, not a release. It stays that way
 until somebody uploads it and fills the date in.
 
-## Why the count matters beyond provenance
+## Why the count mattered beyond provenance — and no longer does
 
-This is also the only thing in this repo that **counts releases**, and one deferred decision reads
-off it: [#81](https://github.com/SailorDave17/race-timer/issues/81) holds the move of release
-signing into CI until *three or more releases have been cut by hand*. That is why #81's AC 1 points
-here: before this file existed nothing counted releases, so the trigger had no instrument and could
-not be read in either direction.
+This used to be the only thing in this repo that **counted releases**, because one deferred decision
+read off it: [#81](https://github.com/SailorDave17/race-timer/issues/81) held the move of release
+signing into CI until *three or more releases had been cut by hand*, and its AC 1 pointed here.
 
-**It can be read now, and a count below three is the trigger returning false — not the trigger being
-unmeasurable.** Those are different states and only the first is healthy: an unreadable trigger is a
-defect in this file, a false one is this file working.
+**#81 shipped on 2026-08-18 with the count at one.** The owner took the decision early rather than
+waiting for the trigger, so the trigger was discharged by the work landing rather than by firing.
+Counting the rows is therefore **no longer a step in writing one** — that instruction is retired, and
+this paragraph exists so the retirement is visible to whoever next reads the row-writing procedure
+below and wonders where the counting step went.
 
-**So counting the rows is part of writing one.** After adding a row with a date in **Uploaded**,
-count the uploaded rows; on the third, #81's trigger has fired — say so on #81 in the same sitting.
-This is a step in the hand procedure rather than a check in CI because the row is written by hand and
-nothing else in the repo reads this table; a checker wired into no gate would be worse than the
-sentence. What it replaces is somebody remembering, which is what both revisits so far have been
-(2026-08-12 against no instrument at all, 2026-08-16 against this table).
+The log's original purpose is untouched: *which commit is on testers' watches?*
 
 ## The log
 
-| versionCode | versionName | Commit | Track | Uploaded | Notes |
-|---|---|---|---|---|---|
-| 1 | 1.0 | [`089f216`](https://github.com/SailorDave17/race-timer/commit/089f216) | Internal testing | 2026-08-13 | First build. Commit **re-taken a second time**: prepared from `cadaea9` on `develop`, then rebuilt from `release` at `089f216`, which is the artifact Play accepted. Sitting as a **draft** on the track — no tester has it yet. |
+| versionCode | Form factor | versionName | Commit | Track | Uploaded | Notes |
+|---|---|---|---|---|---|---|
+| 1 | Wear | 1.0 | [`089f216`](https://github.com/SailorDave17/race-timer/commit/089f216) | `wear:internal` | 2026-08-13 | First build. Track cell read *"Internal testing"* — the Console's label — until 2026-08-18, when the Play API was asked directly and answered **`wear:internal`**, a Wear-form-factor track distinct from the plain `internal` track, which is empty. The label and the track id are not the same string, and #81's workflow publishes by id. Commit **re-taken a second time**: prepared from `cadaea9` on `develop`, then rebuilt from `release` at `089f216`, which is the artifact Play accepted. **Rolled out to internal testers** — owner-asserted 2026-08-17. This cell read *"sitting as a draft on the track — no tester has it yet"* until then: written true at upload time on 2026-08-13, and never revisited. |
+
+## One counter, two form factors (#211)
+
+`versionCode` is **one monotonic counter shared by both modules** (epic #196 decision D3), which is
+why this table has a **Form factor** column: the number alone no longer says which artifact took it.
+
+Both modules declare the same `applicationId`, so Play treats them as one app and a `versionCode` is
+permanently unique within it. `:wear` burned 1 on 2026-08-13; `:phone` holds 2, allocated by #211 and
+not yet uploaded. **The next upload takes the next free number whichever module ships it** — so if
+the watch ships an update before the phone does, the watch takes 3 and the phone's 2 waits.
+
+`./gradlew checkVersionCodeCollision` refuses two modules declaring the same number under one
+applicationId, and every `bundleRelease` depends on it — so this table records the allocation rather
+than being the only thing preventing a collision.
+
+## Cutting a release from CI (#81)
+
+Since #81 the ordinary way to release is to bump `versionCode`/`versionName` in the module being
+released — `wear/build.gradle.kts` or, since #211, `phone/build.gradle.kts` — merge, then push a tag:
+
+```bash
+git tag v1.1 && git push origin v1.1
+```
+
+`.github/workflows/release.yml` then signs **both** modules, verifies each certificate against the
+recorded fingerprint, publishes each to its own track (`:wear` to **`wear:internal`**, `:phone` to
+**`internal`** — the non-Wear form factor's track, since #211), and attaches both `.aab` files and
+both `mapping.txt` files to the run. The tag must match the `versionName` of **both** modules or the
+workflow refuses before building.
+
+**A row is still written by hand, and it is still written when the upload happens.** CI does not
+touch this file. What changes is where the fields come from:
+
+- **Commit** — the tagged commit, `git rev-parse --short <tag>`. CI builds from a clean checkout of
+  exactly that commit, so the dirty-tree caveat below cannot apply to a CI release.
+- **Uploaded** — still Play's date from the Console, still UTC. The workflow succeeding tells you
+  the bundle was accepted by the API; the Console is what dates it.
+- **Notes** — record the workflow run URL. That is the CI equivalent of the build-time verification
+  evidence recorded for build 1, and it expires less than a sentence about track state does.
+
+Local signing remains available and correct for a release cut by hand; `release-signing.md` covers
+both paths and says which is which.
 
 ## How each field is established
 
 Do not copy these from a previous row — every one of them is a measurement, and the point of the log
 is that it was taken rather than remembered.
 
-- **`versionCode` / `versionName`** — `wear/build.gradle.kts` `defaultConfig`, in the commit named in
-  the row. `versionCode` is bumped in the same commit as the release being cut; see
+- **`versionCode` / `versionName`** — the `defaultConfig` of **the module being released**
+  (`wear/build.gradle.kts` or `phone/build.gradle.kts`), in the commit named in the row. Since #211
+  the counter is shared across both, so the number also tells you which module *cannot* use it; see
   [`release-signing.md`](release-signing.md) §Version strategy for why a burned number can never be
   reclaimed.
 - **Commit** — `git rev-parse HEAD` on a **clean** tree at build time. A dirty tree makes the SHA a
@@ -58,6 +96,15 @@ is that it was taken rather than remembered.
   day: versionCode 1 was uploaded at 21:25 EDT on 2026-08-12 and the Console reads
   `Aug 13, 2026, 1:25 AM`. Take the Console's date, not your local one — otherwise this column and
   Play disagree by a day and the log stops being the tiebreak it exists to be.
+- **Notes** — free text, with one rule: a sentence describing the **track state** (draft, rolled
+  out, halted) is a claim with an expiry, and this table has no instrument that reads Play. Date it,
+  and **re-read the previous row's note whenever you write a new one**. That used to hang off
+  counting the rows for #81; #81 has shipped and the counting step is retired, so the obligation is
+  re-anchored here rather than quietly leaving with it — the occasion is now writing a row, which is
+  the only moment anyone opens this file with intent. Row 1's said *draft, no tester has it yet* after that had stopped
+  being true — for how long is unreconstructable, because nothing dated the rollout, which is the
+  second half of the same defect. The log's whole purpose is answering *which commit is on
+  testers' watches?*
 - **Signing** — every bundle here is signed with the upload key whose SHA-256 fingerprint is recorded
   in [`release-signing.md`](release-signing.md). Verify with `keytool -printcert -jarfile <bundle>`;
   that command is correct for an `.aab` and **wrong for an APK**, where it prints

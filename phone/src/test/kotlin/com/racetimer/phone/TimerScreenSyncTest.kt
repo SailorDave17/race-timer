@@ -37,12 +37,12 @@ class TimerScreenSyncTest {
 
     private val taps = mutableListOf<String>()
 
-    private fun render(running: Boolean) {
+    private fun render(state: TimerState) {
         compose.setContent {
             TimerScreen(
                 readout = PhoneReadout.of(TimerState.RUNNING, 125_000L, 0L),
                 sequenceName = "Scholastic (ICSA)",
-                running = running,
+                state = state,
                 onStart = { taps += "start" },
                 onStop = { taps += "stop" },
                 onSync = { taps += "sync" },
@@ -52,7 +52,7 @@ class TimerScreenSyncTest {
 
     @Test
     fun `tapping Sync fires the sync callback and nothing else`() {
-        render(running = true)
+        render(state = TimerState.RUNNING)
         compose.onNodeWithText("Sync").performClick()
         // Exactly the sync callback: a Sync wired to Stop would end the race the officer was
         // trying to correct, which is why "and nothing else" is the load-bearing half.
@@ -61,14 +61,14 @@ class TimerScreenSyncTest {
 
     @Test
     fun `the Sync control exists only while the race runs`() {
-        render(running = false)
+        render(state = TimerState.IDLE)
         compose.onNodeWithText("Start").assertIsDisplayed()
         compose.onAllNodesWithText("Sync").assertCountEquals(0)
     }
 
     @Test
     fun `while running the controls are Sync and Stop, with Start gone`() {
-        render(running = true)
+        render(state = TimerState.RUNNING)
         compose.onNodeWithText("Sync").assertIsDisplayed()
         compose.onNodeWithText("Stop").assertIsDisplayed()
         compose.onAllNodesWithText("Start").assertCountEquals(0)

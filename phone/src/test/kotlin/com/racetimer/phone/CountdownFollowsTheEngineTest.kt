@@ -8,7 +8,6 @@ import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.MonotonicClock
 import com.racetimer.shared.TimerState
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** A monotonic clock the test moves by hand — the whole reason the engine takes one (#197 AC 2). */
@@ -38,14 +37,19 @@ class CountdownFollowsTheEngineTest {
     }
 
     @Test
-    fun `the console offers exactly the three sailor sequences`() {
-        // The race-manager variants are BuiltInSequences.all's other two entries and are absent by
-        // design: their defining behaviour is the count-up after the gun, which is #206.
+    fun `the console offers every shared sequence, the race-manager pair included`() {
+        // Held at the three sailor sequences until #206, because a race-manager mode listed before
+        // its post-gun half existed would have ended the race at the gun. That half is built, so
+        // the console offers the full set — and the assertion is against `all` rather than against
+        // five names written out here, so a sequence added to shared is offered on the phone
+        // without this test having to be told about it.
+        assertEquals(BuiltInSequences.all.map { it.name }, runner.sequences.map { it.name })
+        // The half a comparison against `all` cannot make: that the pair actually arrived, named.
+        // Without it this passes just as well on the day `all` itself loses the race-manager modes.
         assertEquals(
-            listOf("US Sailing 5-4-1-Go", "Scholastic (ICSA)", "Club 3-2-1-Go"),
-            runner.sequences.map { it.name },
+            listOf("US Sailing - Race Manager", "Scholastic - Race Manager"),
+            runner.sequences.filter { it.countUpAfterFinish }.map { it.name },
         )
-        assertTrue(runner.sequences.none { it.countUpAfterFinish })
     }
 
     @Test

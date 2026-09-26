@@ -14,6 +14,7 @@ import com.racetimer.phone.ui.TAG_KEEP_SCREEN_ON
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
@@ -44,8 +45,22 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class DisplayChoiceSurfaceTest {
 
+    private val compose = createAndroidComposeRule<MainActivity>()
+
+    /**
+     * The flusher runs **outside** the compose rule, because the rule launches `MainActivity` during
+     * its own setup and that is where the hang can start (#239, wired here by #281).
+     *
+     * This class launches the real activity through `createAndroidComposeRule`, so it has no
+     * `setContent` to compose `GlobalSnapshotFlushLoop` into and was never covered by #239's fix — it
+     * had been relying on running first, which is the one position where compose's global-snapshot
+     * collector is still alive. *Measured 2026-08-21:* four unrelated new test classes moved it and
+     * all five tests here failed with `AppNotIdleException`; the same five pass when the class is run
+     * alone. See `GlobalSnapshotFlushRule`. (It was the module's only such class until #300 added
+     * `PreStartScreenHoldTest`, which carries the same chain for the same reason.)
+     */
     @get:Rule
-    val compose = createAndroidComposeRule<MainActivity>()
+    val rules: RuleChain = RuleChain.outerRule(GlobalSnapshotFlushRule()).around(compose)
 
     private val brightness: Float
         get() = compose.activity.window.attributes.screenBrightness

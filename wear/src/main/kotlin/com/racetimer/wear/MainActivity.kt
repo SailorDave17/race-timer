@@ -5,7 +5,12 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -20,20 +25,24 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.navigation.NavController
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable as wearComposable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.racetimer.android.HapticManager
 import com.racetimer.android.SystemMonotonicClock
+import com.racetimer.android.WearablePairLink
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.DeviceReadiness
 import com.racetimer.shared.ForegroundRefusalLatch
 import com.racetimer.shared.LaunchNotice
 import com.racetimer.shared.NoticeTier
+import com.racetimer.shared.PairStatus
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
@@ -42,6 +51,7 @@ import com.racetimer.shared.StartRemedy
 import com.racetimer.shared.TimerEngine
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
+import com.racetimer.shared.ambientPermitsOverride
 import com.racetimer.shared.armedNotice
 import com.racetimer.shared.cueLossNotice
 import com.racetimer.shared.discardedOnStartRemainingMs
@@ -53,6 +63,7 @@ import com.racetimer.shared.launchPlan
 import com.racetimer.shared.leadInBaseId
 import com.racetimer.shared.leadInBaseOf
 import com.racetimer.shared.offersLeadIn
+import com.racetimer.shared.pairStatusLine
 import com.racetimer.shared.resumeOfferRemainingMs
 import com.racetimer.shared.startNotice
 import com.racetimer.shared.withLeadIn
@@ -69,9 +80,10 @@ import com.racetimer.wear.ui.TimerScreen
  *
  * Responsibilities:
  * - Bind to [TimerService] so the countdown keeps running when the app is backgrounded.
- * - Keep the screen on while a sequence is running, and while a just-ended race-manager summary is
- *   on screen (FLAG_KEEP_SCREEN_ON), and drive the panel to full brightness for the states that need
- *   to be readable in direct sunlight. Both rules live in `shared/` — see [applyDisplayPolicy].
+ * - Keep the screen on while a sequence is running, while a just-ended race-manager summary is on
+ *   screen, and while the pre-start screen waits for Start (FLAG_KEEP_SCREEN_ON, #300), and drive the
+ *   panel to full brightness for the states that need to be readable in direct sunlight. Both rules
+ *   live in `shared/` — see [applyDisplayPolicy].
  * - Drive the Compose UI by polling the engine state every [UI_REFRESH_MS].
  * - Handle Start / Sync / Stop actions by dispatching to the service.
  */
@@ -201,6 +213,17 @@ class MainActivity : ComponentActivity() {
      */
     private var uiInLeadIn by mutableStateOf(false)
 
+    /**
+     * The pair's status row (#219), or null when there is nothing to draw — which is always, on a
+     * watch whose phone does not run the app, except on a debuggable build.
+     */
+    private var uiPairStatus by mutableStateOf<String?>(null)
+
+    private val pairListener: (PairStatus) -> Unit = { status ->
+        val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        uiPairStatus = pairStatusLine(status, peerNoun = "Phone", showAbsent = debuggable)
+    }
+
     private var selectedSequence: RaceSequence = BuiltInSequences.usSailing
 
     /**
@@ -274,15 +297,68 @@ class MainActivity : ComponentActivity() {
     private var maxBrightnessActive = false
 
     /**
+     * True while the timer screen is the one up, rather than a screen stacked over it (#300).
+     *
+     * In `IDLE` the timer screen is the pre-start screen, which [keepsScreenOn] holds awake — and the
+     * sequence picker, Custom's stepper and both lead-in screens are `IDLE` as well, which it does not.
+     * The engine state cannot tell them apart, so the rule is handed this too. Set from the nav
+     * controller's current destination in `onCreate`, which is the screen that is up, rather than from
+     * whether the timer screen is composed: a swipe back from the picker reveals the timer screen
+     * before the pop that makes it the one up.
+     */
+    private var timerScreenShowing = false
+
+    // --- The ambient half of the brightness rule (#12) --------------------------
+    //
+    // #65 forces the panel to "maximum" during the sequence. Measured on this watch, that override
+    // switches the automatic strategy off entirely and pins 600 nits, while automatic reaches
+    // 1000 nits in bright light — so above roughly 3000 lux the override is a *downgrade*, in the
+    // exact conditions it exists for. There is no API to ask for the panel's sunlight range; the
+    // only way to reach it is to stop suppressing the strategy that can. See `ambientPermitsOverride`.
+
+    private val lightSensor: Sensor? by lazy {
+        (getSystemService(Context.SENSOR_SERVICE) as? SensorManager)
+            ?.getDefaultSensor(Sensor.TYPE_LIGHT)
+    }
+
+    /** Latest illuminance, or null until the first sample — and forever on a watch with no sensor. */
+    private var latestLux: Float? = null
+
+    /**
+     * The ambient gate's own answer, carried between readings.
+     *
+     * Separate from [maxBrightnessActive] on purpose. That field is the *applied* value, which the
+     * state gate can hold false for reasons that have nothing to do with the weather; feeding it
+     * back as the hysteresis input would let a spell of IDLE decide what the light was doing.
+     */
+    private var ambientPermitsBrightness = true
+
+    private val lightListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            latestLux = event.values.firstOrNull() ?: return
+            // Cheap to call on every sample: both setters below are idempotence-guarded, so this
+            // does nothing at all until the gate actually crosses a threshold.
+            applyDisplayPolicy(uiTimerState)
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
+
+    /**
      * Apply both display rules for [state] together, from the one place that knows the state.
      *
      * They are separate rules — [keepsScreenOn] and [forcesMaxBrightness] disagree on
-     * [TimerState.FINISHED], deliberately — but they must never be applied at different moments or
-     * from different branches, which is why they are read here rather than at two call sites.
+     * [TimerState.FINISHED] and on the pre-start screen, deliberately — but they must never be applied
+     * at different moments or from different branches, which is why they are read here rather than at
+     * two call sites. Keep-screen-on also reads [timerScreenShowing] (#300).
      */
     private fun applyDisplayPolicy(state: TimerState) {
-        setScreenOn(keepsScreenOn(state))
-        setMaxBrightness(forcesMaxBrightness(state))
+        setScreenOn(keepsScreenOn(state, onTimerScreen = timerScreenShowing))
+        // Two independent gates, and the conjunction is the applied value: the state gate is a fact
+        // about the race, the ambient gate a fact about the light. Only the second has hysteresis,
+        // which is why it keeps its answer in a field rather than being recomputed from lux alone.
+        ambientPermitsBrightness = ambientPermitsOverride(latestLux, ambientPermitsBrightness)
+        setMaxBrightness(forcesMaxBrightness(state) && ambientPermitsBrightness)
     }
 
     private fun setScreenOn(on: Boolean) {
@@ -332,6 +408,20 @@ class MainActivity : ComponentActivity() {
             RaceTimerTheme {
                 val navController = rememberSwipeDismissableNavController()
 
+                // Which screen is up, for keep-screen-on (#300) — see [timerScreenShowing]. The
+                // controller reports its current destination as soon as the listener is added, and
+                // again on every navigate and pop.
+                DisposableEffect(navController) {
+                    val listener = NavController.OnDestinationChangedListener { _, destination, _ ->
+                        timerScreenShowing = destination.route == NAV_TIMER
+                        // Applied now rather than on the next refresh pass, so the picker lets go as
+                        // it opens and the pre-start screen takes hold as it returns.
+                        applyDisplayPolicy(uiTimerState)
+                    }
+                    navController.addOnDestinationChangedListener(listener)
+                    onDispose { navController.removeOnDestinationChangedListener(listener) }
+                }
+
                 SwipeDismissableNavHost(
                     navController = navController,
                     startDestination = NAV_TIMER,
@@ -352,6 +442,7 @@ class MainActivity : ComponentActivity() {
                             leadInOffered = uiLeadInOffered,
                             inLeadIn = uiInLeadIn,
                             startNotice = uiStartNotice,
+                            pairStatus = uiPairStatus,
                             onRemedy = { handleRemedy(it) },
                             onStart = { handleStart() },
                             onStartOver = { handleStartOver() },
@@ -434,12 +525,34 @@ class MainActivity : ComponentActivity() {
         // than one that never appeared (#13).
         requestNotificationPermissionOnce()
         refreshStartNotice()
+        // Scoped to the visible window, exactly like the override it feeds — a brightness override
+        // applies only while this window is showing, so there is nothing for a reading to decide
+        // outside that. SENSOR_DELAY_NORMAL is ~200 ms, which is far finer than sunlight changes and
+        // negligible beside a screen that is being held awake anyway.
+        lightSensor?.let {
+            (getSystemService(Context.SENSOR_SERVICE) as? SensorManager)
+                ?.registerListener(lightListener, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
         uiHandler.post(uiRefreshRunnable)
+        // #219. The link is the process's and answers the phone whatever is on screen; being on
+        // screen is what makes it ask, so the row it feeds is measured while it can be read.
+        WearablePairLink.get(this).apply {
+            addStatusListener(pairListener)
+            setActive(true)
+        }
     }
 
     override fun onStop() {
         super.onStop()
+        WearablePairLink.get(this).apply {
+            setActive(false)
+            removeStatusListener(pairListener)
+        }
         uiHandler.removeCallbacks(uiRefreshRunnable)
+        (getSystemService(Context.SENSOR_SERVICE) as? SensorManager)
+            ?.unregisterListener(lightListener)
+        // Deliberately *not* reset: the light outside has not changed because the app was
+        // backgrounded, and a stale reading is a better first answer on return than none.
         if (serviceBound) {
             timerService?.engine?.removeListener(engineListener)
             unbindService(serviceConnection)
@@ -1084,9 +1197,10 @@ class MainActivity : ComponentActivity() {
         uiShowResyncPrompt = timerService?.lastRestoreOutcome == RestoreOutcome.DEGRADED &&
             engine.currentState == TimerState.RUNNING &&
             !resyncAcknowledged
-        // Keep-screen-on and the max-brightness override, both keyed off the engine state. The rules
-        // and the reasoning behind each state now live in `shared/ScreenPolicy.kt`, where the JVM
-        // suite can assert them — including the one state the two rules deliberately disagree on.
+        // Keep-screen-on and the max-brightness override, both keyed off the engine state (and
+        // keep-screen-on off which screen is up, #300). The rules and the reasoning behind each state
+        // live in `shared/ScreenPolicy.kt`, where the JVM suite can assert them — including the two
+        // places the two rules deliberately disagree.
         applyDisplayPolicy(engine.currentState)
     }
 

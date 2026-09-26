@@ -19,15 +19,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Two JDKs are genuinely needed: AGP 8.2 refuses to run on anything below 17,
-      # while :shared declares jvmToolchain(8). 17 is listed last so it becomes
-      # JAVA_HOME and runs Gradle itself.
-      - name: Set up JDK 8 and 17
+      # Three JDKs are genuinely needed, and each belongs to a different module (#275):
+      #   8  — :shared declares jvmToolchain(8) on purpose; its bytecode target is the contract.
+      #   17 — AGP's floor, and what runs Gradle itself. Listed LAST so it becomes JAVA_HOME.
+      #   21 — :phone's unit test launcher only. Robolectric cannot build an SDK 36 sandbox on
+      #        anything below 21, and :phone targets 36 (#261); the toolchain is declared in
+      #        phone/build.gradle.kts, this step just puts the JDK on disk so the foojay
+      #        resolver does not have to download it.
+      - name: Set up JDK 8, 17 and 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: |
             8
+            21
             17
 
       - name: Set up Gradle
@@ -36,6 +41,40 @@ jobs:
           # The wrapper jar is a binary committed to the repo; verify it against the
           # published Gradle checksums on every run rather than trusting the blob.
           validate-wrappers: true
+
+      # #83. docs/privacy-policy.md is PUBLISHED and Play fetches it; it asserts no INTERNET
+      # permission, no third-party SDKs or analytics, a permission table that matches what ships,
+      # and which app disables Auto Backup. docs/play-store-fgs-justification.md argues at length
+      # that no standard foreground-service type applies. All of that was guarded by a COMMENT in
+      # each document, which only works if whoever adds a permission happens to open a file they had
+      # no reason to open - and the consequence of the miss is a live public policy that lies about
+      # the app, which is grounds for removal rather than a stale doc.
+      #
+      # First Gradle step on purpose. It reads the merged release manifests and the release runtime
+      # classpaths, so it needs nothing compiled and finishes long before the suites do - a policy
+      # violation should not wait behind R8.
+      # `python3 -V` first, because the runner's interpreter is the binding one and is older than a
+      # maintainer's. This step's first run died with a TypeError from a 3.13-only API that passed
+      # locally; printing the version makes the next instance of that class name its own cause
+      # instead of looking like a bug in the check.
+      - name: Check the declared-surface lock
+        env:
+          GRADLE_ARGS: -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
+        run: |
+          python3 -V
+          python3 .github/scripts/declared-surface.py --check
+
+      # #216. .github/scripts/parse-start-day.py turns a start-day journal into the numbers that decide
+      # whether bar condition 1 is proven. A start day is unrepeatable - one phone, one regatta, one
+      # charge - so the parse gets exactly one chance at a real journal, and a bug found afterwards
+      # cannot be re-run away. Its known-answer cases run here, including the ones that must REFUSE:
+      # an empty journal (which is also what an UNARMED build writes), a reboot mid-day, and a phone
+      # that went on charge.
+      #
+      # Beside the declared-surface check and for its reason: pure Python, nothing compiled, and a
+      # failure here should not wait behind R8.
+      - name: Check the start-day parser
+        run: python3 .github/scripts/parse-start-day.py --selftest
 
       # Point Gradle at the JDKs setup-java installed so the JVM 8 toolchain resolves
       # from disk. If this ever stops matching, the foojay resolver in settings.gradle.kts
@@ -69,8 +108,11 @@ jobs:
       # here since the start and had no test source set for four months; :phone gets both on day
       # one, so its orchestration cannot become hardware-verified-or-nothing the way #160 records
       # the watch's having done.
+      #
+      # JAVA_HOME_21_X64 joins the lookup here and only here: this is the one step that executes
+      # the task whose launcher is the Java 21 toolchain (#275).
       - name: Run phone unit tests
-        run: ./gradlew :phone:testDebugUnitTest -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
+        run: ./gradlew :phone:testDebugUnitTest -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64,JAVA_HOME_21_X64
 
       - name: Assemble phone debug APK
         run: ./gradlew :phone:assembleDebug -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
@@ -82,10 +124,25 @@ jobs:
       # here fails the run.
       #
       # Unsigned by design, and no secret reaches the runner. wear/build.gradle.kts
-      # creates the release signingConfig only when a keystore.properties exists; CI
-      # has none, so the bundle builds unsigned. Signing in CI stays deferred to #81.
+      # creates the release signingConfig only when a keystore.properties exists; this
+      # workflow writes none, so the bundle builds unsigned.
+      #
+      # That is deliberate and stays deliberate now that #81 has shipped: signing lives in
+      # release.yml, which runs on a tag and is the only workflow the upload keystore secrets
+      # are exposed to. Every push and PR runs R8 here without ever touching a credential.
       - name: Build wear release bundle (unsigned - this is where R8 runs)
         run: ./gradlew :wear:bundleRelease -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
+
+      # #211 AC 5. The phone joins the same guard for the same reason (#129): R8 runs on every push
+      # so a minification break cannot wait until somebody remembers to cut a release. Unsigned here
+      # exactly as :wear is - the shared racetimer.release-artifacts plugin creates the release
+      # signingConfig only when a keystore.properties exists, and this workflow writes none.
+      #
+      # It also exercises checkVersionCodeCollision, which every bundleRelease depends on: two app
+      # modules under one applicationId reusing a versionCode is a state Play refuses, and this is
+      # where it gets caught rather than at upload.
+      - name: Build phone release bundle (unsigned - R8 and the versionCode guard)
+        run: ./gradlew :phone:bundleRelease -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64
 
       - name: Upload test reports
         # Failures are exactly when the report is worth reading.

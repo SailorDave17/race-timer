@@ -9,13 +9,13 @@
 //   - a screen that stays on or runs bright during a race: #199 delivered the mechanism
 //     (`PhoneDisplay.kt`) but nothing calls it, because what to ask for is the officer's choice
 //     and #225 is the surface that asks
-//   - release signing, versioning and archiving (#211 hoists wear's out of `wear/build.gradle.kts`;
-//     until then this module has no release signingConfig and `versionCode` is not an upload
-//     candidate — epic decision D3 gives both form factors one monotonic counter, and allocating
-//     from it is that story's job)
+//     (release signing, versioning and archiving arrived in #211 — see the
+//     `racetimer.release-artifacts` plugin in buildSrc, shared with :wear)
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    // #211. Release signing, the #156 keystore guard and the #184 archive task, shared with :wear.
+    id("racetimer.release-artifacts")
 }
 
 android {
@@ -23,7 +23,10 @@ android {
     // it — see cairn `android-applicationid-vs-namespace`. `com.racetimer.wear` is the watch's and
     // nothing here may reference it (asserted by ModuleBoundaryTest).
     namespace = "com.racetimer.phone"
-    compileSdk = 35
+    // API 36 since #261. Play requires it of a PHONE artifact after 2026-08-31; the Wear
+    // carve-out that keeps :wear at 35 does not cover this module. AGP 8.9.1 is the documented
+    // minimum for API 36 (8.13.0 for 36.1), which #192 delivered — attempting this on 8.6.1 fails.
+    compileSdk = 36
 
     defaultConfig {
         // The SAME identity as :wear, on purpose: one Play listing carrying both form factors, which
@@ -34,13 +37,43 @@ android {
         // Epic #196 decision D4. Matches :wear and :shared-android, so the FGS and notification
         // behaviour matrix is one matrix rather than one per form factor.
         minSdk = 30
-        // API 35 for now, per epic decision D7: this module is scaffolded on the toolchain the repo
-        // already runs (AGP 8.6.1 / SDK 35) rather than waiting for #191's AGP 9 crossing. The
-        // Wear carve-out does NOT cover a phone artifact — Play requires API 36 for phone uploads
-        // after 2026-08-31 — so #192 gates the first upload (#214), not this scaffold.
-        targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // API 36 since #261. The scaffold shipped at 35 under epic decision D7, deliberately, on
+        // the toolchain the repo ran at the time; #192 delivered AGP 8.13 and this is the bump that
+        // D7 deferred. The Wear carve-out does NOT cover a phone artifact: Play requires API 36 for
+        // phone uploads after 2026-08-31, and since #211 a tag publishes this module, so a tag after
+        // that date would fail at the phone publish step rather than merely being unwise.
+        //
+        // :wear and :shared-android stay at 35 on purpose — moving them buys nothing and would push
+        // the hardware-verified cue path back through #201-class re-verification.
+        targetSdk = 36
+        // Epic #196 decision D3: ONE monotonic counter across both form factors, not one per
+        // module. :wear took 1 and burned it at the 2026-08-13 upload, so the next upload — this
+        // one, #214 — takes 2. Both modules ship under the same applicationId, so Play would reject
+        // a second artifact reusing 1; `checkVersionCodeCollision` in the root build enforces the
+        // invariant rather than leaving it to whoever reads this comment.
+        //
+        // This number is an ALLOCATION, not a derivation: if :wear ships an update before the phone
+        // does, it takes 3 and docs/releases.md records who took what.
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    buildTypes {
+        release {
+            // R8 on, matching :wear. AC 5 of #211 puts :phone:bundleRelease in CI so R8 breakage
+            // cannot hide — which only means anything if R8 actually runs. It is also what produces
+            // the mapping.txt the shared archive task asserts on: without minification there is no
+            // mapping, and the archive would refuse rather than store a bundle whose crashes could
+            // never be deobfuscated.
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            // signingConfig is wired by the racetimer.release-artifacts plugin, conditionally on a
+            // keystore.properties existing — deliberately not set here, so the two modules cannot
+            // drift on the one behaviour whose failure mode is a silently unsigned bundle.
+        }
     }
 
     compileOptions {
@@ -71,6 +104,21 @@ android {
     }
 }
 
+// #275. Robolectric refuses to build an SDK 36 sandbox on anything below Java 21
+// ("Android SDK 36 requires Java 21"), and targetSdk 36 is what these tests run against now that
+// the #261 pin is gone. Only the test LAUNCHER moves: compilation stays at the 1.8 target above,
+// :shared keeps its JVM 8 toolchain, and Gradle itself keeps running on 17 (AGP's floor). Declared
+// as a toolchain rather than inherited from JAVA_HOME so the suite fails the same way on every
+// machine instead of passing wherever someone happens to have 21 first on PATH.
+val javaToolchains = project.extensions.getByType<JavaToolchainService>()
+tasks.withType<Test>().configureEach {
+    javaLauncher.set(
+        javaToolchains.launcherFor {
+            languageVersion.set(JavaLanguageVersion.of(21))
+        }
+    )
+}
+
 dependencies {
     // The timer core, and the Android leaf managers that carry it onto a device. `:shared-android`
     // re-exports `:shared` via `api`, so the first line is redundant on the classpath and kept
@@ -78,6 +126,13 @@ dependencies {
     // somebody else's `api` breaks the day that somebody stops needing it.
     implementation(project(":shared"))
     implementation(project(":shared-android"))
+
+    // #219. The repo's first Google Play services dependency, for the pair's clock link. This module
+    // calls none of it directly — WearablePairLink in :shared-android does — and declares it anyway,
+    // because this artifact ships it: GMS in the release bundle is a fact about THIS build, and the
+    // build file is where the next Play-declaration re-check will look for it. A phone without Play
+    // services still gets the whole timer; the link reports itself unavailable and draws nothing.
+    implementation(libs.play.services.wearable)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.ApplicationInfo
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.os.IBinder
@@ -16,22 +17,32 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.racetimer.phone.ui.ConfirmEndRaceDialog
 import com.racetimer.phone.ui.CustomDurationScreen
 import com.racetimer.phone.ui.DEFAULT_CUSTOM_MINUTES
 import com.racetimer.phone.ui.DisplayChoiceScreen
+import com.racetimer.phone.ui.LeadInDurationScreen
+import com.racetimer.phone.ui.LeadInPickerScreen
 import com.racetimer.phone.ui.PhoneReadout
 import com.racetimer.phone.ui.PhoneTheme
 import com.racetimer.phone.ui.SequencePickerScreen
 import com.racetimer.phone.ui.TimerScreen
 import android.os.SystemClock
+import com.racetimer.android.WearablePairLink
 import com.racetimer.shared.BG_NORMAL_ARGB
 import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
+import com.racetimer.shared.PairStatus
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.formatCountdown
+import com.racetimer.shared.offersLeadIn
+import com.racetimer.shared.pairStatusLine
 import com.racetimer.shared.resumeOfferRemainingMs
+import com.racetimer.shared.withLeadIn
 import kotlinx.coroutines.delay
 
 /**
@@ -59,16 +70,32 @@ private const val UI_REFRESH_MS = 50L
  * deliberately — the watch's activity-side twin of that flag is a one-way latch whose own remedy
  * cannot clear it (#165), and the phone declines to inherit the pattern.
  *
- * What it deliberately does not do yet, with the story that brings it: count up after the gun
- * (#206). (Restore after a kill was listed here until #209 noticed the line had outlived #205,
- * which shipped it — `offerSavedRace` below is that work.)
+ * What it deliberately does not do yet, with the story that brings it: cue haptics (#208).
+ * (Restore after a kill was listed here until #209 noticed the line had outlived #205, which
+ * shipped it — `offerSavedRace` below is that work. Count-up after the gun was listed until #206,
+ * and the signal-box lead-in until #207 shipped it, which is the same lesson landing a third time:
+ * a line naming a *future* story number is correct when written and false the moment that story
+ * merges, and no grep aimed at the change will find it, because the change is not what it names.)
  *
- * The known gap that remains is **position**: which *screen* is showing is `remember`ed rather than
- * saved, so rotating mid-race returns to the picker. It belongs to a story of its own. Its other
- * half is closed — the idle-state **selection** used to reset with the rebind, and since #209 the
- * pick is written to prefs on every selection and re-applied from the launch plan on every bind, so
- * what comes back is what the officer chose rather than the default. The engine keeps running
- * through all of it regardless; it is in the service.
+ * **Position across a recreation was the gap, and #281 closed it — by not restoring a position at
+ * all.** Which screen is showing is still `remember`ed rather than saved; what changed is that the
+ * app no longer needs to remember it, because the *engine* already knows. A bind that lands on a
+ * RUNNING or COUNTING_UP race opens the timer screen from that state (see `RaceTimerApp`), so a
+ * rotation, a mid-race Back, or a system destroy-and-recreate all come back to the running race
+ * without a saved-state mechanism to get out of step with it. Deriving the screen from the race is
+ * the point: a persisted "was on the timer screen" flag could outlive the race it described.
+ *
+ * #281 measured what that gap actually cost, which was worse than losing your place: the recreated
+ * UI got **no route back** to the live race (`offerSavedRace` correctly declines to offer onto a
+ * non-IDLE engine), and the natural recovery — tapping the same sequence in the picker — ran
+ * `select` → `TimerEngine.load`, which sets IDLE unconditionally and killed the race outright.
+ * Three individually-correct pieces composing into a dead race. The selection half is guarded in
+ * `PhoneRaceRunner.select` and the destructive path now has to be confirmed.
+ *
+ * The idle-state **selection** half was closed earlier: since #209 the pick is written to prefs on
+ * every selection and re-applied from the launch plan on every bind, so what comes back is what the
+ * officer chose rather than the default. The engine keeps running through all of it regardless; it
+ * is in the service.
  */
 class MainActivity : ComponentActivity() {
 
@@ -87,6 +114,43 @@ class MainActivity : ComponentActivity() {
      */
     private val customMinutesState = mutableStateOf<Int?>(null)
 
+    /**
+     * Where the lead-in picker opens: the box alert last armed, read from persistence when the
+     * binding lands and updated on every arming (#207). Mirrors [customMinutesState] — a
+     * preference rather than part of any race, and the one lead-in value that is not derived from
+     * a sequence id.
+     */
+    private val lastBoxAlertState = mutableStateOf(DEFAULT_BOX_ALERT_SECONDS)
+
+    /**
+     * The pair's status row (#219), or null when there is nothing to draw — which is always, on a
+     * phone with no watch running the app, except on a debuggable build.
+     */
+    private val pairLineState = mutableStateOf<String?>(null)
+
+    private val pairListener: (PairStatus) -> Unit = { status ->
+        val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        pairLineState.value = pairStatusLine(status, peerNoun = "Watch", showAbsent = debuggable)
+    }
+
+    /**
+     * The officer's display answers, resolved from the **process-scoped** store (#281, #225).
+     *
+     * `by lazy` rather than a call inside the composition: `ViewModelProvider.get` is idempotent and
+     * would be harmless per recomposition, but the lifetime being talked about here is the point of
+     * the property, and resolving it once where it can be read is what makes that legible.
+     *
+     * [RaceTimerPhoneApplication] owns the store, so this instance is shared by every activity this
+     * process creates and is destroyed only with the process. That is what #225 always said the
+     * retention was; until #281 it was an activity-scoped `viewModel()` and a destroy-and-recreate
+     * silently reset it.
+     */
+    private val processDisplayChoice: DisplayChoiceViewModel by lazy {
+        ViewModelProvider(applicationContext as RaceTimerPhoneApplication)[
+            DisplayChoiceViewModel::class.java,
+        ]
+    }
+
     private var boundService: PhoneTimerService? = null
 
     private var serviceBound = false
@@ -95,6 +159,9 @@ class MainActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val lb = binder as? PhoneTimerService.LocalBinder ?: return
             boundService = lb.service
+            // Read whether or not a race survived: the picker opens on this, and it is a
+            // preference rather than part of any race (#207).
+            lastBoxAlertState.value = lb.service.lastBoxAlertSeconds()
             offerSavedRace(lb.service)
             runnerState.value = lb.service.runner
         }
@@ -144,11 +211,21 @@ class MainActivity : ComponentActivity() {
                 RaceTimerApp(
                     applyDisplay = { choice ->
                         window.applyDisplayProperties(choice.keepScreenOn, choice.fullBrightness)
+                        // Recorded here rather than in `RaceTimerApp` because this is the moment
+                        // the panel actually changes, and the *applied* pair is what a µAh figure
+                        // has to be attributed to (#216 AC 2, and AC 4's bright-versus-dim arms).
+                        // `RaceTimerApp` stays the composition-only test seam it was.
+                        (application as? RaceTimerPhoneApplication)?.journal?.record(
+                            "display",
+                            "screenOn" to choice.keepScreenOn,
+                            "bright" to choice.fullBrightness,
+                        )
                     },
                     runner = runnerState.value,
                     onStartRace = { PhoneTimerService.start(this) },
                     onStopRace = { PhoneTimerService.stop(this) },
                     onSyncRace = { PhoneTimerService.sync(this) },
+                    onEndRace = { PhoneTimerService.endRace(this) },
                     resumeOffer = resumeOfferState.value,
                     onStartOverRace = { PhoneTimerService.start(this, freshStart = true) },
                     collectRestoreNotice = { boundService?.consumeRestoreNotice() },
@@ -157,6 +234,26 @@ class MainActivity : ComponentActivity() {
                     // officer left off (#209).
                     onSequencePicked = { boundService?.savePickedSequence(it.id) },
                     initialCustomMinutes = customMinutesState.value,
+                    // A lead-in start is always a fresh start (#207, the watch's rule): the picker
+                    // is a deliberate two-tap arming of a race that does not exist yet, so it must
+                    // not fall into the restore path and come back with somebody else's clock —
+                    // Resume is the control for that, and it is on the same screen.
+                    onStartLeadIn = { PhoneTimerService.start(this, freshStart = true) },
+                    initialBoxAlertSeconds = lastBoxAlertState.value,
+                    onBoxAlertChosen = { seconds ->
+                        lastBoxAlertState.value = seconds
+                        boundService?.saveLastBoxAlertSeconds(seconds)
+                    },
+                    // Resolved from the *Application's* store, not this activity's (#281). #225
+                    // ratified the officer's display answers as lasting for the life of the
+                    // process; the parameter's `viewModel()` default gives the life of the
+                    // **activity**, which is a different thing the moment the system destroys and
+                    // recreates one — and #281 measured "Screen for today" being re-asked over a
+                    // race still running in a live process. This one line is the whole fix for
+                    // that half, and it stores nothing: the state still dies with the process,
+                    // because that is when this store dies.
+                    displayChoice = processDisplayChoice,
+                    pairStatus = pairLineState.value,
                 )
             }
         }
@@ -172,9 +269,19 @@ class MainActivity : ComponentActivity() {
             serviceConnection,
             Context.BIND_AUTO_CREATE,
         )
+        // #219. The link is the process's and answers the watch whatever is on screen; being on
+        // screen is what makes it ask, so the row it feeds is measured while it can be read.
+        WearablePairLink.get(this).apply {
+            addStatusListener(pairListener)
+            setActive(true)
+        }
     }
 
     override fun onStop() {
+        WearablePairLink.get(this).apply {
+            setActive(false)
+            removeStatusListener(pairListener)
+        }
         if (serviceBound) {
             unbindService(serviceConnection)
             serviceBound = false
@@ -196,6 +303,15 @@ class MainActivity : ComponentActivity() {
  * binding lands, which the UI guards). [onStartRace]/[onStopRace] default to driving [runner]
  * directly — production passes the service intents instead, which is what makes Start survive the
  * screen going off.
+ *
+ * [onStartLeadIn] is the start a lead-in arming reaches (#207) — the armed sequence is already
+ * selected in [runner] by the time it fires, so it needs no argument; production passes the
+ * fresh-start service intent. [initialBoxAlertSeconds] is where the alert picker opens and
+ * [onBoxAlertChosen] is how a chosen alert reaches persistence, the pair [initialCustomMinutes] and
+ * [onSequencePicked] are for Custom.
+ *
+ * [pairStatus] is the pair link's row for the pre-start screen (#219), already decided — whether to
+ * draw it at all is `pairStatusLine`'s rule in `:shared`, not this composable's.
  */
 @Composable
 internal fun RaceTimerApp(
@@ -204,51 +320,91 @@ internal fun RaceTimerApp(
     onStartRace: (() -> Unit)? = null,
     onStopRace: (() -> Unit)? = null,
     onSyncRace: (() -> Unit)? = null,
+    onEndRace: (() -> Unit)? = null,
     resumeOffer: String? = null,
     onStartOverRace: (() -> Unit)? = null,
     collectRestoreNotice: (() -> RestoreOutcome?)? = null,
     onSequencePicked: ((RaceSequence) -> Unit)? = null,
     initialCustomMinutes: Int? = null,
+    onStartLeadIn: (() -> Unit)? = null,
+    initialBoxAlertSeconds: Int = DEFAULT_BOX_ALERT_SECONDS,
+    onBoxAlertChosen: ((Int) -> Unit)? = null,
     displayChoice: DisplayChoiceViewModel = viewModel(),
+    pairStatus: String? = null,
 ) {
     var onTimerScreen by remember { mutableStateOf(false) }
     var onCustomScreen by remember { mutableStateOf(false) }
+    // The two lead-in screens sit *over* the timer screen rather than replacing it: `onTimerScreen`
+    // stays true underneath, so backing out of either lands on the pre-start screen the officer
+    // left, with nothing to unwind (#207).
+    var onLeadInScreen by remember { mutableStateOf(false) }
+    var onLeadInCustomScreen by remember { mutableStateOf(false) }
     var readout by remember(runner) {
         mutableStateOf(runner?.readout() ?: PhoneReadout.of(TimerState.IDLE, 0L, 0L))
     }
     var state by remember(runner) {
         mutableStateOf(runner?.engine?.currentState ?: TimerState.IDLE)
     }
+    var inLeadIn by remember(runner) { mutableStateOf(runner?.inLeadIn == true) }
+    // The alert the picker opens on. Seeded from persistence and moved by every arming, so a second
+    // lead-in race in one sitting opens on the first one's value before the write-through lands.
+    var lastBoxAlertSeconds by remember(initialBoxAlertSeconds) { mutableStateOf(initialBoxAlertSeconds) }
 
     val startRace = onStartRace ?: { runner?.start() }
     val stopRace = onStopRace ?: { runner?.stop() }
     val syncRace = onSyncRace ?: { runner?.sync() }
+    val endRaceNow = onEndRace ?: { runner?.endRace() }
     val startOverRace = onStartOverRace ?: { runner?.start() }
+    val startLeadIn = onStartLeadIn ?: { runner?.start() }
 
     // Consumed once either offer control is tapped (or Back declines it); the snapshot on disk
     // outlives a decline, so the next launch offers again — discarding is Start over's job alone.
     var offerConsumed by remember { mutableStateOf(false) }
     var restoreNotice by remember { mutableStateOf<String?>(null) }
 
+    // The sequence a selection chose while a race was still running, held until the officer says
+    // whether to end that race (#281 AC 4). Null whenever there is nothing to confirm — and it is
+    // the *pending* selection rather than a bare flag, because the question names the sequence and
+    // answering yes has to apply the very thing that was refused.
+    var pendingSequence by remember { mutableStateOf<RaceSequence?>(null) }
+
     fun refresh() {
         runner ?: return
         readout = runner.readout()
         state = runner.engine.currentState
+        inLeadIn = runner.inLeadIn
     }
 
-    // Keyed on the choice as well as on having been answered, so a later surface that lets the
-    // officer change their mind mid-day applies without anyone remembering to add a call here.
-    // Nothing is applied before the surface is answered: until then the phone behaves as an
-    // unmodified one, which is also what makes the choice screen itself an honest preview.
-    LaunchedEffect(displayChoice.answered, displayChoice.choice) {
-        if (displayChoice.answered) {
-            applyDisplay(displayChoice.choice)
+    // A bind that lands on a race already running puts the officer back on it (#281 AC 1, AC 5).
+    //
+    // The engine outlives the activity — it is in the service — so after a rotation, a mid-race
+    // Back, or a system destroy-and-recreate, the composition is new while the race is not. Before
+    // #281 that composition opened on the picker, which is a screen for choosing a race that is
+    // already running, and the obvious tap there destroyed it.
+    //
+    // **Derived from the engine, not restored from saved state.** There is deliberately no
+    // persisted "was on the timer screen" flag: such a flag can outlive the race it describes,
+    // and would then send the officer to a timer screen with nothing behind it. The engine's own
+    // state cannot disagree with the engine.
+    //
+    // Keyed on `runner` because that is when the answer can first be known: it is null until the
+    // service binding lands, and re-keying on it also re-runs this after `onStop`/`onStart` drops
+    // and restores the binding. `raceInProgress` is the runner's own rule (RUNNING or COUNTING_UP)
+    // rather than a second copy of it here.
+    LaunchedEffect(runner) {
+        if (runner != null && runner.raceInProgress) {
+            readout = runner.readout()
+            state = runner.engine.currentState
+            onTimerScreen = true
         }
     }
 
     // A saved race walks the officer straight to it: the offer lands on the timer screen, not
     // behind a picker tap they have no reason to make (#205). The activity already selected the
     // saved sequence in the runner before handing the offer over.
+    //
+    // Cannot collide with the reattach above: `offerSavedRace` returns early on a non-IDLE engine,
+    // so a live race produces no offer at all, and an offer implies the engine was idle.
     LaunchedEffect(resumeOffer, runner) {
         if (resumeOffer != null && !offerConsumed && runner != null) {
             readout = runner.readout()
@@ -265,6 +421,10 @@ internal fun RaceTimerApp(
         while (onTimerScreen && runner != null) {
             readout = runner.tick()
             state = runner.engine.currentState
+            // Read on every pass rather than set at Start: the lead-in ends on the tick the
+            // sequence's own first signal fires, and the Sync control has to come back on that
+            // same tick (#207).
+            inLeadIn = runner.inLeadIn
             collectRestoreNotice?.invoke()?.let { outcome ->
                 restoreNotice = when (outcome) {
                     RestoreOutcome.EXACT -> null
@@ -279,32 +439,147 @@ internal fun RaceTimerApp(
         }
     }
 
-    val running = state == TimerState.RUNNING
+    // A race the officer is actively running — the countdown, and (#206) the count-up past the gun,
+    // which is just as much a race in progress even though the clock changed direction. RACE_ENDED
+    // is deliberately not here: a frozen summary is finished, and Back dismissing it is right.
+    val raceActive = state == TimerState.RUNNING || state == TimerState.COUNTING_UP
+
+    // #279. Where the race is reaches the *app* here and stops here: what crosses into the display
+    // mechanism is still two booleans, computed by `displayChoiceInEffect` and asserted by
+    // `ModuleBoundaryTest` to be all that path can see.
+    val countingUp = state == TimerState.COUNTING_UP
+
+    // The one moment worth interrupting an officer for (#279). The whole rule, and the argument for
+    // each of its five clauses, is `countUpBrightnessPromptShows` — a pure function since #281,
+    // which is where it is proven.
+    //
+    // It moved out of here because #281 took away the only arrangement that could exercise its
+    // `onTimerScreen` clause through the UI. That clause says **silence is only an answer if the
+    // question was askable**; #279 justified it by an activity recreation mid-count-up landing on
+    // the picker, and the effect above is precisely what stops that happening. Left inline, the
+    // clause would have kept a real job (the frames before the service binding lands) and no way to
+    // fail — so it was given a subject a test can reach instead of being deleted on the strength of
+    // a green suite.
+    val brightnessPrompt = countUpBrightnessPromptShows(
+        answered = displayChoice.answered,
+        onTimerScreen = onTimerScreen,
+        countingUp = countingUp,
+        fullBrightnessChosen = displayChoice.choice.fullBrightness,
+        countUpKeepsBrightness = displayChoice.countUpKeepsBrightness,
+    )
+
+    // Silence dims (#279). Keyed on the prompt, so any change that takes the question off screen —
+    // an answer, End Race, leaving the timer screen — cancels it, and a timer that outlived the
+    // question would dim a panel nobody was asked about.
+    //
+    // Backgrounding cancels it too, and **not** because the composition goes: a `setContent`
+    // composition survives `onStop`. It is `onStop` clearing `runnerState` that re-keys `state` to
+    // IDLE and drops `countingUp`. That is a real dependency on another lifecycle callback rather
+    // than a property of Compose, so a change that keeps the binding across `onStop` — plausible
+    // for #216's all-day run — would leave this running unattended. Stated because the earlier
+    // wording here credited the composition and would have made that change look safe.
+    LaunchedEffect(brightnessPrompt) {
+        if (brightnessPrompt) {
+            delay(COUNT_UP_PROMPT_DWELL_MS)
+            displayChoice.answerCountUpBrightness(keepBright = false)
+        }
+    }
+
+    val displayInEffect = displayChoiceInEffect(
+        chosen = displayChoice.choice,
+        countingUp = countingUp,
+        countUpKeepsBrightness = displayChoice.countUpKeepsBrightness,
+    )
+
+    // Keyed on what is *in effect* rather than on what was chosen, so the count-up rule above
+    // applies through the same one call site — the seam #225 left open for exactly this ("a later
+    // surface that lets the officer change their mind mid-day applies without anyone remembering to
+    // add a call here"). Nothing is applied before the launch surface is answered: until then the
+    // phone behaves as an unmodified one, which is also what makes the choice screen an honest
+    // preview. A pass where the effective value has not changed re-applies nothing, which is what
+    // keeps "the display was decided once" true of a race nobody was asked about.
+    LaunchedEffect(displayChoice.answered, displayInEffect) {
+        if (displayChoice.answered) {
+            applyDisplay(displayInEffect)
+        }
+    }
 
     /**
-     * Select [sequence], remember it, and open the timer screen — the one path both entries take.
+     * Take [sequence] and open the timer screen — the one path both entries take, once the running
+     * race (if any) has been dealt with.
      *
-     * Guarded on the binding having landed: selecting is runner state, and navigating to a timer
-     * screen with nothing behind it would show a dead readout. Remembering happens here rather than
-     * at each call site so a later third way of choosing a race cannot forget to (#88's shape: the
-     * watch's `applySelection` centralises it for exactly this reason).
+     * Remembering happens here rather than at each call site so a later third way of choosing a race
+     * cannot forget to (#88's shape: the watch's `applySelection` centralises it for exactly this
+     * reason).
      */
-    fun selectAndOpen(sequence: RaceSequence) {
-        runner ?: return
-        runner.select(sequence)
+    fun openWith(sequence: RaceSequence) {
         onSequencePicked?.invoke(sequence)
         refresh()
         onTimerScreen = true
+    }
+
+    /**
+     * Select [sequence] unless that would discard a race in progress (#281 AC 4).
+     *
+     * Guarded on the binding having landed: selecting is runner state, and navigating to a timer
+     * screen with nothing behind it would show a dead readout.
+     *
+     * `select` returning **false** means the engine is RUNNING or COUNTING_UP and nothing moved —
+     * so the selection is parked and the officer is asked, rather than losing a race to a tap. That
+     * is the state #281 measured, where this function ran straight through `TimerEngine.load` and
+     * killed a live race with no warning and no undo.
+     */
+    fun selectAndOpen(sequence: RaceSequence) {
+        runner ?: return
+        if (!runner.select(sequence)) {
+            pendingSequence = sequence
+            return
+        }
+        openWith(sequence)
+    }
+
+    /**
+     * Arm the selected sequence with a [boxAlertSeconds] run-up and start it (#207).
+     *
+     * The armed variant goes into the runner's selection so the readout previews the race being
+     * started (4:10 on a 70 s lead) rather than the plain sequence's 3:00, and so the service's
+     * Start finds it as the requested sequence. The runner drops it back to the base the moment
+     * that race is over — a lead-in is a per-race choice, never a sticky one.
+     *
+     * `withLeadIn` is null for a sequence that cannot carry a lead, which the control's own
+     * reachability rules out (`leadInOffered` reads the same `offersLeadIn`); `select` is false
+     * only over a live race, which the pre-start screen this is reached from rules out. Both are
+     * refusals rather than guesses if a future route reaches here from somewhere else.
+     */
+    fun startWithLeadIn(boxAlertSeconds: Int) {
+        runner ?: return
+        val armed = withLeadIn(runner.selected, boxAlertSeconds) ?: return
+        if (!runner.select(armed)) return
+        lastBoxAlertSeconds = boxAlertSeconds
+        onBoxAlertChosen?.invoke(boxAlertSeconds)
+        // The offer, if one was declined earlier this sitting, is spent: a fresh start writes its
+        // own snapshot over the saved race, exactly as Start over does.
+        offerConsumed = true
+        startLeadIn()
+        refresh()
     }
 
     // Backing out of the stepper is a plain cancel: nothing was selected on the way in, so there is
     // no race state to unwind and the picker is exactly where the officer was.
     BackHandler(enabled = onCustomScreen) { onCustomScreen = false }
 
+    // The same plain cancel for the two lead-in screens: nothing is armed until a row or Set is
+    // tapped, so Back lands on the pre-start screen exactly as it was. The timer screen's handler
+    // below is disabled while either is up rather than relying on registration order, because
+    // `onTimerScreen` stays true underneath them and an enabled handler pair would otherwise be
+    // resolved by which composed last.
+    BackHandler(enabled = onLeadInCustomScreen) { onLeadInCustomScreen = false }
+    BackHandler(enabled = onLeadInScreen && !onLeadInCustomScreen) { onLeadInScreen = false }
+
     // Back returns to the picker, but never mid-race: the gesture is one an officer makes without
-    // looking, and it must not be able to end a start sequence. While running it falls through to
-    // the system, which backgrounds the app with the race still in the service.
-    BackHandler(enabled = onTimerScreen && !running) {
+    // looking, and it must not be able to end a start sequence. While a race is on it falls through
+    // to the system, which backgrounds the app with the race still in the service.
+    BackHandler(enabled = onTimerScreen && !raceActive && !onLeadInScreen && !onLeadInCustomScreen) {
         // Backing out of the offer declines it for this sitting without discarding the snapshot;
         // stopping an idle engine is a no-op beyond returning the screen to the top.
         offerConsumed = true
@@ -324,11 +599,38 @@ internal fun RaceTimerApp(
             onFullBrightnessChange = displayChoice::setFullBrightness,
             onContinue = displayChoice::confirm,
         )
+    } else if (onLeadInCustomScreen) {
+        LeadInDurationScreen(
+            initialSeconds = lastBoxAlertSeconds,
+            onConfirm = { seconds ->
+                onLeadInCustomScreen = false
+                onLeadInScreen = false
+                startWithLeadIn(seconds)
+            },
+        )
+    } else if (onLeadInScreen) {
+        LeadInPickerScreen(
+            lastUsedSeconds = lastBoxAlertSeconds,
+            // Selecting an alert *starts the race* — the tapped row was the confirm, and its label
+            // carried the value being committed to. The picker comes down first so the countdown
+            // the race is running is what appears, rather than a picker for a race under way.
+            onAlertSelected = { seconds ->
+                onLeadInScreen = false
+                startWithLeadIn(seconds)
+            },
+            onCustomSelected = { onLeadInCustomScreen = true },
+        )
     } else if (onTimerScreen) {
         TimerScreen(
             readout = readout,
             sequenceName = runner?.selected?.name ?: "",
-            running = running,
+            state = state,
+            // The rule is shared's (`offersLeadIn` — race-manager modes only); this only asks it,
+            // and withholds the control until the binding lands for the picker entries' own
+            // reason: a control that cannot arm anything is a dead one (#207).
+            leadInOffered = runner?.selected?.let { offersLeadIn(it) } == true,
+            inLeadIn = inLeadIn,
+            onLeadIn = { onLeadInScreen = true },
             onStart = {
                 startRace()
                 refresh()
@@ -344,8 +646,16 @@ internal fun RaceTimerApp(
                 syncRace()
                 refresh()
             },
+            onEndRace = {
+                endRaceNow()
+                refresh()
+            },
             notice = restoreNotice,
+            brightnessPrompt = brightnessPrompt,
+            onKeepBright = { displayChoice.answerCountUpBrightness(keepBright = true) },
+            onDimCountUp = { displayChoice.answerCountUpBrightness(keepBright = false) },
             resumeOffer = if (offerConsumed) null else resumeOffer,
+            pairStatus = pairStatus,
             onResume = {
                 offerConsumed = true
                 startRace()
@@ -378,6 +688,38 @@ internal fun RaceTimerApp(
             // Withheld until the binding lands, for the picker entries' own reason: a stepper that
             // cannot select anything is the dead menu entry #209 exists to avoid.
             onCustomSelected = if (runner != null) ({ onCustomScreen = true }) else null,
+        )
+    }
+
+    // #281 AC 4. Outside the screen chain on purpose: it is a question *about* a selection rather
+    // than a screen the officer navigated to, and the branch that raised it must stay composed
+    // underneath — cancelling has to put them back exactly where they were.
+    //
+    // Reachable only from the picker or the Custom stepper, because those are the only two branches
+    // that call `selectAndOpen`; the timer screen has no control that selects a sequence. So this
+    // cannot cover a running readout, which is the concern behind the watch's own
+    // "blocking is pre-start only" rule (`docs/message-surface.md`, a Wear document).
+    //
+    // After AC 1 this should never render in the shipped app: a live race opens the timer screen and
+    // Back is disabled while it runs, so the picker is not reachable with a race in progress. It is
+    // kept because the alternative leaves the invariant in the navigation alone — and navigation
+    // held in a `remember` is what produced #281.
+    pendingSequence?.let { sequence ->
+        ConfirmEndRaceDialog(
+            sequenceName = sequence.name,
+            onConfirm = {
+                pendingSequence = null
+                // The one sanctioned way past the refusal, named so the destructive path is
+                // greppable. `runner` cannot be null here: `selectAndOpen` returns early on a null
+                // runner and is the only thing that sets `pendingSequence`.
+                runner?.endRaceAndSelect(sequence)
+                openWith(sequence)
+            },
+            onDismiss = {
+                // The race is untouched — `select` already refused, so there is nothing to undo.
+                // The selection is simply dropped and the officer stays where they were.
+                pendingSequence = null
+            },
         )
     }
 }

@@ -15,6 +15,13 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- #208: each cue's voice is felt in the hand holding the phone as well as heard. The
+         waveforms are the shared HapticManager's, the same ones the watch plays; the phone adds
+         this permission and the usage it declares them with (PhoneHapticUsagePolicy, measured on
+         the owner's phone by #210) and nothing else. This row makes the
+         two apps' permission sets identical - docs/privacy-policy.md's table says so. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <application
         android:name=".RaceTimerPhoneApplication"
         android:allowBackup="false"

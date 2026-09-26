@@ -1,4 +1,11 @@
+// #211. Release signing, the #156 keystore guard and the #184 archive task live in an included
+// build so :wear and :phone share one copy instead of forking a second. It is `build-logic` rather
+// than `buildSrc` deliberately: buildSrc's dependencies join the root buildscript classpath, and AGP
+// arriving there with an unknown version makes every versioned plugin alias in this repo
+// unresolvable. Measured on this change.
 pluginManagement {
+    includeBuild("build-logic")
+
     repositories {
         google {
             content {

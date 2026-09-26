@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- allowBackup off: nothing here is worth restoring, and a restore would bring back an old log. -->
+    <application
+        android:allowBackup="false"
+        android:label="PairSkew" />
+
+</manifest>
