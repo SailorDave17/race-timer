@@ -10,7 +10,8 @@
 //
 //     :shared          pure JVM, no Android types at all, all tests run on the JVM
 //        ^
-//     :shared-android  Android types, no app identity, no UI, no service
+//     :shared-android  Android types, no app identity, no UI, no service (and, since #219, the
+//                      one Play services dependency: the pair link's Data Layer glue)
 //        ^                    ^
 //     :wear                :phone        <- never reference each other
 //
@@ -53,4 +54,8 @@ dependencies {
     // takes a CueStream, HapticManager.play takes a SignalPattern -- so a consumer cannot call them
     // without those types on its own compile classpath.
     api(project(":shared"))
+
+    // #219. The pair's Data Layer glue (WearablePairLink) lives here, once, for both apps. Not `api`:
+    // nothing it exposes is a Play services type, so a consumer needs none of them to call it.
+    implementation(libs.play.services.wearable)
 }

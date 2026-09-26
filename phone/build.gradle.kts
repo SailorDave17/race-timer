@@ -127,6 +127,13 @@ dependencies {
     implementation(project(":shared"))
     implementation(project(":shared-android"))
 
+    // #219. The repo's first Google Play services dependency, for the pair's clock link. This module
+    // calls none of it directly — WearablePairLink in :shared-android does — and declares it anyway,
+    // because this artifact ships it: GMS in the release bundle is a fact about THIS build, and the
+    // build file is where the next Play-declaration re-check will look for it. A phone without Play
+    // services still gets the whole timer; the link reports itself unavailable and draws nothing.
+    implementation(libs.play.services.wearable)
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
