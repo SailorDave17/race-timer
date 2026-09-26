@@ -306,6 +306,38 @@ class MessageContrastTest {
         )
     }
 
+    // --- The time of day at the rim (#303) -------------------------------------------------------
+
+    /** The clock's colour as it lands on [bg], with its own alpha composited first. */
+    private fun timeOfDayContrast(clockArgb: Long, bg: Long): Double =
+        contrastRatio(compositeOver(clockArgb, bg), bg)
+
+    @Test fun `the time of day is legible on every background it can render on`() {
+        // Drawn straight onto the background, with no scrim, so rule 1 holds it to every background
+        // it can meet. `showsTimeOfDay` takes no state, so that is every state, and the rendered set
+        // brings in the final-ten flash trough.
+        for (bg in renderedBackgroundsWhen { true }) {
+            val ratio = timeOfDayContrast(TIME_OF_DAY_TEXT_ARGB, bg)
+            assertTrue(
+                "time of day on background ${bg.toString(16)} is %.2f : 1, below the %.1f : 1 bar"
+                    .format(ratio, WCAG_NORMAL_TEXT_MIN),
+                ratio >= WCAG_NORMAL_TEXT_MIN,
+            )
+        }
+    }
+
+    @Test fun `the time of day guard measures the clock after its alpha`() {
+        // Negative control. [contrastRatio] ignores alpha, so a faint clock measured straight would
+        // read as opaque white and pass. Composited first, the same faint clock fails on navy, which
+        // is what makes the guard above able to fail on a translucent value.
+        val faint = 0x4DFFFFFFL
+        assertTrue(contrastRatio(faint, BG_NORMAL_ARGB) >= WCAG_NORMAL_TEXT_MIN)
+        assertFalse(
+            "a 30 % clock must fail once composited, or the guard cannot see alpha",
+            timeOfDayContrast(faint, BG_NORMAL_ARGB) >= WCAG_NORMAL_TEXT_MIN,
+        )
+    }
+
     @Test fun `darkening the amber took the digits from barely over the bar to well clear of it`() {
         // #277's recorded figure, asserted so it cannot age in the KDoc or the doc. The old value
         // is asserted too: it is the evidence that the retune moved the right way, and it matches

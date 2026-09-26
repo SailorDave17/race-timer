@@ -322,6 +322,45 @@ something it was not built from: it predicts the button squeeze the watch drew, 
 81 px pills. The notice covers nothing and clears the bezel, and that is all #96 checked. #301 owns
 what to do about it.
 
+## The time of day at the rim (#303)
+
+Not a message and not a tier, but it lives in the band the tiers grow into, so its rules are here.
+Wear OS draws no clock over an app, so until #303 nothing on the timer showed the time of day.
+
+| | |
+|---|---|
+| Surface | Wear OS's curved `TimeText` at the top rim, in the band above the sequence name. At the rim it cannot be mistaken for the countdown |
+| Format | Hours and minutes, no seconds, following the watch's 12/24-hour setting: `HH:mm` in 24-hour, `h:mm` with no AM/PM in 12-hour. That is `TimeText`'s own default time source |
+| Type | The theme's `caption1`, 12 sp, and `TimeText`'s 2 dp padding. Both read out of Wear Compose Material 1.3.0's compiled classes, since no sources jar is cached |
+| Colour | `TIME_OF_DAY_TEXT_ARGB`, opaque white, passed in rather than inherited. Drawn straight onto the background, so rule 1 applies: `MessageContrastTest` asserts it on every background it can render on, the flash trough included, after compositing its alpha |
+| States | Every timer state |
+| Gives way to | **Every Tier 3 line, and a Tier 2 panel.** The column is vertically centred, so either one grows it up into this band and the sequence name moves with it. Rule 6, one message at a time: the clock hides while the message is up and returns when it clears. #303 named Tier 3 only; Tier 2 was added when the clock was seen touching the name under the panel |
+
+The rule is `showsTimeOfDay` in `shared/TimeOfDay.kt`, and `TimeOfDayTest` asserts it by driving
+`startNotice` and `armedNotice`, so a notice the catalogue gains later is checked whichever tier it
+lands on. Hiding the clock in the final minute was rejected, because it would vanish exactly when
+someone glances for it. Showing it pre-start only was rejected, because a count-up would then have
+no clock (owner decisions on #303).
+
+### Where it fits, and where it does not yet
+
+*Measured on the Wear emulator*, with the density changed and no `wm size` override, so the mask is a
+true circle. The rows are read off `screencap` against that circle. These are not SM-R925U frames:
+the watch captures are still owed on #303.
+
+| Screen | Clock clears the circle by | Clock to sequence name |
+|---|---|---|
+| 450 px at density 340 (the SM-R925U's metrics): pre-start | 12.7 px | 29 px |
+| the same: running, and the final-ten flash | 12.6–12.7 px | 16 px |
+| the same: count-up / race ended | 12.7 px | 38 / 39 px |
+| 450 px at density 375 (192 dp, the smallest round screen): pre-start | 13.6 px | 14 px |
+| the same: running | 13.6 px | **0 px, touching** |
+
+The clock is an overlay, so at one density it draws on the same rows in every state; only the name
+moves. The running screen on the smallest watch is the one place the two meet: the Sync and Stop
+row makes that column taller. It is recorded here rather than fixed, because fitting the running
+screen at the smallest size is #312's (owner decision on #303).
+
 ## Rules any new message must follow
 
 1. **Scrim or nothing.** Text drawn directly on the background is only safe if it has been checked
@@ -334,7 +373,8 @@ what to do about it.
    border. Red text would collide with `BG_FINAL_TEN`.
 5. **Say the consequence, not the cause.** "The gun will be silent" beats "AudioTrack init failed".
 6. **One message at a time.** `uiMessage` is a single nullable — a second message replaces the first.
-   That is correct; two stacked banners on a 45 mm screen is worse than losing one.
+   That is correct; two stacked banners on a 45 mm screen is worse than losing one. The time of
+   day at the rim gives way to a Tier 3 line on the same rule (#303).
 7. **Budget against the tier, not against the number.** 60 characters is the shared ceiling and it
    is two lines on Tier 1 and three on Tier 3 — see [the copy budget](#the-copy-budget-and-which-surface-it-was-derived-for).
    Add the string to `StartPreconditionsTest` and let it derive the surface from the tier the rule
@@ -492,9 +532,11 @@ call; what has not been demonstrated is the tail-write site setting the notice.
 
 ---
 
-Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144, #277.
+Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144, #277,
+#303.
 Owner: SailorDave17.
-Last reviewed: 2026-09-25 (#277 darkened the one-minute amber to `#553000`. The state table, the
+Last reviewed: 2026-09-26 (#303 added the time of day at the rim, which gives way to Tier 3 and
+Tier 2, and rule 6 now names it. Before that, 2026-09-25: #277 darkened the one-minute amber to `#553000`. The state table, the
 Tier 2 worst case and border figure, and the old-amber labels on the defect history were updated to
 match. Before that, 2026-08-13: #231 — the copy budget gained the surface it was derived for. The
 ~60-character rule was Tier 1's arithmetic applied to all three surfaces; the per-surface figures now

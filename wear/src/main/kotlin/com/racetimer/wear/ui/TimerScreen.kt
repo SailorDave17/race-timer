@@ -40,6 +40,8 @@ import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import androidx.wear.compose.material.TimeText
+import androidx.wear.compose.material.TimeTextDefaults
 import com.racetimer.shared.BANNER_MAX_WIDTH_FRACTION
 import com.racetimer.shared.BANNER_TEXT_SP
 import com.racetimer.shared.BANNER_TOP_FRACTION
@@ -61,12 +63,14 @@ import com.racetimer.shared.TIER2_SCRIM_ARGB
 import com.racetimer.shared.TIER2_TEXT_ARGB
 import com.racetimer.shared.TIER3_SCRIM_ARGB
 import com.racetimer.shared.TIER3_TEXT_ARGB
+import com.racetimer.shared.TIME_OF_DAY_TEXT_ARGB
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.backgroundArgbFor
 import com.racetimer.shared.bannerFitsRoundScreen
 import com.racetimer.shared.formatCountdown
 import com.racetimer.shared.isFinalTenFlash
 import com.racetimer.shared.formatElapsed
+import com.racetimer.shared.showsTimeOfDay
 import com.racetimer.shared.NEUTRAL_BUTTON_ARGB
 import com.racetimer.shared.ON_ACCENT_ARGB
 import com.racetimer.shared.PRIMARY_ARGB
@@ -488,6 +492,19 @@ fun TimerScreen(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = configuration.screenHeightDp.dp * PAIR_ROW_TOP_FRACTION),
+            )
+        }
+
+        // The time of day at the top rim (#303), in the band above the sequence name. Wear OS's own
+        // curved clock: HH:MM with no seconds, following the watch's 12/24-hour setting, which is
+        // `TimeText`'s default time source. It gives way to every Tier 3 line and to a Tier 2
+        // panel, because either one grows the column above up into this band. The rule is
+        // `showsTimeOfDay` in `shared/`, where `TimeOfDayTest` asserts it. The colour is passed in
+        // rather than inherited, because it is drawn with no scrim and `MessageContrastTest` holds
+        // that constant to every background.
+        if (showsTimeOfDay(showResyncPrompt, discardWarning != null, startNotice)) {
+            TimeText(
+                timeTextStyle = TimeTextDefaults.timeTextStyle(color = Color(TIME_OF_DAY_TEXT_ARGB)),
             )
         }
 

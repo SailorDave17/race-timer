@@ -135,6 +135,23 @@ fun renderedBackgroundsFor(stateBackgroundArgb: Long): List<Long> =
  */
 const val COUNTDOWN_DIGIT_ARGB = 0xFFFFFFFFL
 
+// --- The time of day --------------------------------------------------------
+
+/**
+ * The time of day at the top rim (#303), drawn straight onto the state background with no scrim.
+ *
+ * White is what Wear OS's `TimeText` draws by default. Its style leaves the colour unspecified,
+ * and Wear Compose Material 1.3 then falls back to `LocalContentColor`, whose default is white, at
+ * the current content alpha. It is set explicitly here and passed in, rather than inherited, for
+ * the reason #231 made `caption2`'s size explicit: a library default can move with nothing on this
+ * screen noticing.
+ *
+ * It is on screen in every timer state, so it meets every background, the final-ten flash trough
+ * included. `MessageContrastTest` asserts it against all of them, **after compositing its alpha**:
+ * [contrastRatio] ignores alpha, so a translucent value measured straight would pass as opaque.
+ */
+const val TIME_OF_DAY_TEXT_ARGB = 0xFFFFFFFFL
+
 // --- Message surfaces -------------------------------------------------------
 
 /** Tier 1 transient banner text (`MessageBanner`). */
