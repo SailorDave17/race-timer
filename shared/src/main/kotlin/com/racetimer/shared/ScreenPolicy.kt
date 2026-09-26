@@ -3,9 +3,13 @@ package com.racetimer.shared
 /**
  * What the display should be doing for a given [TimerState].
  *
- * Both rules here are pure functions of the engine state, and they live together because they are
- * *nearly* the same rule and must not be read as accidentally different. The one state they disagree
- * on — [TimerState.FINISHED] — is the whole substance of #65, and is spelled out below.
+ * Both rules here are pure functions, and they live together because they are *nearly* the same rule
+ * and must not be read as accidentally different. [forcesMaxBrightness] reads the engine state alone.
+ * [keepsScreenOn] also reads which screen is up (#300), because the pre-start screen and the sequence
+ * picker are both [TimerState.IDLE] and only one of them is waited on. They disagree in two places,
+ * each deliberate and each spelled out below: [TimerState.FINISHED], the whole substance of #65, is
+ * driven bright without being held awake, and the pre-start screen is held awake without being
+ * driven bright.
  *
  * Kept in `shared/` rather than inline in `MainActivity` so they can be asserted by the JVM suite:
  * the display policy is a table, and a table is exactly the kind of thing that drifts when it is
@@ -28,12 +32,38 @@ package com.racetimer.shared
  *
  * [TimerState.COUNTING_UP] is deliberately absent — a race-committee count-up is allowed to sleep
  * (#59), because it has no bound and the countdown to the gun is over.
+ *
+ * [TimerState.IDLE] is held **on the timer screen only** — [onTimerScreen] true — because in `IDLE`
+ * that screen is the pre-start screen: the sequence is loaded, and the sailor is waiting on it for the
+ * warning signal (#300). Letting it sleep there meant waking the watch before pressing Start, and
+ * sometimes finding it back on the watch face, at the one moment the tap has to be on time. Three
+ * decisions ride on this line (owner, 2026-09-25):
+ *
+ * - **No timeout.** The hold lasts as long as the pre-start screen shows. A postponement can hold a
+ *   fleet well past any sensible bound, and a bound would bring the sleep back in exactly that case.
+ *   `FLAG_KEEP_SCREEN_ON` is window state, so leaving the app releases it.
+ * - **Not the picker.** The sequence picker is `IDLE` too, but nobody waits on it for a signal. It
+ *   sleeps as it always did, and so does every other screen stacked over the timer screen — Custom's
+ *   stepper and both lead-in screens.
+ * - **Not bright.** [forcesMaxBrightness] still answers false for `IDLE`. This keeps the panel awake
+ *   at the system's brightness; driving it bright for the length of a postponement is the unbounded
+ *   panel cost #59 and #284 exist to avoid.
+ *
+ * [TimerState.PAUSED] also shows Start on the watch's timer screen, and is **not** held — decided, not
+ * forgotten. Nothing calls `TimerEngine.pause()`, so the UI cannot reach the state, and #300 left it
+ * unbuilt on purpose. A story that wires a pause control decides whether a paused countdown is a
+ * screen someone waits on, and this is the line it changes.
+ *
+ * [TimerState.RUNNING] and [TimerState.RACE_ENDED] ignore [onTimerScreen]. The sequence name opens the
+ * picker only when neither is showing, so the two never meet on the watch today — and a race on
+ * screen stays held whichever screen a later change puts it behind.
  */
-fun keepsScreenOn(state: TimerState): Boolean = when (state) {
+fun keepsScreenOn(state: TimerState, onTimerScreen: Boolean): Boolean = when (state) {
     TimerState.RUNNING,
     TimerState.RACE_ENDED -> true
 
-    TimerState.IDLE,
+    TimerState.IDLE -> onTimerScreen
+
     TimerState.PAUSED,
     TimerState.FINISHED,
     TimerState.COUNTING_UP -> false

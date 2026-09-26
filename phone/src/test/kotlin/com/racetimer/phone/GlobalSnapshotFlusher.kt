@@ -75,7 +75,7 @@ internal fun GlobalSnapshotFlushLoop() {
  *
  * ## Why this exists, and what it says about the first fix
  *
- * #239's fix was applied where the tests compose their own content, which is every class in this
+ * #239's fix was applied where the tests compose their own content, which was every class in this
  * module **except** `DisplayChoiceSurfaceTest`: it launches the real `MainActivity` through
  * `createAndroidComposeRule`, so there is no lambda to put a composable in. That class was therefore
  * never covered by the fix and has been relying on being the **first** compose class the JVM runs —
