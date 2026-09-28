@@ -2,8 +2,10 @@
 
 Phone store screenshots for the Play listing's second form factor
 ([#213](https://github.com/SailorDave17/race-timer/issues/213)), captured from a **signed release
-build** on an Android emulator. To be entered in Play Console by
-[#214](https://github.com/SailorDave17/race-timer/issues/214); these files are the source, the
+build** on an Android emulator. Entered in Play Console by
+[#214](https://github.com/SailorDave17/race-timer/issues/214) on 2026-09-28: `01`–`08`, in that
+order, in the *Phone screenshots* slot. Until then that slot held the eight 1:1 **watch** images,
+and it still would if nobody had read it. These files are the source, the
 Console is the copy — the same arrangement as the Wear set one directory up and as
 [`../../listing.md`](../../listing.md).
 
@@ -39,6 +41,13 @@ emulator — Play rebuilds the APK from the bundle.
 **Re-capture if the UI changes before upload.** These stop being accurate the moment a screen moves,
 and Play requires at least one screenshot depicting the *current* version. The commit above is how a
 later release tells whether that has happened.
+
+**It has happened once** (checked 2026-09-28 against `cf2c0fc`, the build uploaded as `1.1`).
+[#277](https://github.com/SailorDave17/race-timer/issues/277) darkened the last-minute amber from
+`#A0660A` to `#553000` in `shared/`, which both apps draw from. `04-last-minute-amber.png` still
+shows `#A0660A` (pixel read from the file), and so does the Wear set's `04`. The other change since
+`a9aceff` that touches this screen, #219's pair row, draws only when a watch is linked, so these
+no-watch captures are still accurate for it.
 
 ## Why an emulator, and why this one
 

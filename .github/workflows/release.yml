@@ -201,15 +201,30 @@ jobs:
       # mapping.txt is not a nice-to-have. Without it a crash report from this build deobfuscates
       # to nothing, and until the bundle is uploaded Play holds no copy — docs/releases.md records
       # that the mapping for build 1 existed on exactly one machine.
+      #
+      # provenance.txt is the #184 stamp archiveReleaseArtifacts writes beside each bundle: the
+      # commit and whether the tree was clean. It lives in release-archive/, not build/outputs/, so
+      # until #214 it died with the runner and v1.1's had to be rebuilt from the build log. The
+      # glob cannot trip if-no-files-found on its own, so a rename that stops it matching is silent.
+      #
+      # The artifact is named from the ref, and upload-artifact refuses a `/` in a name
+      # (@actions/artifact, invalidArtifactNameCharacters). A tag has none, so `release-v1.1` is
+      # unchanged. A rehearsal dispatched on `feature/…` does have one, and until #214 it could not
+      # reach this step's upload. A branch's slashes become dashes.
+      - name: Name the artifact
+        id: artifact
+        run: echo "name=release-${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
       - name: Upload the bundle and the R8 mapping
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ github.ref_name }}
+          name: ${{ steps.artifact.outputs.name }}
           path: |
             wear/build/outputs/bundle/release/wear-release.aab
             wear/build/outputs/mapping/release/mapping.txt
             phone/build/outputs/bundle/release/phone-release.aab
             phone/build/outputs/mapping/release/mapping.txt
+            release-archive/*/provenance.txt
           if-no-files-found: error
           retention-days: 90
 

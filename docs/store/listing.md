@@ -4,17 +4,15 @@ The three text fields Play asks for, held here so the next release **edits a fil
 retyping into a web form**. Entered in Play Console by [#79](https://github.com/SailorDave17/race-timer/issues/79);
 this document is the source, the Console is the copy.
 
-**This file now holds two revisions, and only one of them is in Console.**
+**This file holds two revisions, and only the draft is in Console.**
 
 | Section | Status |
 |---|---|
-| *App name*, *Short description*, *Full description* | **Live in Console.** Watch-only, correct for the build on the internal track |
-| *Draft — the two-form-factor revision* | **Not in Console.** Written by [#212](https://github.com/SailorDave17/race-timer/issues/212) for the phone upload ([#214](https://github.com/SailorDave17/race-timer/issues/214)) to paste |
+| *App name*, *Short description*, *Full description* | **Superseded.** Watch-only. The app name is unchanged and still read from here. The two descriptions were **never what Console held**, though this row said *"Live in Console"*. Read on 2026-09-28, Console's short description was *"Mad Cow Race Timer — Sailing Start-Sequence Timer"*, and its full description was different watch-only text |
+| *Draft — the two-form-factor revision* | **In Console, saved 2026-09-28** by [#214](https://github.com/SailorDave17/race-timer/issues/214). Byte-identical: the SHA-256 of the full field read back from Console matched this file's. Saved changes wait in Publishing overview, and nothing is public until the app is sent for review |
 
-The live fields are deliberately **not** overwritten: the watch app is on the internal track now
-and its listing describes it correctly, so replacing the copy before the phone artifact exists
-would make this document disagree with Console for as long as the upload takes. The draft replaces
-them in one action at #214, and this table is what says which is which.
+The watch-only fields were deliberately **not** overwritten here, so the file kept a record of what
+the phone upload replaced. The draft replaced them in Console in one action at #214.
 
 Limits are Play's: app name **30**, short description **80**, full description **4000**. The counts
 below are computed from the fields in this file by `docs/store/count-listing.py`, not typed by hand —
@@ -83,8 +81,10 @@ Mad Cow Race Timer is a training and convenience aid. Under the Racing Rules of 
 
 # Draft — the two-form-factor revision
 
-**Not in Console.** Paste at [#214](https://github.com/SailorDave17/race-timer/issues/214), after
-the *Before pasting* checks below.
+**In Console since 2026-09-28** ([#214](https://github.com/SailorDave17/race-timer/issues/214)),
+saved for review. The field blocks below are the source: edit here, then paste the whole field.
+**A line break inside a field is a line break on Play**, so every bullet is one line. Until #214
+nine bullets were hard-wrapped, and pasting them as written would have split each one mid-sentence.
 
 **App name is unchanged** — *Mad Cow Race Timer*. Only the two descriptions move, so there is no
 draft name field and nothing to re-check against the developer-verification row.
@@ -167,10 +167,8 @@ FOR THE RACE COMMITTEE
 US Sailing — Race Manager and Scholastic — Race Manager are the committee side of those sequences, not a re-skin:
 
 • Voiced for someone sounding the signals rather than counting them
-• The gun is not the end. The clock keeps running as an elapsed-time race clock, up to H:MM:SS,
-until you tap End Race, which freezes the finish time on screen
-• A two-stage signal-box lead-in, so the timer and an external signal box start in step. Set the
-box's own alert window: none, 15 s, 60 s, or any value you dial from 5 s to 2:00
+• The gun is not the end. The clock keeps running as an elapsed-time race clock, up to H:MM:SS, until you tap End Race, which freezes the finish time on screen
+• A two-stage signal-box lead-in, so the timer and an external signal box start in step. Set the box's own alert window: none, 15 s, 60 s, or any value you dial from 5 s to 2:00
 
 SYNC
 
@@ -178,22 +176,16 @@ Tap Sync during the countdown to snap to a whole minute. That absorbs the lag be
 
 BUILT TO BE TRUSTED WITH A START
 
-• Cues are scheduled against a monotonic clock rather than sampled by a tick loop, so they land
-sub-second on real hardware — measured, not estimated
-• The countdown survives the screen going dark and the app going to the background, held by a
-foreground service
-• The clock is anchored to elapsed time, so a network time correction or a time-zone change cannot
-move your gun
-• Killed mid-sequence, the app comes back on the same clock and offers Resume or Start over rather
-than deciding for you
+• Cues are scheduled against a monotonic clock rather than sampled by a tick loop, so they land sub-second on real hardware — measured, not estimated
+• The countdown survives the screen going dark and the app going to the background, held by a foreground service
+• The clock is anchored to elapsed time, so a network time correction or a time-zone change cannot move your gun
+• Killed mid-sequence, the app comes back on the same clock and offers Resume or Start over rather than deciding for you
 
 ON SCREEN
 
 • Large MM:SS readout, driven bright while a race is on
-• Colour states readable at a glance: navy, amber through the last minute, red through the final
-ten seconds, green at the gun
-• A distinct vibration pattern for every signal, matched to what you hear, so a cue feels the shape
-it sounds
+• Colour states readable at a glance: navy, amber through the last minute, red through the final ten seconds, green at the gun
+• A distinct vibration pattern for every signal, matched to what you hear, so a cue feels the shape it sounds
 • Large Sync and Stop targets, one swipe or tap back to the sequence picker
 
 A NOTE ON THE RULES
