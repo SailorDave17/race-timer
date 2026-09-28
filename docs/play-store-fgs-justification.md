@@ -1,7 +1,9 @@
 # Play Console — `FOREGROUND_SERVICE_SPECIAL_USE` justification
 
 Text for the foreground-service declaration in Play Console's **App content** section, for
-`io.github.sailordave17.racetimer` (Race Timer for Wear OS). Tracked as issue #74.
+`io.github.sailordave17.racetimer` (Mad Cow Race Timer). **Both** artifacts, the watch and the
+phone, declare `specialUse`, and Play asks the question once for the app. Tracked as issue #74, and
+revised for the phone by #324.
 
 `specialUse` is the type Play scrutinises hardest, because it is the escape hatch. Reviewers push
 back when they believe a standard type would have served, so the argument below spends most of its
@@ -9,11 +11,44 @@ length on the negative case rather than on describing the feature.
 
 ---
 
-## Declaration text (paste into Play Console)
+## What was declared in Play Console — 2026-09-28 (#324)
+
+The Console's form asks for less than this document argues. Under *Special use*, tick **Other**,
+then give a **video link** and a *Describe permission use* text. Save stays disabled until the link
+is there.
+
+- **Video:** https://www.youtube.com/watch?v=mJ3R4A0LKsM, unlisted, 1:32. It shows the `v1.1` phone
+  release build on an emulator: Start, then the app left while its ongoing notification counts down,
+  then the screen off for 30 s, then back in at 0:10 through GO!. `adb screenrecord` has no audio,
+  so the video is silent and captioned to say so. If review asks, the fallback is a take on hardware
+  with sound.
+- **Text:** the block below, pasted verbatim and read back from the Console after a reload. It is
+  1,787 characters, and the field showed no limit. It is the condensed form of the *Declaration
+  text* below. When either changes, re-check the other and re-paste the Console from this block.
+
+```text
+Mad Cow Race Timer runs a sailboat race start sequence, a fixed countdown of commonly five minutes, on a Wear OS watch and on an Android phone. At exact, predetermined offsets it sounds tones and vibrations. The last one is the starting gun, and a boat that crosses the line before it is penalised.
+
+The foreground service runs that countdown. It starts only when the user taps Start, and stops when the sequence ends or the user taps Stop or End Race. In race-committee mode it continues after the gun as an elapsed-time race clock until the user taps End Race.
+
+Why it must start immediately and cannot be paused or restarted: the sequence is anchored to the race committee's flags, so a cue that fires late is a wrong race result. The screen is off for most of a start: the sailor is watching the committee boat and handling the boat, and the phone sits propped on the committee boat's console. Cues are scheduled against a monotonic clock to land within a fraction of a second of their offsets. A paused, deferred or restarted process cannot hold that, and a restart cannot bring back a gun that has already been missed.
+
+No standard type fits. The app plays short alert tones, not media: there is no media session or transport control. It transfers no data and has no INTERNET permission. The only thing it sends is clock readings to the user's own paired watch or phone, which the service does not wait on. It uses no location, health or body-sensor data. shortService is capped far below a race start followed by a race clock that can run for an hour or more.
+
+The service posts an ongoing notification the whole time it runs, holds a partial wake lock only while a race is running, never starts at boot, and returns START_NOT_STICKY, so the system does not restart it on its own.
+```
+
+---
+
+## Declaration text (the long form)
+
+The whole argument, kept for an appeal or a reviewer's question. The Console holds the condensed
+block above.
 
 ### What the foreground service does
 
-Race Timer is a start-sequence timer for sailboat racing, worn on the wrist. A race start is a fixed
+Mad Cow Race Timer is a start-sequence timer for sailboat racing. It runs on a Wear OS watch on a
+sailor's wrist, and on an Android phone on the race committee's boat. A race start is a fixed
 countdown — commonly five minutes — during which the app must produce audible tones and haptic
 signals at exact, predetermined offsets. The final signal is the starting gun. A sailor crosses the
 line on that signal, and a boat that crosses early is penalised.
@@ -28,16 +63,21 @@ Two reasons, both about accuracy rather than convenience:
 
 1. **The screen is off for most of a race start.** The sailor is watching the race committee boat and
    handling the boat, not looking at their wrist. The watch display sleeps within seconds. If the app
-   is suspended when the display sleeps, the cues stop and the sailor misses the start.
+   is suspended when the display sleeps, the cues stop and the sailor misses the start. The phone
+   sits propped on the committee boat's console. At launch the race officer chooses whether its
+   screen stays on, because a boat may carry no charger, so the phone's screen can sleep too, and
+   the same holds for it.
 
 2. **The timing tolerance is tight.** Cues are scheduled against a monotonic clock rather than polled
    for, and are dispatched within 100 ms of their scheduled offsets, with the audible tone following
-   within 150 ms — a tolerance measured across 150 cues in five full sequences on real hardware. A
+   within 150 ms — a tolerance measured across 150 cues in five full sequences on real hardware (the
+   watch, #82). A
    background-restricted or frozen process cannot hold that, and a gun signal that arrives a second
    late is a wrong race result. Sub-second accuracy is the entire product, not a nice-to-have.
 
-The service holds a `PARTIAL_WAKE_LOCK` sized to the remaining race time plus a small margin, and
-releases it as soon as the sequence ends. It does not hold a wake lock when no race is running.
+On both devices the service holds a `PARTIAL_WAKE_LOCK` sized to the remaining race time plus a
+small margin, re-sized when Sync moves the gun, and releases it as soon as the sequence ends. It
+does not hold a wake lock when no race is running.
 
 ### Why no standard foreground service type applies
 
@@ -81,16 +121,24 @@ standard type for that, which is precisely the case `specialUse` exists to cover
 - It returns `START_NOT_STICKY`, so the system does not restart it on its own after a process death.
   A race interrupted by a process kill is recovered only when the user next opens the app and chooses
   to resume it.
-- It posts an ongoing-activity notification for the entire time it runs, so the user can always see
-  that a race is running and return to it.
+- It posts an ongoing notification for the entire time it runs (on the watch, an Ongoing Activity),
+  so the user can always see that a race is running and return to it.
 - It requests **no network access**. The only thing the app sends anywhere is clock readings to the
   user's own paired watch or phone, over the direct connection between them, and never to a server.
   That removes the class of abuse that scrutiny of `specialUse` is designed to catch.
 
 ### Manifest subtype value
 
+Watch, `wear/src/main/AndroidManifest.xml`:
+
 ```
 Racing timer — keeps the start-sequence running while the screen is off
+```
+
+Phone, `phone/src/main/AndroidManifest.xml`:
+
+```
+Racing timer — keeps the start-sequence cueing while the screen is off
 ```
 
 ---
@@ -191,8 +239,11 @@ Three of this document's claims are now covered by that check, and one deliberat
   too. The *"no boot-completed receiver"* claim, since every `<receiver>` and its exported state is
   locked — and the merged manifests already carry an androidx receiver the source files never
   mention, which is the case this claim was previously asserted against by inspection. And the
-  `specialUse` type together with the **subtype string** quoted verbatim in the *Manifest subtype
-  value* section above, so editing it in one place and not the other fails the build.
+  `specialUse` type together with **both subtype strings**, so a manifest edit to either fails the
+  build. *Corrected 2026-09-28 (#324)*: this said that editing the string "in one place and not the
+  other fails the build". The check reads the manifests and never opens this document, so editing
+  only the quotes in *Manifest subtype value* fails nothing. They are held equal to the lock's
+  `fgs-subtype` lines by hand.
 - **Covered, and worth stating separately because it is the appeal argument.** *"No network access,
   so it cannot transmit anything"* rests on the dependency graph as well as the manifest. The lock
   records release-runtime coordinates for all four modules, so adding a networking or analytics SDK
@@ -205,7 +256,9 @@ Three of this document's claims are now covered by that check, and one deliberat
 **Two things #219 leaves for later, recorded here because this is where they will bite:**
 
 - **If the text in Console predates #219, re-paste the declaration at the next upload.** It
-  carried the old `dataSync` bullet, which named "no third-party SDK code".
+  carried the old `dataSync` bullet, which named "no third-party SDK code". *Resolved 2026-09-28:
+  nothing had ever been filed, and the first filing (#324) postdates #219. Its `dataSync` sentence
+  names the clock readings the app sends.*
 - **#220 is where the exchange may start running during a race.** D2 was ratified on the condition
   that the devices keep exchanging until the gun, and a race is exactly when this service keeps the
   process alive. On the day that lands, re-read the `dataSync` bullet — the sentence saying the
