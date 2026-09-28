@@ -46,8 +46,11 @@ later release tells whether that has happened.
 [#277](https://github.com/SailorDave17/race-timer/issues/277) darkened the last-minute amber from
 `#A0660A` to `#553000` in `shared/`, which both apps draw from. `04-last-minute-amber.png` still
 shows `#A0660A` (pixel read from the file), and so does the Wear set's `04`. The other change since
-`a9aceff` that touches this screen, #219's pair row, draws only when a watch is linked, so these
-no-watch captures are still accurate for it.
+`a9aceff` that touches this screen is #219's pair row. A release build draws it only when a watch
+is paired (out of range, measuring or linked), and with no watch it draws nothing, so these
+no-watch captures are still accurate for it. A **debug** build also draws it with no watch
+(*"Pairing unavailable"*: `pairStatusLine` shows the absent states only when debuggable), so a
+re-capture must come from a release build, as this set did.
 
 ## Why an emulator, and why this one
 
