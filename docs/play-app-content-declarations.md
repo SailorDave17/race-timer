@@ -30,7 +30,8 @@ Two boundaries worth stating up front:
 |---|---|---|
 | Package | `io.github.sailordave17.racetimer` | the **same** `applicationId`, deliberately — one listing, two form factors |
 | Declared in | `wear/build.gradle.kts` | `phone/build.gradle.kts` |
-| `versionCode` / `versionName` | `1` / `1.0` — uploaded 2026-08-13 | `2` / `1.0` — allocated by [#211](https://github.com/SailorDave17/race-timer/issues/211) from the one monotonic counter both form factors share (epic #196 decision D3). Not yet uploaded. `checkVersionCodeCollision` refuses two modules reusing a number under this one `applicationId` |
+| `versionCode` / `versionName` | `1` / `1.0` — uploaded 2026-08-13 | `2` / `1.0` — allocated by [#211](https://github.com/SailorDave17/race-timer/issues/211) from the one monotonic counter both form factors share (epic #196 decision D3). `checkVersionCodeCollision` refuses two modules reusing a number under this one `applicationId` |
+| Uploaded since | `3` / `1.1`, 2026-09-26, by the `v1.1` tag at `cf2c0fc` | `2` / `1.1`, the same run ([#214](https://github.com/SailorDave17/race-timer/issues/214)). Uploaded at `1.1`, not the `1.0` above. The last re-check (*The pair link*, below) read `6ff147f` plus #219's diff, not the tag. Between the two, `git log` shows the two source manifests changed by one comment (#210) and nothing else, so the permissions that re-check read are the ones that shipped. See `docs/releases.md` for the uploads |
 | `minSdk` / `targetSdk` / `compileSdk` | `30` / `35` / `35` — the Wear carve-out | `30` / **`36`** / **`36`** — raised by [#261](https://github.com/SailorDave17/race-timer/issues/261) for the 2026-08-31 phone deadline |
 | Verified against | `develop` at `d3156e4`, 2026-08-18 | same |
 
@@ -497,3 +498,10 @@ were filed 2026-08-12 (above). Two remain gated and neither can be discharged by
   #212 sits ahead of #214 to keep.
 - **Foreground service permissions** — not offered as a task until a bundle declaring `specialUse`
   is uploaded. That is **#79**. The text is ready in `docs/play-store-fgs-justification.md` (#74).
+
+  **Offered since, and still not filed** (read 2026-09-28, #214). App content lists it as the one
+  declaration that *needs attention*. The form is shorter than this document expected: tick
+  **Other** under *Special use*, then give a **video link** and a *Describe permission use* text.
+  **The video is required.** *Measured*: with the text filled and no link, Save stayed disabled.
+  No such video exists in this repo. Paste only after the justification reads true of a phone as
+  well as a wrist; it still opens "worn on the wrist".

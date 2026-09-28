@@ -31,7 +31,9 @@ The log's original purpose is untouched: *which commit is on testers' watches?*
 
 | versionCode | Form factor | versionName | Commit | Track | Uploaded | Notes |
 |---|---|---|---|---|---|---|
-| 1 | Wear | 1.0 | [`089f216`](https://github.com/SailorDave17/race-timer/commit/089f216) | `wear:internal` | 2026-08-13 | First build. Track cell read *"Internal testing"* — the Console's label — until 2026-08-18, when the Play API was asked directly and answered **`wear:internal`**, a Wear-form-factor track distinct from the plain `internal` track, which is empty. The label and the track id are not the same string, and #81's workflow publishes by id. Commit **re-taken a second time**: prepared from `cadaea9` on `develop`, then rebuilt from `release` at `089f216`, which is the artifact Play accepted. **Rolled out to internal testers** — owner-asserted 2026-08-17. This cell read *"sitting as a draft on the track — no tester has it yet"* until then: written true at upload time on 2026-08-13, and never revisited. |
+| 2 | Phone | 1.1 | [`cf2c0fc`](https://github.com/SailorDave17/race-timer/commit/cf2c0fc) | `internal` | 2026-09-26 | First phone build ([#214](https://github.com/SailorDave17/race-timer/issues/214)). Published by the `v1.1` tag's Release run, [36221704853](https://github.com/SailorDave17/race-timer/actions/runs/36221704853), about 20 s after versionCode 3 in the same run. That is why 2 sits above 3 here: the table is in upload order. Console: 05:48 UTC. `release-archive/v2/` holds the run's artifact, 2,339,729 bytes, the size the publish step logged. Its `provenance.txt` was rebuilt from the archive task's log line (`cf2c0fc… dirty=false`), because the artifact did not carry the stamp until #214. **Track state, read 2026-09-28:** *Available to internal testers*, full rollout, install base 0.00 %. A **draft** of this build also sits on *Closed testing – Alpha* (US), not rolled out. |
+| 3 | Wear | 1.1 | [`cf2c0fc`](https://github.com/SailorDave17/race-timer/commit/cf2c0fc) | `wear:internal` | 2026-09-26 | Same run, 05:47 UTC. `release-archive/v3/` holds the run's artifact, 2,751,082 bytes as logged, with its stamp rebuilt the same way. **Track state, read 2026-09-28:** *Available to internal testers*, full rollout, install base 0.00 %. That line has not meant "on a watch": on 2026-09-26 the track summary read *Inactive*, because the Wear OS form factor was 1 of 3 steps complete. Its screenshots and opt-in were saved that day and wait in Publishing overview for review. |
+| 1 | Wear | 1.0 | [`089f216`](https://github.com/SailorDave17/race-timer/commit/089f216) | `wear:internal` | 2026-08-13 | First build. Track cell read *"Internal testing"* — the Console's label — until 2026-08-18, when the Play API was asked directly and answered **`wear:internal`**, a Wear-form-factor track distinct from the plain `internal` track, which is empty. The label and the track id are not the same string, and #81's workflow publishes by id. Commit **re-taken a second time**: prepared from `cadaea9` on `develop`, then rebuilt from `release` at `089f216`, which is the artifact Play accepted. **Rolled out to internal testers** — owner-asserted 2026-08-17. This cell read *"sitting as a draft on the track — no tester has it yet"* until then: written true at upload time on 2026-08-13, and never revisited. **Probably on no watch, and superseded** (re-read 2026-09-28, #214): the rollout reached the track, but the track summary read *Inactive* from this build until 2026-09-26, for the form-factor reason in row 3. versionCode 3 replaced it on `wear:internal` on 2026-09-26, and the Console now lists this bundle *Inactive*. |
 
 ## One counter, two form factors (#211)
 
@@ -39,9 +41,10 @@ The log's original purpose is untouched: *which commit is on testers' watches?*
 why this table has a **Form factor** column: the number alone no longer says which artifact took it.
 
 Both modules declare the same `applicationId`, so Play treats them as one app and a `versionCode` is
-permanently unique within it. `:wear` burned 1 on 2026-08-13; `:phone` holds 2, allocated by #211 and
-not yet uploaded. **The next upload takes the next free number whichever module ships it** — so if
-the watch ships an update before the phone does, the watch takes 3 and the phone's 2 waits.
+permanently unique within it. `:wear` burned 1 on 2026-08-13. `v1.1` burned the next two in one run
+on 2026-09-26: `:phone` took 2, the number #211 had allocated to it, and `:wear` took 3 (#321).
+**The next upload takes the next free number whichever module ships it**, which is 4. A tag
+publishes both modules, so every tagged release takes two numbers, one for each.
 
 `./gradlew checkVersionCodeCollision` refuses two modules declaring the same number under one
 applicationId, and every `bundleRelease` depends on it — so this table records the allocation rather
@@ -71,6 +74,12 @@ touch this file. What changes is where the fields come from:
   the bundle was accepted by the API; the Console is what dates it.
 - **Notes** — record the workflow run URL. That is the CI equivalent of the build-time verification
   evidence recorded for build 1, and it expires less than a sentence about track state does.
+- **Archive** — the runner's `release-archive/` is gone when the job ends. The run's
+  `release-<tag>` artifact carries both bundles, both mappings and, since #214, both
+  `provenance.txt` stamps, for 90 days. Fill the local archive from it when writing the row:
+  `gh run download <run-id> --name release-<tag>`, then copy each module's files into
+  `release-archive/v<versionCode>/`. Check each `.aab`'s byte count against the size the publish
+  step logged; that is what ties the file to the one Play received.
 
 Local signing remains available and correct for a release cut by hand; `release-signing.md` covers
 both paths and says which is which.
