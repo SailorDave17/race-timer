@@ -51,6 +51,16 @@ enum class RestoreOutcome {
     EXPIRED,
 }
 
+/** Outcome of a [TimerEngine.join]: what the engine is now doing, or that it did nothing. */
+enum class JoinOutcome {
+    /** Counting down to the joined gun. */
+    RUNNING,
+    /** A race-manager race joined past its gun, counting up from it. */
+    COUNTING_UP,
+    /** The gun has passed and the sequence does not count up: nothing to join, nothing changed. */
+    EXPIRED,
+}
+
 // ---------------------------------------------------------------------------
 // Timer state
 // ---------------------------------------------------------------------------
@@ -435,6 +445,40 @@ class TimerEngine(
 
         if (state == TimerState.RUNNING || state == TimerState.COUNTING_UP) {
             listeners.forEach { it.onTick(remaining) }
+        }
+    }
+
+    /**
+     * Run [seq] to a gun that already exists: the other device's start, moved onto this clock (#220).
+     *
+     * The same shape as [restore] — the race is anchored to [gunMs] rather than to now plus the
+     * sequence — and a cue sitting exactly on the remaining time is still to come, for restore's
+     * reason. The one difference is [lateCueGraceMs]: a cue that came due that recently is queued
+     * too, so the caller's first [tick] sounds it at once rather than dropping it. A start takes tens
+     * to hundreds of milliseconds to cross the link, and without the grace the very first cue of
+     * every joined race — the warning signal, due the instant the other device anchored its gun —
+     * would be past on arrival and never sound here. Older cues stay silent: a signal sounded seconds
+     * late is a wrong signal, not a late one.
+     *
+     * Past the gun, a race-manager race joins its count-up, as [restore] resumes one. Any other race
+     * is spent there, and the engine is **left untouched** — [JoinOutcome.EXPIRED] means nothing
+     * moved, so a device that was running something keeps running it.
+     */
+    fun join(seq: RaceSequence, gunMs: Long, lateCueGraceMs: Long = 0L): JoinOutcome {
+        require(lateCueGraceMs >= 0L) { "lateCueGraceMs must not be negative, was $lateCueGraceMs" }
+        val remaining = gunMs - clock.elapsedMs()
+        if (remaining <= 0L && !seq.countUpAfterFinish) return JoinOutcome.EXPIRED
+        load(seq)
+        gunTimeMs = gunMs
+        captureClockBaseline()
+        return if (remaining <= 0L) {
+            queueCues(seq) { false }
+            state = TimerState.COUNTING_UP
+            JoinOutcome.COUNTING_UP
+        } else {
+            queueCues(seq) { it.offsetMs <= remaining + lateCueGraceMs }
+            state = TimerState.RUNNING
+            JoinOutcome.RUNNING
         }
     }
 

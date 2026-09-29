@@ -119,6 +119,9 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
 // Main timer screen
 // ---------------------------------------------------------------------------
 
+/** The degraded-recovery prompt's words (Tier 3, `docs/message-surface.md`). */
+const val RESYNC_PROMPT_RECOVERED = "Recovered — tap Sync to confirm"
+
 /**
  * Full-screen glanceable countdown for the Wear OS watch.
  *
@@ -129,7 +132,11 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
  * @param sequenceName   Name of the loaded sequence shown as a small label.
  * @param syncLabel      Non-null for ~2 s after a sync to flash "Synced → X:XX".
  * @param showResyncPrompt True after a degraded recovery (reboot / clock step): the restored gun
- *                       is best-effort, so prompt the sailor to tap Sync against the RC flag.
+ *                       is best-effort, so prompt the sailor to tap Sync against the RC flag. Also
+ *                       true for a race joined from the phone on a gun the link could not place
+ *                       inside the pair's budget (#220 AC 5) — the same instruction for the same
+ *                       reason, which is why it is the same line.
+ * @param resyncPromptText The words on that line: [RESYNC_PROMPT_RECOVERED], or the joined race's.
  * @param message        Non-null to show a transient notice/warning banner (e.g. clock jump).
  * @param onMessageExpired Called once [message] has been on screen for [MESSAGE_DURATION_MS], so the
  *                       caller can clear it. The dwell belongs here rather than at the call site
@@ -185,6 +192,7 @@ fun TimerScreen(
     sequenceName: String,
     syncLabel: String?,
     showResyncPrompt: Boolean = false,
+    resyncPromptText: String = RESYNC_PROMPT_RECOVERED,
     message: String? = null,
     onMessageExpired: () -> Unit = {},
     resumeOffered: Boolean = false,
@@ -288,7 +296,7 @@ fun TimerScreen(
             if (showResyncPrompt) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Recovered — tap Sync to confirm",
+                    text = resyncPromptText,
                     style = MaterialTheme.typography.caption2,
                     color = Color(TIER3_TEXT_ARGB),
                     fontWeight = FontWeight.Bold,

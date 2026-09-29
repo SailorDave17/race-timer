@@ -3,7 +3,9 @@ package com.racetimer.phone
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.util.Log
 import androidx.lifecycle.ViewModelStore
+import com.racetimer.android.PairRaces
 import androidx.lifecycle.ViewModelStoreOwner
 
 /**
@@ -67,9 +69,28 @@ class RaceTimerPhoneApplication : Application(), ViewModelStoreOwner {
             setShowBadge(false)
         }
         getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+
+        // How a race the watch started becomes a race here (#220), said before anything can build
+        // the link. Builds nothing itself. The phone is the console: its clock orders every start,
+        // and it is the device that puts a conflict between the two in front of the officer (the
+        // owner's rule at #220's pickup).
+        PairRaces.install(console = true) { context, join, raceRunning ->
+            val intent = PhoneTimerService.joinIntent(context, join)
+            try {
+                // A service already foreground takes it as a plain start; an idle one needs the
+                // foreground start, which the platform refuses when nothing of this app is on screen.
+                if (raceRunning) context.startService(intent) else context.startForegroundService(intent)
+                true
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "The watch's race was not joined: ${e.javaClass.simpleName}")
+                false
+            }
+        }
     }
 
     companion object {
+        private const val TAG = "RaceTimerPhoneApp"
+
         const val TIMER_CHANNEL_ID = "race_timer_channel"
         const val TIMER_NOTIFICATION_ID = 1001
     }

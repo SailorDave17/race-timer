@@ -208,6 +208,7 @@ persisting until the sailor acts because each asks for something a 3 s banner co
 | Site | Line | On screen when | Scrim |
 |---|---|---|---|
 | Degraded-recovery prompt | "Recovered — tap Sync to confirm" | `RUNNING`, after a `DEGRADED` restore, until Sync is tapped | **Yes** — `#FF3A2A00`, added by #123 |
+| The same prompt, for a race joined from the phone (#220) | "Phone start ±*N* ms — tap Sync to confirm", or "Phone start unmeasured — tap Sync to confirm" | `RUNNING`, after joining a race whose gun the link could not place inside the pair's 100 ms budget, until Sync is tapped or the race ends | **Yes** — the same line, so the same scrim |
 | Discard warning (#89) | "Start discards saved *name*" | `IDLE` pre-start only, cleared by `clearResumeOffer` | No — navy is its whole exposure |
 | `StartNotice` warning line (#13, #96) | the three Tier 3 rows of the catalogue below, plus "Do Not Disturb — cues silent, wrist still buzzing" | `IDLE` for #13's three; `RUNNING` for #96's | **Yes** — `#FF3A2A00` |
 
@@ -399,6 +400,7 @@ screen fails rather than wraps. *It asserted only the first of those until #231,
 | Exact recovery (race resumed) | 1 | "Resumed race in progress" | none — **shipped** |
 | Spent snapshot discarded | 1 | "Old race ended — starting fresh" | none — **shipped** |
 | Degraded recovery | 3 | "Recovered — tap Sync to confirm" | Sync — **shipped**, scrimmed #123 |
+| Race joined from the phone on a gun outside the pair's budget | 3 | "Phone start ±*N* ms — tap Sync to confirm" / "Phone start unmeasured — tap Sync to confirm" | Sync — **shipped** (#220), on the degraded-recovery line. The copy is `pairJoinNotice` in `shared/PairRace.kt`, not `StartPreconditions.kt`, and `PairRaceTest` holds it against this plate and the 60-character ceiling at the widest bounds a link produces |
 | Cue volume raise refused (Do Not Disturb) | 3 | "Do Not Disturb — cues silent, wrist still buzzing" | none — **shipped** (#96), `RUNNING` only |
 | Cue dropped mid-race | 1 | "Cue silent — wrist still buzzing" | none — **shipped** (#161) |
 | Cue truncated mid-race | 1 | "Cue cut short — wrist still buzzing" | none — **shipped** (#161) |

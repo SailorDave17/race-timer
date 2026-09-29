@@ -23,8 +23,13 @@ is there.
   so the video is silent and captioned to say so. If review asks, the fallback is a take on hardware
   with sound.
 - **Text:** the block below, pasted verbatim and read back from the Console after a reload. It is
-  1,787 characters, and the field showed no limit. It is the condensed form of the *Declaration
-  text* below. When either changes, re-check the other and re-paste the Console from this block.
+  the condensed form of the *Declaration text* below. When either changes, re-check the other and
+  re-paste the Console from this block.
+- **Revised 2026-09-28 by #220, and not yet re-pasted.** One sentence changed: the #324 filing said
+  *"The only thing it sends is clock readings to the user's own paired watch or phone, which the
+  service does not wait on"*, and since #220 a race start crosses the link too. The block is now
+  1,844 characters (1,787 as filed). **Console holds the #324 text until the owner re-pastes it**,
+  which is due before the next upload of a build carrying #220.
 
 ```text
 Mad Cow Race Timer runs a sailboat race start sequence, a fixed countdown of commonly five minutes, on a Wear OS watch and on an Android phone. At exact, predetermined offsets it sounds tones and vibrations. The last one is the starting gun, and a boat that crosses the line before it is penalised.
@@ -33,7 +38,7 @@ The foreground service runs that countdown. It starts only when the user taps St
 
 Why it must start immediately and cannot be paused or restarted: the sequence is anchored to the race committee's flags, so a cue that fires late is a wrong race result. The screen is off for most of a start: the sailor is watching the committee boat and handling the boat, and the phone sits propped on the committee boat's console. Cues are scheduled against a monotonic clock to land within a fraction of a second of their offsets. A paused, deferred or restarted process cannot hold that, and a restart cannot bring back a gun that has already been missed.
 
-No standard type fits. The app plays short alert tones, not media: there is no media session or transport control. It transfers no data and has no INTERNET permission. The only thing it sends is clock readings to the user's own paired watch or phone, which the service does not wait on. It uses no location, health or body-sensor data. shortService is capped far below a race start followed by a race clock that can run for an hour or more.
+No standard type fits. The app plays short alert tones, not media: there is no media session or transport control. It transfers no data and has no INTERNET permission. The only things it sends are clock readings and the race start (which sequence, and when the gun is) to the user's own paired watch or phone, and the service waits on neither. It uses no location, health or body-sensor data. shortService is capped far below a race start followed by a race clock that can run for an hour or more.
 
 The service posts an ongoing notification the whole time it runs, holds a partial wake lock only while a race is running, never starts at boot, and returns START_NOT_STICKY, so the system does not restart it on its own.
 ```
@@ -91,8 +96,11 @@ Each standard type was considered and does not fit:
 - **`dataSync`** — the service transfers no data. The app does not declare the `INTERNET` permission
   and contains no networking code. When a paired watch and phone both run the app, they exchange a
   few clock readings through Google Play services' Wearable Data Layer so that both count down to the
-  same gun. The foreground service does not start, schedule or wait on that exchange, and nothing is
-  uploaded, downloaded, backed up or synchronised.
+  same gun, and a race started on one tells the other which sequence it runs and when its gun is. The
+  service sends that start once, after the race it belongs to is already running, and from then
+  until the gun the two devices keep exchanging clock readings. The service never waits on any of
+  it: the first cue has sounded and the foreground is taken before the start is sent, and nothing
+  the service does depends on a reply. Nothing is uploaded, downloaded, backed up or synchronised.
 
 - **`location`** — no location is used or requested. The app declares no location permission.
 
@@ -123,8 +131,9 @@ standard type for that, which is precisely the case `specialUse` exists to cover
   to resume it.
 - It posts an ongoing notification for the entire time it runs (on the watch, an Ongoing Activity),
   so the user can always see that a race is running and return to it.
-- It requests **no network access**. The only thing the app sends anywhere is clock readings to the
-  user's own paired watch or phone, over the direct connection between them, and never to a server.
+- It requests **no network access**. The only things the app sends anywhere are clock readings and
+  race starts to the user's own paired watch or phone, over the direct connection between them, and
+  never to a server.
   That removes the class of abuse that scrutiny of `specialUse` is designed to catch.
 
 ### Manifest subtype value
@@ -217,8 +226,8 @@ Two notes on strategy:
   upload (#79).
 - If a reviewer does push back, the strongest single fact is **no `INTERNET` permission**. Lead with
   it in any appeal. The second strongest is that the service cannot start without a user tap.
-  **Since #219, say in the same breath what the app does send** — clock readings to the user's own
-  paired device — rather than that it sends nothing. The permission fact still holds; the claim
+  **Since #219, say in the same breath what the app does send** — clock readings, and since #220
+  race starts, to the user's own paired device — rather than that it sends nothing. The permission fact still holds; the claim
   that nothing leaves the device does not, and a reviewer who finds the Data Layer after reading
   "cannot transmit anything" has a reason to doubt the rest.
 
@@ -262,7 +271,12 @@ Three of this document's claims are now covered by that check, and one deliberat
 - **#220 is where the exchange may start running during a race.** D2 was ratified on the condition
   that the devices keep exchanging until the gun, and a race is exactly when this service keeps the
   process alive. On the day that lands, re-read the `dataSync` bullet — the sentence saying the
-  service does not wait on the exchange may stop being true.
+  service does not wait on the exchange may stop being true. *Resolved 2026-09-28 by #220: the
+  exchange does now run from a start to its gun (`PairLink.holdUntil`), and the service now sends
+  the start itself, so "does not start, schedule or wait on that exchange" became false in its
+  first two verbs and was rewritten. The third held: the start is sent last in the arm, after the
+  first cue and the foreground, and nothing waits on a reply. The Console sentence moved with it,
+  and its re-paste is owed (above).*
 - **NOT covered: the timing bullet.** The 100 ms and 150 ms bounds under *Why it must run in the
   foreground* are a measurement, not a declaration, and nothing in a manifest or a dependency list
   can falsify them. They are re-measured by a race on a wrist (#82) and by nothing else. A green

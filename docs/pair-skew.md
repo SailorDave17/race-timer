@@ -11,6 +11,10 @@ measurements, and how to run it again, is in [`harness/pair-skew/`](../harness/p
 raw capture and the analysis report are in
 [`harness/pair-skew/captures/2026-09-25/`](../harness/pair-skew/captures/2026-09-25/).
 
+**D2 and D6 were ratified at 100 ms on 2026-09-25**, on this file's recommendation. What the
+production link does with them — the start that crosses it, and the three conditions below, each
+met — is [`pair-protocol.md`](pair-protocol.md) (#219, #220).
+
 **Status:** one pair, one 34-minute session on 2026-09-25. The numbers are a sample, not a guarantee;
 *Limits* at the end says what this instrument cannot see. **No budget is chosen here.** D2 and D6 are
 the owner's to ratify, and this file recommends; it does not decide.

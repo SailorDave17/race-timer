@@ -5,6 +5,7 @@ import com.racetimer.phone.ui.PhoneReadout
 import com.racetimer.phone.ui.displayedElapsedMs
 import com.racetimer.phone.ui.displayedRemainingMs
 import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.JoinOutcome
 import com.racetimer.shared.MonotonicClock
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.SequenceCue
@@ -56,6 +57,14 @@ class PhoneRaceRunner(
     val sequences: List<RaceSequence> = CONSOLE_SEQUENCES
 
     var selected: RaceSequence = sequences.first()
+        private set
+
+    /**
+     * How many races this runner has joined from the watch (#220). What the screen watches to follow
+     * a race that began with nobody touching the phone: a count rather than a flag, so two joins in a
+     * row are two changes, and nothing has to be reset for the next one.
+     */
+    var joins: Int = 0
         private set
 
     /**
@@ -222,6 +231,40 @@ class PhoneRaceRunner(
     }
 
     /**
+     * Run [sequence] to a gun the watch started, already on this phone's clock (#220).
+     *
+     * The same shape as [start], because a joined race *is* a start — prepare, anchor, fire what is
+     * due synchronously, arm the next boundary — anchored to a gun that already exists rather than to
+     * now. [lateCueGraceMs] is `TimerEngine.join`'s: how late a cue may be and still sound, which is
+     * how the warning signal survives the start's own trip across the link.
+     *
+     * Deliberately **not** guarded like [select]: the pair's rule has already decided that this race
+     * replaces whatever was running (`PairStarts`), and a question on screen here would be a second
+     * copy of that decision — asked of an officer who may be looking at the other device.
+     *
+     * The journal records the cues this race will actually fire — those the join queued — so a race
+     * joined a moment after its warning is not scored as missing the warning it never owed.
+     */
+    fun join(sequence: RaceSequence, gunMs: Long, lateCueGraceMs: Long): JoinOutcome {
+        cueSounder.prepare()
+        cueSounder.warmUp(sequence.cues.map { it.signal })
+        val outcome = engine.join(sequence, gunMs, lateCueGraceMs)
+        if (outcome == JoinOutcome.EXPIRED) return outcome
+        selected = sequence
+        joins++
+        val owed = engine.remainingMs + lateCueGraceMs
+        journal.record(
+            "race_start",
+            "seq" to sequence.id,
+            "schedule" to cueSchedule(sequence) { it.offsetMs <= owed },
+            "joined" to 1,
+        )
+        engine.tick()
+        armCueDispatch()
+        return outcome
+    }
+
+    /**
      * End a race-manager count-up, freezing the elapsed time for the committee to read (#206).
      *
      * Delegates the whole rule to [TimerEngine.endRace], which refuses outside
@@ -366,8 +409,8 @@ class PhoneRaceRunner(
      * second copy of a cue list inside the phone module — the very drift `ModuleBoundaryTest` keeps
      * out — where an offset is the identity the parse actually matches on.
      */
-    private fun cueSchedule(sequence: RaceSequence): String =
-        sequence.cues.map { it.offsetMs }.sortedDescending().joinToString(separator = ":")
+    private fun cueSchedule(sequence: RaceSequence, owed: (SequenceCue) -> Boolean = { true }): String =
+        sequence.cues.filter(owed).map { it.offsetMs }.sortedDescending().joinToString(separator = ":")
 
     /** Tear the cue path down. The owner is going away; nothing plays or buzzes after this. */
     fun release() {

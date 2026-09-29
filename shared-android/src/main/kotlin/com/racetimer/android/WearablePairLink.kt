@@ -13,11 +13,14 @@ import com.google.android.gms.wearable.CapabilityClient
 import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.Wearable
+import com.racetimer.shared.PairAnnouncer
 import com.racetimer.shared.PairLink
+import com.racetimer.shared.PairRace
 import com.racetimer.shared.PairScheduler
 import com.racetimer.shared.PairStatus
 import com.racetimer.shared.PairTransport
 import com.racetimer.shared.PeerNode
+import com.racetimer.shared.PeerStart
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
 
@@ -42,9 +45,15 @@ import java.util.concurrent.Executor
  * paired watch builds the clients and finds no peer.
  *
  * Process-wide, like the sequence and the race: [get] builds it once and it lives until the process
- * dies. Answering the peer does not depend on any screen — only asking does ([setActive]).
+ * dies. Answering the peer does not depend on any screen — only asking does ([setActive]), and from
+ * a start to its gun a race asks too ([holdUntil], #220).
+ *
+ * **Starts cross it both ways (#220)**, and the rule for what they mean is `:shared`'s `PairStarts`,
+ * which [PairRaces] drives on the main thread. This class is a [PairAnnouncer] for it, posting each
+ * call onto the link's own thread, and hands every start the peer sends to [onPeerStart] — on the
+ * link's thread, the moment it is decoded.
  */
-class WearablePairLink private constructor(private val app: Context) {
+class WearablePairLink private constructor(private val app: Context) : PairAnnouncer {
 
     private val thread = HandlerThread("race-timer-pair").apply { start() }
     private val handler = Handler(thread.looper)
@@ -61,6 +70,10 @@ class WearablePairLink private constructor(private val app: Context) {
     @Volatile
     var status: PairStatus = PairStatus.NoPeer
         private set
+
+    /** Receives each start the peer announces, on the link's thread. Set once by [PairRaces]. */
+    @Volatile
+    var onPeerStart: ((PeerStart) -> Unit)? = null
 
     private val link = PairLink(
         clock = SystemMonotonicClock,
@@ -86,6 +99,7 @@ class WearablePairLink private constructor(private val app: Context) {
             main.post { listeners.forEach { it(published) } }
         },
         log = { Log.i(TAG, it) },
+        onPeerStart = { start -> onPeerStart?.invoke(start) },
     )
 
     private val messageListener = MessageClient.OnMessageReceivedListener { event ->
@@ -107,6 +121,24 @@ class WearablePairLink private constructor(private val app: Context) {
     fun setActive(active: Boolean) {
         handler.post { link.setActive(active) }
     }
+
+    override fun announce(race: PairRace) {
+        handler.post { link.announce(race) }
+    }
+
+    override fun holdUntil(untilMs: Long) {
+        handler.post { link.holdUntil(untilMs) }
+    }
+
+    override fun endHold() {
+        handler.post { link.endHold() }
+    }
+
+    /**
+     * From the last status the link published, readable from any thread. Published on every kept
+     * round, so it is at most a burst old, and a burst ages an offset by well under a millisecond.
+     */
+    override fun peerOffsetMs(): Long? = (status as? PairStatus.Linked)?.offsetMs
 
     /** Receives every status on the main thread, starting with the current one. */
     fun addStatusListener(listener: (PairStatus) -> Unit) {

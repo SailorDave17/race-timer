@@ -1359,4 +1359,96 @@ class TimerEngineTest {
         assertTrue("the engine still detects the jump", engine.pollClockAdjustment())
         assertEquals("but the removed listener must not hear it", 1, clockAdjustments.size)
     }
+
+    // --- Joining the other device's race (#220) ---------------------------------------------------
+
+    @Test fun `a joined race counts down to the gun it was given, not to now plus the sequence`() {
+        val seq = BuiltInSequences.usSailing
+        fakeNow = 50_000L
+        // The other device tapped Start 180 ms ago on this clock.
+        val gun = fakeNow - 180L + seq.totalMs
+
+        assertEquals(JoinOutcome.RUNNING, engine.join(seq, gun))
+
+        assertEquals(TimerState.RUNNING, engine.currentState)
+        assertEquals(seq.totalMs - 180L, engine.remainingMs)
+        fakeNow = gun
+        engine.tick()
+        assertTrue("the gun fires on the joined anchor", gunFired)
+    }
+
+    @Test fun `a cue that came due within the grace sounds at once, and one before it does not`() {
+        val seq = BuiltInSequences.club
+        // Club's first two cues are 3:00 and 2:00, and the grace is far below the minute between them.
+        fakeNow = 10_000L
+        val gun = fakeNow - 300L + seq.totalMs
+
+        engine.join(seq, gun, lateCueGraceMs = 500L)
+        engine.tick()
+
+        assertEquals("the warning, 300 ms late, sounds rather than being dropped", listOf(3 * 60_000L), cues.map { it.offsetMs })
+    }
+
+    @Test fun `a cue that came due before the grace stays silent`() {
+        val seq = BuiltInSequences.club
+        fakeNow = 10_000L
+        val gun = fakeNow - 700L + seq.totalMs
+
+        engine.join(seq, gun, lateCueGraceMs = 500L)
+        engine.tick()
+
+        assertTrue("a signal 700 ms late is a wrong signal", cues.isEmpty())
+        fakeNow = gun - 2 * 60_000L
+        engine.tick()
+        assertEquals("and the rest of the race is intact", listOf(2 * 60_000L), cues.map { it.offsetMs })
+    }
+
+    @Test fun `with no grace a join queues what restore would, the cue on the remaining time included`() {
+        val seq = BuiltInSequences.club
+        fakeNow = 10_000L
+        val gun = fakeNow + 2 * 60_000L
+
+        engine.join(seq, gun)
+        engine.tick()
+
+        assertEquals(listOf(2 * 60_000L), cues.map { it.offsetMs })
+    }
+
+    @Test fun `a race-manager race joined past its gun counts up from it`() {
+        val seq = BuiltInSequences.scholasticRaceManager
+        fakeNow = 100_000L
+        val gun = fakeNow - 42_000L
+
+        assertEquals(JoinOutcome.COUNTING_UP, engine.join(seq, gun, lateCueGraceMs = 500L))
+
+        assertEquals(TimerState.COUNTING_UP, engine.currentState)
+        assertEquals(-42_000L, engine.remainingMs)
+        engine.tick()
+        assertTrue("nothing is left to sound past the gun", cues.isEmpty())
+    }
+
+    @Test fun `a countdown joined past its gun is refused and leaves the running race alone`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        fakeNow = 5_000L
+        val before = engine.remainingMs
+
+        assertEquals(JoinOutcome.EXPIRED, engine.join(BuiltInSequences.usSailing, gunMs = fakeNow - 1L))
+
+        assertEquals(TimerState.RUNNING, engine.currentState)
+        assertEquals(BuiltInSequences.club, engine.loadedSequence)
+        assertEquals(before, engine.remainingMs)
+    }
+
+    @Test fun `joining replaces the race that was running`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        fakeNow = 20_000L
+
+        engine.join(BuiltInSequences.scholastic, gunMs = fakeNow + 90_000L)
+
+        assertEquals(BuiltInSequences.scholastic, engine.loadedSequence)
+        assertEquals(90_000L, engine.remainingMs)
+        assertEquals("a joined race persists like any other", fakeNow + 90_000L, engine.snapshot()?.gunElapsedMs)
+    }
 }

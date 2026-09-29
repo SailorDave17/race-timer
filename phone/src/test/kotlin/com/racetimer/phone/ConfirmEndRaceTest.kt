@@ -86,7 +86,9 @@ class ConfirmEndRaceTest {
      * Arranged rather than caused, and it has to be: the reattach in AC 1 keys on the runner
      * arriving, so starting the race *after* the composition already has one leaves the picker
      * showing over a live engine. In the shipped app nothing starts a race except the timer
-     * screen's own control, so this state has no route to it — which is the point.
+     * screen's own control and, since #220, a join from the watch — which the app follows to the
+     * timer screen by the runner's join count, and which `runner.start()` here is not. So this state
+     * still has no route to it, which is the point.
      */
     private fun pickerOverALiveRace() {
         app.launch()
