@@ -618,11 +618,14 @@ class TimerService : Service(), PairRaces.RaceService {
                 val freshStart = intent.getBooleanExtra(EXTRA_FRESH_START, false)
                 if (freshStart) clearPersistedState()
 
+                // The post-gun linger of the race before, if one is pending, would tear down
+                // *whatever* is running when it fires — this race, a few seconds in. A Start tapped on
+                // the "GO!" screen lands inside it as a join can (#327; #220 cancelled it for joins
+                // only, and a tapped race was reset to IDLE).
+                gunTeardownPending = false
+                handler.removeCallbacks(gunTeardownRunnable)
+
                 if (joining) {
-                    // The post-gun linger of the race before, if one is pending, would tear down
-                    // *whatever* is running when it fires — the joined race, three seconds in.
-                    gunTeardownPending = false
-                    handler.removeCallbacks(gunTeardownRunnable)
                     val gunMs = intent.getLongExtra(EXTRA_GUN_ELAPSED_MS, 0L)
                     val grace = intent.getLongExtra(EXTRA_LATE_CUE_GRACE_MS, 0L)
                     if (engine.join(sequence, gunMs, grace) == JoinOutcome.EXPIRED) {
