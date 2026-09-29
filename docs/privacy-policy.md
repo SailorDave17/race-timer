@@ -1,6 +1,6 @@
 # Privacy Policy — Mad Cow Race Timer
 
-**Effective date:** 28 September 2026
+**Effective date:** 29 September 2026
 **Applies to:** Mad Cow Race Timer (`io.github.sailordave17.racetimer`) — both the **Wear OS watch
 app** and the **Android phone app**, which ship under one Play listing. Referred to together below
 as *Race Timer*, and distinguished as *the watch app* and *the phone app* wherever they differ.
@@ -12,10 +12,11 @@ user accounts, and it does not request network access. What it stores is timing 
 settings, held in the app's private storage on the device you are using.
 
 If you run it on a Wear OS watch and an Android phone that are paired with each other, the two apps
-exchange clock readings, and tell each other when a race is started, over the direct connection
-between your two devices, so that both count down to the same gun. That is the only thing either app
-sends anywhere, and it goes only to your own other device. It is described in full under *Clock
-readings and race starts exchanged with your paired device*.
+exchange clock readings, tell each other when a race is started, synced or ended, and share what
+their start screens are set to, over the direct connection between your two devices, so that both
+run the same race to the same gun. That is the only thing either app sends anywhere, and it goes only
+to your own other device. It is described in full under *Clock readings and race controls exchanged
+with your paired device*.
 
 ## Information we collect
 
@@ -27,7 +28,7 @@ sign-in.
 
 Neither the watch app nor the phone app requests the `INTERNET` permission, and neither sends
 anything to the developer or to any server. The one exchange between the two apps is described
-under *Clock readings and race starts exchanged with your paired device*, and it passes only between
+under *Clock readings and race controls exchanged with your paired device*, and it passes only between
 your own devices.
 
 ## Information stored on your device
@@ -78,7 +79,7 @@ than leaving to be inferred:
 Auto Backup is what lets your sequence preference follow you to a replacement watch. Turning it off
 for the whole device is a setting Android gives you, and Race Timer works the same either way.
 
-## Clock readings and race starts exchanged with your paired device
+## Clock readings and race controls exchanged with your paired device
 
 When the watch app and the phone app are both running, on a watch and a phone that are paired with
 each other, each app asks the other what its clock reads, several times a minute while the app is on
@@ -86,8 +87,9 @@ screen and from the moment a race is started until its gun, and answers the othe
 whenever it is running. Comparing the answers is how the two devices agree on when the gun is, to
 within a fraction of a second.
 
-When you start a race on either device, it tells the other one, so that both run the same race to
-the same gun.
+When you start, sync or end a race on either device, it tells the other one, so that both run the
+same race to the same gun and end it at the same time. And when you choose a start sequence, a custom
+length or a lead-in alert on either device's start screen, the other one's start screen follows.
 
 This is everything that is exchanged:
 
@@ -97,20 +99,26 @@ This is everything that is exchanged:
 | A random number pairing each question with its answer | So that an answer is matched to the question it belongs to, and a stale one is ignored |
 | When a race is started: which start sequence it runs (for example *US Sailing 5-4-1-Go*, or a custom length) | So the other device runs the same race |
 | When a race is started: when its gun is, and when Start was tapped, as readings of the devices' clocks | To place the gun on the other device's clock, and to decide which start counts when both devices are started at nearly the same moment |
-| When a race is started: a random number identifying that race | So a race sent twice is recognised as the same race |
+| When a race is started: a random number identifying that race | So a race sent twice is recognised as the same race, and so a later sync or end is applied only to the race it belongs to |
+| When a race is synced: the race's new gun, and when Sync was tapped, as readings of the devices' clocks, with a random number | To move the other device's gun to the same moment, and to decide which sync counts when both devices are synced at nearly the same moment |
+| When a race is ended: how long it ran, in milliseconds | So both devices show the same final race time |
+| When a start screen is set: which start sequence it will run and which lead-in alert it offers, when that choice was made as a reading of the devices' clocks, and a random number | So the other device's start screen shows the same choice, and to decide which choice counts when the two differ |
 
 - **It goes only to your other device.** It is never sent to the developer or to anyone else.
 - **It travels only over the direct connection between your watch and your phone.** The apps use the
   Wearable Data Layer, the channel Google Play services provides between a paired watch and phone.
   While the two devices can reach each other only through the internet rather than directly, Race
   Timer sends nothing.
-- **It is not stored, beyond the race you are running.** Each app holds the readings, and what it
-  was told about a race, in memory while it runs, and they are gone when it stops. A race started on
-  your other device is then saved on this one exactly as a race you started here is — the sequence
-  and the gun time, listed under *Information stored on your device* — so it survives the app being
-  closed.
-- **Nothing in it identifies you.** A clock reading says how long a device has been switched on, and
-  a race start says which sequence you ran and when, and nothing more.
+- **It is not stored, beyond the race you are running and the start screen's choice.** Each app
+  holds the readings, and what it was told about a race, in memory while it runs, and they are gone
+  when it stops. A race started on your other device — or synced there — is then saved on this one
+  exactly as a race you started here is: the sequence and the gun time, listed under *Information
+  stored on your device*, so it survives the app being closed. A start screen's choice made on your
+  other device is saved on this one exactly as a choice you made here is: the start sequence you last
+  chose and the lead-in time, in the same table.
+- **Nothing in it identifies you.** A clock reading says how long a device has been switched on; a
+  race start, sync or end says which sequence you ran, when, and for how long; a start screen's
+  choice says which sequence and lead-in you picked; and nothing more.
 - **One device on its own exchanges nothing.** A phone with no paired watch running Race Timer, or a
   watch whose phone does not run it, sends nothing at all.
 
@@ -131,11 +139,11 @@ permission to either.
 ## Sharing
 
 Race Timer does not share data with anyone, because it does not collect any. The clock readings and
-race starts described above pass only between your own two devices.
+race controls described above pass only between your own two devices.
 
 The apps contain one third-party library: Google Play services' Wearable library, with the parts of
 Google Play services it depends on. It provides the Data Layer channel between a paired watch and
-phone, and Race Timer uses it for the clock readings and race starts and nothing else. There are no advertising
+phone, and Race Timer uses it for the clock readings and race controls and nothing else. There are no advertising
 networks, no analytics providers, and no crash-reporting services.
 
 ## Children
@@ -147,7 +155,7 @@ no data at all, it collects no data from children.
 
 The data described above is held in the app's private, sandboxed storage, which the Android
 operating system isolates from other apps on the device. The only data either app sends is the
-clock readings and race starts exchanged between your own two devices, described above; the device
+clock readings and race controls exchanged between your own two devices, described above; the device
 backup described above is encrypted by Android before it leaves the watch.
 
 ## Changes to this policy
@@ -253,6 +261,33 @@ MAINTAINER NOTES — remove this block before publishing.
    No manifest and no dependency moved, so docs/declared-surface.lock is unchanged — the lock
    cannot see a new message kind, which is why this revision was an acceptance of the story's
    pickup rather than a lock refusal.
+
+   REVISED AGAIN 2026-09-28, the same day, for the mirrored controls and pre-start setup (#221),
+   with the owner's approval at #221's pickup ("revise all three in this PR"). The effective date
+   moves to 29 September 2026: the revision was written late on the 28th and is expected to merge,
+   and so to publish, on the 29th (the owner's choice at #221's commit gate). If it merges on a
+   later day still, move the date to the merge day. Every claim WIDENED and none was withdrawn:
+   - The section heading and its five cross-references said "race starts"; they say "race
+     controls". A heading naming one message kind would under-describe the section below it.
+   - WHAT IS EXCHANGED gained three rows, one per new message kind (PairMessage.Sync, .End and
+     .Setup in shared/.../PairLink.kt; docs/pair-protocol.md is the format): a Sync's moved gun and
+     its stamp as elapsedRealtime readings, with a random id; an End Race's elapsed time, a
+     DURATION rather than a reading of any clock; and a start screen's sequence id, lead-in alert,
+     stamp and random id. The race-id row gained its second purpose: a sync or end names its race
+     and is applied only to it. Still no time of day crosses the link.
+   - "It is not stored" gained the start screen's choice: a setup taken from the peer is saved in
+     the EXISTING picked-sequence and lead-in keys (PhoneSetupStore.kt, WearSetupStore in
+     RaceTimerApplication.kt, both through the stores already listed). No new key, no new file. A
+     moved gun is saved in the existing race-snapshot keys, as a joined start's is.
+   - "Nothing in it identifies you" widened to name what a sync, an end and a choice say.
+   The two claims that could drift are pinned by tests #221's mutation pass made fail on purpose:
+     only to a nearby peer, both directions, for all three new kinds: PairLinkTest "a Sync, an End
+       Race and a setup are neither sent to nor taken from a peer reachable only through the
+       cloud" (mutations M8 and M9, 2 red each, as predicted);
+     one device alone sends nothing: PairRaceTest "with no counterpart a pick sends nothing and the
+       screen is the app's own" and "a race with no peer syncs exactly as it always did, and sends
+       nothing".
+   No manifest and no dependency moved, so docs/declared-surface.lock is unchanged again.
 
 2. Every factual claim here was checked against the tree on 2026-08-01 and RE-CHECKED on 2026-08-09,
    after PRs #113, #116 and #132 had merged. All still true:

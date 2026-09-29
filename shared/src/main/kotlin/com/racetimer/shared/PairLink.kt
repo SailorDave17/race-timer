@@ -126,6 +126,13 @@ sealed interface PairStatus {
  * first of the three conditions D2 was ratified with: a burst when a start is armed, and rounds kept
  * coming until the gun. A device running a race with its screen off is still a device that asks.
  *
+ * **A race's controls and the pre-start setup cross it too (#221).** A Sync travels as the gun it
+ * produced, placed on this clock exactly as a start's is ([PeerSync]); an End Race as the elapsed
+ * time it froze ([PeerEnd]); and the setup a pre-start screen shows as the sequence and the
+ * lead-in alert ([PeerSetup]). Every one of them obeys the nearby-only rule at both ends, and
+ * [onPeerNearby] says when a peer becomes reachable directly, which is when the setups of two
+ * devices are compared.
+ *
  * **Not thread-safe, by design.** Every call, and every callback given to the transport and the
  * scheduler, must run on one thread. The glue gives the Data Layer that thread's looper, so incoming
  * messages already arrive on it and nothing is posted between a message landing and its stamp.
@@ -133,6 +140,10 @@ sealed interface PairStatus {
  * @param onPeerStart  a start the nearby peer announced, its gun already on this device's clock.
  * @param firstRoundId where this process's round ids start. Random in production, so a reply to a
  *                     ping a previous process sent can never complete one this process sent.
+ * @param onPeerSync   a Sync the nearby peer took, its gun already on this device's clock (#221).
+ * @param onPeerEnd    an End Race the nearby peer took (#221).
+ * @param onPeerSetup  the nearby peer's pre-start setup (#221).
+ * @param onPeerNearby the peer has just become reachable directly: found, or back in Bluetooth range.
  */
 class PairLink(
     private val clock: MonotonicClock,
@@ -142,6 +153,10 @@ class PairLink(
     private val log: (String) -> Unit = {},
     private val onPeerStart: (PeerStart) -> Unit = {},
     firstRoundId: Long = Random.nextLong(),
+    private val onPeerSync: (PeerSync) -> Unit = {},
+    private val onPeerEnd: (PeerEnd) -> Unit = {},
+    private val onPeerSetup: (PeerSetup) -> Unit = {},
+    private val onPeerNearby: () -> Unit = {},
 ) : PairAnnouncer {
 
     private class Pending(val peerId: String, val sentMs: Long)
@@ -209,8 +224,25 @@ class PairLink(
         requestBurst()
     }
 
-    /** The offset the status reports, aged to now: the midpoint the rounds allow, in budget or not. */
-    override fun peerOffsetMs(): Long? = (status() as? PairStatus.Linked)?.offsetMs
+    /**
+     * The offset the rounds held allow, aged to now: the midpoint, in budget or not — or null with
+     * no rounds.
+     *
+     * **Held across a drop, as the rounds are** (see [onPeers]), rather than read off the status,
+     * which says only NotNearby while the peer is out of range. A pick made on the watch out of
+     * Bluetooth range is still placed on the console's clock through the offset measured before it
+     * (#221), so when the two devices meet again the later pick wins, as the owner's rule says,
+     * rather than whichever device could stamp its pick. The drift over a drop is the stated 30 ppm:
+     * a tenth of a second an hour, far inside the gap between two picks.
+     */
+    override fun peerOffsetMs(): Long? {
+        val nowMs = clock.elapsedMs()
+        return when (val t = translate(nowMs, PAIR_SKEW_BUDGET_MS)) {
+            is GunTranslation.InBudget -> t.gunMs - nowMs
+            is GunTranslation.OutOfBudget -> t.bestEffortGunMs - nowMs
+            GunTranslation.NoSamples, GunTranslation.Inconsistent -> null
+        }
+    }
 
     /** The race is over, or its gun has fired: stop asking unless a screen still shows the link. */
     override fun endHold() {
@@ -238,17 +270,54 @@ class PairLink(
      * about the race this device is running.
      */
     override fun announce(race: PairRace) {
+        // The sending instant is read inside, before the payload that carries it is built. An early
+        // read on the way out moves the receiver's arrival-anchored estimate later, never earlier
+        // (see [placeGun]).
+        if (sendToNearbyPeer("start") { PairMessage.Start(race.key.stamp, race.key.raceId, clock.elapsedMs(), race.gun.gunMs, race.sequenceId) }) {
+            log("start sent race=${race.key.raceId} seq=${race.sequenceId}")
+        }
+    }
+
+    /**
+     * Tell the nearby peer [race]'s gun moved (#221): a Sync taken here, or one kept after two
+     * crossed and sent again. The gun travels on this clock, as a start's does, under
+     * [PairRace.gunKey], which orders it against a Sync the peer took of the same race.
+     */
+    override fun announceSync(race: PairRace) {
+        if (sendToNearbyPeer("sync") {
+                PairMessage.Sync(race.gunKey.stamp, race.gunKey.raceId, race.key.raceId, clock.elapsedMs(), race.gun.gunMs)
+            }
+        ) {
+            log("sync sent race=${race.key.raceId}")
+        }
+    }
+
+    /** Tell the nearby peer race [raceId] was ended [elapsedMs] past its gun (#221). */
+    override fun announceEnd(raceId: Long, elapsedMs: Long) {
+        if (sendToNearbyPeer("end") { PairMessage.End(raceId, elapsedMs) }) log("end sent race=$raceId")
+    }
+
+    /** Tell the nearby peer the setup this device's pre-start screen holds, under [key] (#221). */
+    override fun announceSetup(key: RaceKey, choice: SetupChoice) {
+        if (sendToNearbyPeer("setup") { PairMessage.Setup(key.stamp, key.raceId, choice.boxAlertSeconds.toLong(), choice.sequenceId) }) {
+            log("setup sent seq=${choice.sequenceId} alert=${choice.boxAlertSeconds}")
+        }
+    }
+
+    /**
+     * Send what [build] makes to the nearby peer, or nothing and false when there is none. Nothing
+     * the pair says goes to a peer reachable only through the cloud — D2's third condition, and the
+     * published privacy policy's promise — and sending nothing is the ordinary outcome for a device
+     * with no watch or no phone.
+     */
+    private fun sendToNearbyPeer(what: String, build: () -> PairMessage): Boolean {
         val p = peer
         if (unavailable || p == null || !p.nearby) {
-            log("start not sent: no nearby peer")
-            return
+            log("$what not sent: no nearby peer")
+            return false
         }
-        // Read before the payload that carries it is built. An early read on the way out moves the
-        // receiver's arrival-anchored estimate later, never earlier (see [peerStart]).
-        val sentMs = clock.elapsedMs()
-        val start = PairMessage.Start(race.key.stamp, race.key.raceId, sentMs, race.gun.gunMs, race.sequenceId)
-        transport.send(p.id, start.encode()) { log("start refused") }
-        log("start sent race=${race.key.raceId} seq=${race.sequenceId}")
+        transport.send(p.id, build().encode()) { log("$what refused") }
+        return true
     }
 
     /**
@@ -289,6 +358,8 @@ class PairLink(
             beginBurst()
         }
         publish()
+        // Last, once the peer is recorded as nearby, so whatever this prompts can be sent (#221).
+        if (becameUsable) onPeerNearby()
     }
 
     /** This device cannot reach the Data Layer. Nothing is asked or answered until [onPeers]. */
@@ -327,29 +398,52 @@ class PairLink(
                 )
             }
             // Taken only from the nearby peer, as a ping is answered only for it: a gun that crossed
-            // the cloud is exactly what D2's third condition rules out.
-            is PairMessage.Start -> if (isNearbyPeer(fromId)) {
+            // the cloud is exactly what D2's third condition rules out. The controls and the setup
+            // (#221) are held to the same rule, for the same reason and for the privacy policy's.
+            is PairMessage.Start -> fromNearbyPeer(fromId, "start") {
                 log("start from peer race=${message.raceId} seq=${message.sequenceId}")
-                onPeerStart(peerStart(message, receivedMs))
-            } else {
-                log("start from ${short(fromId)} not taken: not the nearby peer")
+                onPeerStart(PeerStart(RaceKey(message.stamp, message.raceId), message.sequenceId, placeGun(message.gunMs, message.sentMs, receivedMs)))
+            }
+            is PairMessage.Sync -> fromNearbyPeer(fromId, "sync") {
+                log("sync from peer race=${message.raceId}")
+                onPeerSync(
+                    PeerSync(
+                        RaceKey(message.stamp, message.syncId),
+                        message.raceId,
+                        placeGun(message.gunMs, message.sentMs, receivedMs),
+                        setRemainingMs = message.gunMs - message.sentMs,
+                    ),
+                )
+            }
+            is PairMessage.End -> fromNearbyPeer(fromId, "end") {
+                log("end from peer race=${message.raceId}")
+                onPeerEnd(PeerEnd(message.raceId, message.elapsedMs))
+            }
+            is PairMessage.Setup -> fromNearbyPeer(fromId, "setup") {
+                log("setup from peer seq=${message.sequenceId} alert=${message.boxAlertSeconds}")
+                onPeerSetup(PeerSetup(RaceKey(message.stamp, message.setupId), SetupChoice(message.sequenceId, message.boxAlertSeconds.toInt())))
             }
         }
     }
 
+    private inline fun fromNearbyPeer(fromId: String, what: String, take: () -> Unit) {
+        if (isNearbyPeer(fromId)) take() else log("$what from ${short(fromId)} not taken: not the nearby peer")
+    }
+
     /**
-     * The peer's start with its gun moved onto this clock. The kept rounds are in this device's frame
-     * with the peer as the responder, so a gun read on the peer's clock is a responder instant.
+     * The peer's gun, read on its clock at [gunMs] and sent at [sentMs], moved onto this clock — a
+     * start's, or a Sync's (#221), through the one translation. The kept rounds are in this device's
+     * frame with the peer as the responder, so a gun read on the peer's clock is a responder instant.
      *
-     * With no rounds at all the gun is anchored to the start's own arrival: the peer's lead from
+     * With no rounds at all the gun is anchored to the message's own arrival: the peer's lead from
      * sending to its gun, counted from the moment it landed here. A message cannot arrive before it
      * was sent, so that is the **latest** the gun can be, late by however long the message took, and
      * no bound on it is known — which [JoinGun.errorBoundMs] says by being null.
      */
-    private fun peerStart(start: PairMessage.Start, receivedMs: Long): PeerStart {
-        val gun = when (
+    private fun placeGun(gunMs: Long, sentMs: Long, receivedMs: Long): JoinGun =
+        when (
             val t = translateGun(
-                gunMs = start.gunMs,
+                gunMs = gunMs,
                 from = ExchangeClock.RESPONDER,
                 samples = samples.toList(),
                 maxDriftPpm = PAIR_STATED_DRIFT_PPM,
@@ -360,10 +454,8 @@ class PairLink(
             is GunTranslation.OutOfBudget -> JoinGun(t.bestEffortGunMs, t.errorBoundMs)
             // Inconsistent cannot survive [keep], which drops the history on it; treated as no rounds.
             GunTranslation.NoSamples, GunTranslation.Inconsistent ->
-                JoinGun(receivedMs + (start.gunMs - start.sentMs), errorBoundMs = null)
+                JoinGun(receivedMs + (gunMs - sentMs), errorBoundMs = null)
         }
-        return PeerStart(RaceKey(start.stamp, start.raceId), start.sequenceId, gun)
-    }
 
     /** The current status, with the bound aged to now. */
     fun status(): PairStatus {
@@ -541,15 +633,16 @@ class PairLink(
 }
 
 /**
- * The four messages the pair exchanges, and their wire form: one line of UTF-8 text, a version tag
- * first. A device that reads a tag it does not know drops the message, so two app versions that
- * disagree about the format have no link rather than a wrong one.
+ * The messages the pair exchanges, and their wire form: one line of UTF-8 text, a version tag first.
+ * A device that reads a tag it does not know drops the message, so two app versions that disagree
+ * about the format have no link rather than a wrong one.
  *
- * Every field is a number except a start's last, which is a sequence id: the one string the
- * persisted race already carries, and which `BuiltInSequences.resolve` rebuilds lead-in and Custom
- * durations from. The version tag did not move when [Start] was added (#220). An app from before it
- * reads `start` as a kind it does not know and drops the line, which is the no-link-rather-than-a-
- * wrong-one rule above applied to one message rather than to the whole link.
+ * Every field is a number except the last of a [Start] or a [Setup], which is a sequence id: the one
+ * string the persisted race already carries, and which `BuiltInSequences.resolve` rebuilds lead-in
+ * and Custom durations from. The version tag did not move when [Start] was added (#220), nor when
+ * [Sync], [End] and [Setup] were (#221). An app from before either reads the new kind as one it does
+ * not know and drops the line, which is the no-link-rather-than-a-wrong-one rule above applied to
+ * one message rather than to the whole link.
  */
 internal sealed interface PairMessage {
 
@@ -591,9 +684,55 @@ internal sealed interface PairMessage {
             require(SEQUENCE_ID.matches(sequenceId)) { "not a sequence id: $sequenceId" }
         }
 
-        override fun encode() =
-            (String(wire("start", stamp, raceId, sentMs, gunMs), Charsets.UTF_8) + " " + sequenceId)
-                .toByteArray(Charsets.UTF_8)
+        override fun encode() = withSequenceId(wire("start", stamp, raceId, sentMs, gunMs), sequenceId)
+    }
+
+    /**
+     * Race [raceId]'s gun moved by a Sync on the sender (#221): [gunMs] on the sender's clock, read
+     * at [sentMs] on the same clock. [stamp] and [syncId] are a [RaceKey] ordering it against a
+     * Sync of the same race taken on the other device, as a start's key orders two starts.
+     */
+    data class Sync(
+        val stamp: Long,
+        val syncId: Long,
+        val raceId: Long,
+        val sentMs: Long,
+        val gunMs: Long,
+    ) : PairMessage {
+        override fun encode() = wire("sync", stamp, syncId, raceId, sentMs, gunMs)
+    }
+
+    /**
+     * Race [raceId] ended [elapsedMs] past its gun (#221). A duration, not a clock reading: it is
+     * the same number on both clocks, so it crosses untranslated.
+     */
+    data class End(val raceId: Long, val elapsedMs: Long) : PairMessage {
+        init {
+            require(elapsedMs >= 0L) { "an elapsed time cannot be negative: $elapsedMs" }
+        }
+
+        override fun encode() = wire("end", raceId, elapsedMs)
+    }
+
+    /**
+     * The sender's pre-start setup (#221, epic decision D8): the sequence its screen holds, without
+     * any lead-in, and the alert its lead-in picker opens on. [stamp] and [setupId] order it against
+     * the other device's setup, as a start's key orders two starts.
+     */
+    data class Setup(
+        val stamp: Long,
+        val setupId: Long,
+        val boxAlertSeconds: Long,
+        val sequenceId: String,
+    ) : PairMessage {
+        init {
+            require(SEQUENCE_ID.matches(sequenceId)) { "not a sequence id: $sequenceId" }
+            require(boxAlertSeconds in 0L..Int.MAX_VALUE.toLong() && isValidBoxAlert(boxAlertSeconds.toInt())) {
+                "not a box alert: $boxAlertSeconds"
+            }
+        }
+
+        override fun encode() = withSequenceId(wire("setup", stamp, setupId, boxAlertSeconds), sequenceId)
     }
 
     companion object {
@@ -609,23 +748,43 @@ internal sealed interface PairMessage {
         private fun wire(kind: String, vararg fields: Long): ByteArray =
             (listOf(VERSION, kind) + fields.map { it.toString() }).joinToString(" ").toByteArray(Charsets.UTF_8)
 
+        /** A message whose last field is a sequence id: the numbers, then the id. */
+        private fun withSequenceId(numbers: ByteArray, sequenceId: String): ByteArray =
+            (String(numbers, Charsets.UTF_8) + " " + sequenceId).toByteArray(Charsets.UTF_8)
+
         fun decode(payload: ByteArray): PairMessage? {
             val parts = String(payload, Charsets.UTF_8).split(' ')
             if (parts.size < 2 || parts[0] != VERSION) return null
-            if (parts[1] == "start") return decodeStart(parts.drop(2))
+            when (parts[1]) {
+                "start" -> return withTrailingSequenceId(parts.drop(2), numbers = 4) { f, id -> Start(f[0], f[1], f[2], f[3], id) }
+                "setup" -> return withTrailingSequenceId(parts.drop(2), numbers = 3) { f, id ->
+                    if (f[2] in 0L..Int.MAX_VALUE.toLong() && isValidBoxAlert(f[2].toInt())) Setup(f[0], f[1], f[2], id) else null
+                }
+            }
             val fields = parts.drop(2).map { it.toLongOrNull() ?: return null }
             return when (parts[1]) {
                 "ping" -> if (fields.size == 1) Ping(fields[0]) else null
                 "pong" -> if (fields.size == 3) Pong(fields[0], fields[1], fields[2]) else null
                 "sample" -> if (fields.size == 4) Sample(fields[0], fields[1], fields[2], fields[3]) else null
+                "sync" -> if (fields.size == 5) Sync(fields[0], fields[1], fields[2], fields[3], fields[4]) else null
+                "end" -> if (fields.size == 2 && fields[1] >= 0L) End(fields[0], fields[1]) else null
                 else -> null
             }
         }
 
-        private fun decodeStart(parts: List<String>): Start? {
-            if (parts.size != 5 || !SEQUENCE_ID.matches(parts[4])) return null
-            val fields = parts.take(4).map { it.toLongOrNull() ?: return null }
-            return Start(fields[0], fields[1], fields[2], fields[3], parts[4])
+        /**
+         * [parts] as [numbers] numbers then a sequence id, built by [make] — or null when the count,
+         * a number or the id is wrong, so a malformed id is dropped here rather than handed to
+         * `resolve`.
+         */
+        private fun <T : PairMessage> withTrailingSequenceId(
+            parts: List<String>,
+            numbers: Int,
+            make: (List<Long>, String) -> T?,
+        ): T? {
+            if (parts.size != numbers + 1 || !SEQUENCE_ID.matches(parts[numbers])) return null
+            val fields = parts.take(numbers).map { it.toLongOrNull() ?: return null }
+            return make(fields, parts[numbers])
         }
     }
 }

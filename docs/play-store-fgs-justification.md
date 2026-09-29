@@ -25,11 +25,14 @@ is there.
 - **Text:** the block below, pasted verbatim and read back from the Console after a reload. It is
   the condensed form of the *Declaration text* below. When either changes, re-check the other and
   re-paste the Console from this block.
-- **Revised 2026-09-28 by #220, and not yet re-pasted.** One sentence changed: the #324 filing said
-  *"The only thing it sends is clock readings to the user's own paired watch or phone, which the
-  service does not wait on"*, and since #220 a race start crosses the link too. The block is now
-  1,844 characters (1,787 as filed). **Console holds the #324 text until the owner re-pastes it**,
-  which is due before the next upload of a build carrying #220.
+- **Revised 2026-09-28 by #220, and again the same day by #221, and not yet re-pasted.** One
+  sentence changed each time. The #324 filing said *"The only thing it sends is clock readings to the
+  user's own paired watch or phone, which the service does not wait on"*; since #220 a race start
+  crosses the link too, and since #221 a race's sync and end and the start screen's choice of
+  sequence do as well. The block is now 1,928 characters (1,844 after #220, 1,787 as filed), counted
+  between the fences with line breaks as single characters. **Console holds the #324 text until the
+  owner re-pastes it**, which is due before the next upload of a build carrying #220 or #221 — one
+  re-paste of this block covers both.
 
 ```text
 Mad Cow Race Timer runs a sailboat race start sequence, a fixed countdown of commonly five minutes, on a Wear OS watch and on an Android phone. At exact, predetermined offsets it sounds tones and vibrations. The last one is the starting gun, and a boat that crosses the line before it is penalised.
@@ -38,7 +41,7 @@ The foreground service runs that countdown. It starts only when the user taps St
 
 Why it must start immediately and cannot be paused or restarted: the sequence is anchored to the race committee's flags, so a cue that fires late is a wrong race result. The screen is off for most of a start: the sailor is watching the committee boat and handling the boat, and the phone sits propped on the committee boat's console. Cues are scheduled against a monotonic clock to land within a fraction of a second of their offsets. A paused, deferred or restarted process cannot hold that, and a restart cannot bring back a gun that has already been missed.
 
-No standard type fits. The app plays short alert tones, not media: there is no media session or transport control. It transfers no data and has no INTERNET permission. The only things it sends are clock readings and the race start (which sequence, and when the gun is) to the user's own paired watch or phone, and the service waits on neither. It uses no location, health or body-sensor data. shortService is capped far below a race start followed by a race clock that can run for an hour or more.
+No standard type fits. The app plays short alert tones, not media: there is no media session or transport control. It transfers no data and has no INTERNET permission. The only things it sends are clock readings, the race's start, sync and end (which sequence, when the gun is, how long the race ran) and the start screen's choice of sequence, all to the user's own paired watch or phone, and the service waits on none of them. It uses no location, health or body-sensor data. shortService is capped far below a race start followed by a race clock that can run for an hour or more.
 
 The service posts an ongoing notification the whole time it runs, holds a partial wake lock only while a race is running, never starts at boot, and returns START_NOT_STICKY, so the system does not restart it on its own.
 ```
@@ -98,9 +101,13 @@ Each standard type was considered and does not fit:
   few clock readings through Google Play services' Wearable Data Layer so that both count down to the
   same gun, and a race started on one tells the other which sequence it runs and when its gun is. The
   service sends that start once, after the race it belongs to is already running, and from then
-  until the gun the two devices keep exchanging clock readings. The service never waits on any of
-  it: the first cue has sounded and the foreground is taken before the start is sent, and nothing
-  the service does depends on a reply. Nothing is uploaded, downloaded, backed up or synchronised.
+  until the gun the two devices keep exchanging clock readings. A Sync or End Race taken on one
+  device is sent the same way — the moved gun, or the elapsed time the race was frozen at — after it
+  has already been applied on the device that took it; and the choice of sequence on either start
+  screen is sent to the other's. The service never waits on any of it: the first cue has sounded and
+  the foreground is taken before the start is sent, a Sync or End Race has taken effect before it is
+  told, and nothing the service does depends on a reply. Nothing is uploaded, downloaded, backed up
+  or synchronised.
 
 - **`location`** — no location is used or requested. The app declares no location permission.
 
@@ -131,9 +138,9 @@ standard type for that, which is precisely the case `specialUse` exists to cover
   to resume it.
 - It posts an ongoing notification for the entire time it runs (on the watch, an Ongoing Activity),
   so the user can always see that a race is running and return to it.
-- It requests **no network access**. The only things the app sends anywhere are clock readings and
-  race starts to the user's own paired watch or phone, over the direct connection between them, and
-  never to a server.
+- It requests **no network access**. The only things the app sends anywhere are clock readings, a
+  race's start, sync and end, and the start screen's choice of sequence, to the user's own paired
+  watch or phone, over the direct connection between them, and never to a server.
   That removes the class of abuse that scrutiny of `specialUse` is designed to catch.
 
 ### Manifest subtype value

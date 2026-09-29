@@ -70,11 +70,12 @@ class RaceTimerPhoneApplication : Application(), ViewModelStoreOwner {
         }
         getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
 
-        // How a race the watch started becomes a race here (#220), said before anything can build
-        // the link. Builds nothing itself. The phone is the console: its clock orders every start,
-        // and it is the device that puts a conflict between the two in front of the officer (the
-        // owner's rule at #220's pickup).
-        PairRaces.install(console = true) { context, join, raceRunning ->
+        // How a race the watch started becomes a race here (#220), and where the pre-start setup the
+        // watch mirrors is kept (#221), said before anything can build the link. Builds nothing
+        // itself. The phone is the console: its clock orders every start and pick, and it is the
+        // device that puts a conflict between the two in front of the officer (the owner's rule at
+        // #220's pickup).
+        PairRaces.install(console = true, store = PhoneSetupStore) { context, join, raceRunning ->
             val intent = PhoneTimerService.joinIntent(context, join)
             try {
                 // A service already foreground takes it as a plain start; an idle one needs the

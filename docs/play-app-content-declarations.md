@@ -385,6 +385,50 @@ whether a start is *App interactions, collected* (processed in real time, sent o
 device, never shared). If it is, the change to the answer is small and additive. The owner's call at
 Console time — this section is the evidence for either answer.
 
+## Race controls and the start screen over the link — re-checked for #221, 2026-09-28
+
+[#221](https://github.com/SailorDave17/race-timer/issues/221) makes a Sync or End Race taken on either
+device apply on both, and mirrors what the start screen is set to. Like #220 it adds **no
+permission, no dependency and no component** — `docs/declared-surface.lock` is unchanged again — and
+it adds three message kinds to what the app sends. The format is [`pair-protocol.md`](pair-protocol.md).
+
+**What they carry that nothing did before:** a Sync's moved gun and its stamp, as readings of the
+devices' `elapsedRealtime`, with a random id; an End Race's elapsed time — a **duration**, not a
+reading of any clock; and the start screen's sequence id and lead-in alert, with a stamp and a random
+id. **Every number is still a clock-since-boot reading, a random id, or a duration**, and no time of
+day crosses the link. Nothing changes about *when* the link speaks: a Sync or End Race is sent once,
+after it has taken effect on the device that took it, and a start screen's choice when it is made, when
+the other device comes into range, and when a race is over.
+
+### Every declaration, re-read
+
+| Console section | After #221 | Why |
+|---|---|---|
+| **Privacy policy URL** | Same URL, **revised content** | `docs/privacy-policy.md` revised in the same change: the section is now *race controls*, three rows added to what is exchanged, and the start screen's choice added to what is stored — in the existing pick and lead-in keys, no new one. The effective date moves to 29 September 2026, the day it is expected to merge (owner's choice at #221's gate); confirm the live page when #221 merges |
+| **Data safety** | **No data collected. No data shared** — the #220 argument above carries it unchanged, and the question it leaves open grows by one clause | See below |
+| **Foreground service permissions** | **Text revised — the Console block needs re-pasting** | `docs/play-store-fgs-justification.md`: the block's one sentence about what is sent now names the sync, the end and the start screen's choice. One re-paste covers #220's revision and this one. Until then Console holds the #324 text |
+| **Content ratings** | Unchanged | Still one user's own two devices: no user-to-user interaction, nothing shared with a third party |
+| Every other section | Unchanged | Nothing here touches ads, the advertising ID, target audience, health, finance, government, app access or data deletion |
+
+### Data safety, the #220 argument extended
+
+The three reasons #220 rests the answer on hold for the new kinds, each by the same mechanism:
+
+1. **They go to the user's own other device and nowhere else.**
+2. **Nothing is sent while the devices can reach each other only through the internet.** A Sync, an
+   End Race and a setup are sent to, and taken from, a directly connected peer only:
+   `PairLinkTest`'s "a Sync, an End Race and a setup are neither sent to nor taken from a peer
+   reachable only through the cloud", which #221's mutation pass made fail from both ends on purpose
+   (M8 and M9, 2 red each, as predicted).
+3. **They are used in real time, and kept only where the app already kept the same thing.** A moved
+   gun is saved in the race-snapshot keys, as a joined start is; a start screen's choice from the
+   other device is saved in the pick and lead-in keys, as a choice made on this one is.
+
+**The open question grows by one clause.** A start screen's choice says *which sequence the user
+chose* before any race, which is the same kind of statement as a start's — so if a start is ever
+declared *App interactions, collected*, a start screen's choice belongs in the same answer, and an
+End Race's elapsed time beside it. It is the same question, answered once, at Console time.
+
 ## Content ratings — the questionnaire
 
 Answers go to IARC, and ratings are then issued per-territory automatically. Every substantive
@@ -422,6 +466,7 @@ change that, on the day it merges, makes something above **wrong**.
 | **Free-text entry** (naming a custom sequence, say) | The content rating's user-generated-content answer changes, and Data safety may gain a type depending on where the text goes |
 | **Data Layer sync between the watch and the phone** ([#219](https://github.com/SailorDave17/race-timer/issues/219)) | **Landed 2026-09-25.** Data does now leave a device by the app's own action — clock readings, to the user's other device — and Data safety was re-answered from scratch in *The pair link* above rather than edited: same answer, new grounds, one gap named. The privacy policy and the FGS justification were rewritten where they said the app transmits nothing; no permission moved in either manifest. The watch's standalone `meta-data` was re-read and stays true, as predicted |
 | **Starts sent over the link** ([#220](https://github.com/SailorDave17/race-timer/issues/220)) | **Landed 2026-09-28.** No permission, dependency or component moved, so the lock stayed green — the example of a change this table predicts that the lock by construction cannot see. What moved is **what is sent**: a sequence id, the first thing sent that describes what the user did. The privacy policy, the FGS text (Console re-paste owed) and Data safety's reasons moved; Data safety's answer did not, pending the question in *Race starts over the link* |
+| **Race controls and the start screen sent over the link** ([#221](https://github.com/SailorDave17/race-timer/issues/221)) | **Landed with #221.** No permission, dependency or component moved, so the lock stayed green for the second time running. What moved is again **what is sent**: a Sync's gun, an End Race's elapsed time, and the start screen's choice. The privacy policy and the FGS text moved (one Console re-paste now covers #220 and #221); Data safety's answer did not, and its open question grew by the start screen's choice |
 | **Haptics on the phone** ([#208](https://github.com/SailorDave17/race-timer/issues/208)) | **Landed 2026-09-05.** Added `VIBRATE` to the phone manifest. Nothing in this document moved — the permission was already declared by the watch and already in the app-wide set — and `docs/privacy-policy.md`'s permission table, which said `VIBRATE` was **watch-only**, was corrected in the same change, with its effective date. Kept as the worked example of a manifest change that moves one document and not the other |
 
 **One row of this table has already been half-resolved, and the correction is instructive.** It

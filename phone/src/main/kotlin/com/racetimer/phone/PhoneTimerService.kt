@@ -19,9 +19,11 @@ import com.racetimer.shared.CueTiming
 import com.racetimer.shared.JoinGun
 import com.racetimer.shared.JoinOutcome
 import com.racetimer.shared.LaunchPlan
+import com.racetimer.shared.PairControlledGun
 import com.racetimer.shared.PairJoin
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
+import com.racetimer.shared.SetupChoice
 import com.racetimer.shared.StartPlan
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
@@ -77,8 +79,16 @@ import com.racetimer.shared.startPlan
  * start wins, and whether to join at all, is decided before the intent is sent (`PairStarts`, through
  * [PairRaces]); this service only carries the answer out. A race started here from the top is told
  * to the pair after it is running, so a phone with no watch runs the race it always ran.
+ *
+ * ### The watch's Sync and End Race (#221)
+ *
+ * This service is the phone's [PairRaces.RaceService]: the watch's Sync arrives as [moveGun] and its
+ * End Race as [endRaceAt], each on the main thread and each carried out as the local control is —
+ * a moved gun re-sizes the wake lock exactly as [ACTION_SYNC] does (#126, whose defect class must
+ * not be reborn through the remote path), and an ended race winds the foreground down exactly as
+ * [ACTION_END_RACE] does. A Sync or End Race taken here is told to the watch after it has been taken.
  */
-class PhoneTimerService : Service() {
+class PhoneTimerService : Service(), PairRaces.RaceService {
 
     inner class LocalBinder : Binder() {
         val service: PhoneTimerService get() = this@PhoneTimerService
@@ -281,7 +291,51 @@ class PhoneTimerService : Service() {
         )
         runner.engine.addListener(engineListener)
         pairRaces = PairRaces.get(this)
-        pairRaces.attach { runner.raceInProgress }
+        pairRaces.attach(this)
+    }
+
+    // --- The pair's view of this service (#221) ------------------------------------------------
+
+    override fun raceRunning(): Boolean = runner.raceInProgress
+
+    /**
+     * IDLE and nothing else: a "GO!" still on screen and a frozen summary are both races the officer
+     * is looking at, and a setup from the watch must not load over either.
+     */
+    override fun atPreStart(): Boolean = runner.engine.currentState == TimerState.IDLE
+
+    /**
+     * The watch's Sync, on this clock: [ACTION_SYNC]'s work around a gun given rather than snapped.
+     *
+     * The flag a joined race carries follows the gun it is now counting to — cleared when the move
+     * was placed inside D2's budget, and saying so in a Sync's words when it was not — because the
+     * gun is now the watch's, placed by the link as a joined start's is (#220 AC 5).
+     */
+    override fun moveGun(gun: JoinGun): Boolean {
+        if (!runner.moveGun(gun.gunMs)) return false
+        pairJoinNotice = pairJoinNotice(gun, peerNoun = "Watch", placedBy = PairControlledGun.SYNC)
+        // The re-compute #126 exists for, on the remote path: the move can put the gun later than
+        // the lock was sized for. Only a countdown can have moved, so this always runs.
+        acquireWakeLock()
+        return true
+    }
+
+    /**
+     * The watch's End Race: the count-up frozen at the watch's time and the foreground wound down,
+     * as [ACTION_END_RACE] winds it. A second end that only lowers an already-frozen time has
+     * nothing left to wind down.
+     */
+    override fun endRaceAt(elapsedMs: Long): Long? {
+        val wasCountingUp = runner.engine.currentState == TimerState.COUNTING_UP
+        val held = runner.endRaceAt(elapsedMs) ?: return null
+        if (wasCountingUp) stopForegroundAndCleanup()
+        return held
+    }
+
+    /** The watch's setup, onto the runner's selection — only at the pre-start screen, as [atPreStart] says. */
+    override fun applySetup(choice: SetupChoice) {
+        if (!atPreStart()) return
+        BuiltInSequences.resolve(choice.sequenceId)?.let { runner.select(it) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -343,12 +397,14 @@ class PhoneTimerService : Service() {
             ACTION_SYNC -> {
                 // The officer has checked the clock against a flag: a joined race's gun is theirs now.
                 pairJoinNotice = null
-                runner.sync()
+                val taken = runner.sync()
                 // The re-compute #126 exists for: a sync can move the gun later, and the lock's
                 // timeout was sized from the remaining time at the moment it was acquired. Re-size
                 // from what is remaining *now*; unconditional within RUNNING because the engine
                 // refuses a sync on its own terms and a redundant re-acquire costs one release.
                 if (runner.engine.currentState == TimerState.RUNNING) acquireWakeLock()
+                // Last, as a start is told (#221): the watch moves to the gun this snap produced.
+                if (taken) runner.engine.snapshot()?.gunElapsedMs?.let { pairRaces.syncedHere(it) }
             }
             ACTION_END_RACE -> {
                 // Freezes the elapsed time into RACE_ENDED (see TimerEngine.endRace) — the engine
@@ -362,7 +418,13 @@ class PhoneTimerService : Service() {
                 // recoverability rule would happily restore a `countUpAfterFinish` race past its
                 // gun, so a snapshot surviving End Race would come back as a *running* count-up and
                 // un-freeze the very race the committee just closed.
+                val wasCountingUp = runner.engine.currentState == TimerState.COUNTING_UP
                 runner.endRace()
+                // The watch ends at the time frozen here (#221), told before the teardown below
+                // tells the pair this race is over.
+                if (wasCountingUp && runner.engine.currentState == TimerState.RACE_ENDED) {
+                    pairRaces.endedHere(-runner.engine.remainingMs)
+                }
                 stopForegroundAndCleanup()
             }
             ACTION_STOP -> {

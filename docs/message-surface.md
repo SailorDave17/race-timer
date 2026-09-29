@@ -86,7 +86,7 @@ driven by the `message: String?` parameter and cleared through `onMessageExpired
 | Backing | `#FF3A2A00` (opaque dark amber), 8 dp rounded corners, 8 × 3 dp padding |
 | Lifetime | `showTransientMessage` sets `uiMessage`; a `LaunchedEffect` **in `TimerScreen`** clears it after `MESSAGE_DURATION_MS` = 3 s, counted from the composition that puts it on screen |
 | Interaction | None. Not tappable, not dismissible, does not block anything |
-| Consumers | Seven, all via `showTransientMessage`: `restorePendingSelection` → "Saved race unreadable — starting fresh" and "Saved sequence unreadable — using default"; `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady"; `announceRestoreOutcome` → "Resumed race in progress" (`EXACT`) and "Old race ended — starting fresh" (`EXPIRED`); `announceCueLoss` → "Cue silent — wrist still buzzing" (`DROPPED`) and "Cue cut short — wrist still buzzing" (`TRUNCATED`), #161 |
+| Consumers | All via `showTransientMessage`: `restorePendingSelection` → "Saved race unreadable — starting fresh" and "Saved sequence unreadable — using default"; `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady"; `announceRestoreOutcome` → "Resumed race in progress" (`EXACT`) and "Old race ended — starting fresh" (`EXPIRED`); `announceCueLoss` → "Cue silent — wrist still buzzing" (`DROPPED`) and "Cue cut short — wrist still buzzing" (`TRUNCATED`), #161; `pairEventListener` → "Phone synced a race not running here" and "Phone ended a race not running here" (`PairEvent.StaleControl`), #221. *(This cell counted its consumers until #221, which would have made the count wrong by adding two; it lists them instead.)* |
 
 ### Why it is below the readout, and why the screen owns the timer (#102)
 
@@ -208,7 +208,7 @@ persisting until the sailor acts because each asks for something a 3 s banner co
 | Site | Line | On screen when | Scrim |
 |---|---|---|---|
 | Degraded-recovery prompt | "Recovered — tap Sync to confirm" | `RUNNING`, after a `DEGRADED` restore, until Sync is tapped | **Yes** — `#FF3A2A00`, added by #123 |
-| The same prompt, for a race joined from the phone (#220) | "Phone start ±*N* ms — tap Sync to confirm", or "Phone start unmeasured — tap Sync to confirm" | `RUNNING`, after joining a race whose gun the link could not place inside the pair's 100 ms budget, until Sync is tapped or the race ends | **Yes** — the same line, so the same scrim |
+| The same prompt, for a race joined from the phone (#220) or a gun the phone's Sync moved (#221) | "Phone start ±*N* ms — tap Sync to confirm", or "Phone start unmeasured — tap Sync to confirm"; after the phone's Sync, "Phone sync ±*N* ms — …" and "Phone sync unmeasured — …" | `RUNNING`, after joining a race — or taking the phone's Sync — whose gun the link could not place inside the pair's 100 ms budget, until Sync is tapped here, a later Sync from the phone lands inside the budget, or the race ends | **Yes** — the same line, so the same scrim |
 | Discard warning (#89) | "Start discards saved *name*" | `IDLE` pre-start only, cleared by `clearResumeOffer` | No — navy is its whole exposure |
 | `StartNotice` warning line (#13, #96) | the three Tier 3 rows of the catalogue below, plus "Do Not Disturb — cues silent, wrist still buzzing" | `IDLE` for #13's three; `RUNNING` for #96's | **Yes** — `#FF3A2A00` |
 
@@ -401,6 +401,8 @@ screen fails rather than wraps. *It asserted only the first of those until #231,
 | Spent snapshot discarded | 1 | "Old race ended — starting fresh" | none — **shipped** |
 | Degraded recovery | 3 | "Recovered — tap Sync to confirm" | Sync — **shipped**, scrimmed #123 |
 | Race joined from the phone on a gun outside the pair's budget | 3 | "Phone start ±*N* ms — tap Sync to confirm" / "Phone start unmeasured — tap Sync to confirm" | Sync — **shipped** (#220), on the degraded-recovery line. The copy is `pairJoinNotice` in `shared/PairRace.kt`, not `StartPreconditions.kt`, and `PairRaceTest` holds it against this plate and the 60-character ceiling at the widest bounds a link produces |
+| The phone's Sync moved the gun outside the pair's budget | 3 | "Phone sync ±*N* ms — tap Sync to confirm" / "Phone sync unmeasured — tap Sync to confirm" | Sync — **shipped** (#221), the same line and the same `pairJoinNotice`, in a Sync's words; `PairRaceTest` holds these to the plate as well |
+| A Sync or End Race from the phone for a race not running here | 1 | "Phone synced a race not running here" / "Phone ended a race not running here" | none — **shipped** (#221). The copy is `pairStaleControlLine` in `shared/PairRace.kt`, and `PairRaceTest` holds it against the banner's line budget and the 60-character ceiling. News about the pair, not a condition to act on here, so Tier 1 |
 | Cue volume raise refused (Do Not Disturb) | 3 | "Do Not Disturb — cues silent, wrist still buzzing" | none — **shipped** (#96), `RUNNING` only |
 | Cue dropped mid-race | 1 | "Cue silent — wrist still buzzing" | none — **shipped** (#161) |
 | Cue truncated mid-race | 1 | "Cue cut short — wrist still buzzing" | none — **shipped** (#161) |
