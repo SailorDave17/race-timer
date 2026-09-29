@@ -1,6 +1,7 @@
 package com.racetimer.shared
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -98,6 +99,7 @@ class PairLinkTest {
         val peerSyncs = mutableListOf<PeerSync>()
         val peerEnds = mutableListOf<PeerEnd>()
         val peerSetups = mutableListOf<PeerSetup>()
+        val peerChecks = mutableListOf<PeerCheck>()
         var nearbyNews = 0
         val link = PairLink(
             clock = device,
@@ -110,6 +112,7 @@ class PairLinkTest {
             onPeerEnd = { peerEnds += it },
             onPeerSetup = { peerSetups += it },
             onPeerNearby = { nearbyNews++ },
+            onPeerCheck = { peerChecks += it },
         )
     }
 
@@ -415,6 +418,8 @@ class PairLinkTest {
             PairMessage.End(-9L, 2_700_000L),
             PairMessage.Setup(36_000_500L, 11L, 60L, "custom_8m"),
             PairMessage.Setup(Long.MIN_VALUE, 1L, 0L, "us_sailing_race_manager"),
+            PairMessage.Check(1_790_000_000_000L, -9L, 36_000_500L, -4L, 36_000_600L, 36_300_000L, anchored = true, sequenceId = "custom_8m"),
+            PairMessage.Check(Long.MIN_VALUE, 1L, Long.MAX_VALUE, 2L, 3L, 4L, anchored = false, sequenceId = "scholastic_race_manager_alert60s"),
         )
         messages.forEach { assertEquals(it, PairMessage.decode(it.encode())) }
     }
@@ -433,6 +438,10 @@ class PairLinkTest {
             "rtpair1 end 1", "rtpair1 end 1 -5", "rtpair1 end 1 2 3",
             "rtpair1 setup 1 2 60", "rtpair1 setup 1 2 60 club-3", "rtpair1 setup 1 x 60 club_3_2_1",
             "rtpair1 setup 1 2 3 club_3_2_1", "rtpair1 setup 1 2 121 club_3_2_1", "rtpair1 setup 1 2 -60 club_3_2_1",
+            // #222: a check a field short or long, a number that is not one, a bad id, and an
+            // anchored flag that is neither 0 nor 1.
+            "rtpair1 check 1 2 3 4 5 6 club_3_2_1", "rtpair1 check 1 2 3 4 5 6 1 1 club_3_2_1", "rtpair1 check 1 2 x 4 5 6 1 club_3_2_1",
+            "rtpair1 check 1 2 3 4 5 6 1 club-3", "rtpair1 check 1 2 3 4 5 6 2 club_3_2_1", "rtpair1 check 1 2 3 4 5 6 -1 club_3_2_1",
         )
         rejected.forEach { assertNull(it, PairMessage.decode(it.toByteArray(Charsets.UTF_8))) }
     }
@@ -559,6 +568,54 @@ class PairLinkTest {
         discover()
         arriving.forEach { b.link.onMessage(phone.id, it.encode(), watch.elapsedMs()) }
         assertEquals(listOf(1, 1, 1), listOf(b.peerSyncs.size, b.peerEnds.size, b.peerSetups.size))
+    }
+
+    // --- a check when the link comes back (#222) --------------------------------------------------
+
+    @Test
+    fun `a check lands with the race, the key its gun was set under, and the gun on this clock`() {
+        discover()
+        a.link.setActive(true)
+        world.advance(5_000L)
+
+        // The phone's race after a Sync of its own: the gun moved, under the Sync's key, set here.
+        val synced = startOn(phone, gunInMs = 4 * 60_000L).copy(gunKey = RaceKey(9L, 3L))
+        a.link.announceCheck(synced)
+        world.advance(1_000L)
+
+        val check = b.peerChecks.single()
+        assertEquals(synced.key, check.key)
+        assertEquals(RaceKey(9L, 3L), check.gunKey)
+        assertEquals("us_sailing_5_4_1", check.sequenceId)
+        assertTrue("a gun its own device set is anchored there", check.anchored)
+        val bound = check.gun.errorBoundMs ?: throw AssertionError("a linked pair translates the gun")
+        val error = kotlin.math.abs(physicalAt(watch, check.gun.gunMs) - physicalAt(phone, synced.gun.gunMs))
+        assertTrue("the two guns are $error ms apart, bound $bound", error <= bound)
+
+        // A gun this device placed through the link says so.
+        a.link.announceCheck(synced.copy(gun = JoinGun(synced.gun.gunMs, 40L)))
+        world.advance(1_000L)
+        assertFalse(b.peerChecks.last().anchored)
+    }
+
+    @Test
+    fun `a check is neither sent to nor taken from a peer reachable only through the cloud`() {
+        air.nearby = false
+        discover()
+
+        a.link.announceCheck(startOn(phone, gunInMs = 60_000L))
+        world.advance(1_000L)
+        assertTrue("nothing sent over the cloud", air.sent.none { it.second.startsWith("rtpair1 check") })
+
+        val arriving = PairMessage.Check(1L, 2L, 1L, 2L, phone.elapsedMs(), phone.elapsedMs() + 60_000L, anchored = true, sequenceId = "club_3_2_1")
+        b.link.onMessage(phone.id, arriving.encode(), watch.elapsedMs())
+        assertTrue(b.peerChecks.isEmpty())
+
+        // The positive control: the same message from a nearby peer is taken.
+        air.nearby = true
+        discover()
+        b.link.onMessage(phone.id, arriving.encode(), watch.elapsedMs())
+        assertEquals(1, b.peerChecks.size)
     }
 
     @Test

@@ -41,7 +41,9 @@ import com.racetimer.shared.PairStatus
 import com.racetimer.shared.SetupChoice
 import com.racetimer.shared.leadInBaseId
 import com.racetimer.shared.pairContestLine
+import com.racetimer.shared.pairGunCorrectedLine
 import com.racetimer.shared.pairGunMovedLine
+import com.racetimer.shared.pairLinkLostLine
 import com.racetimer.shared.pairStaleControlLine
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
@@ -183,6 +185,8 @@ class MainActivity : ComponentActivity() {
         val text = when (event) {
             is PairEvent.GunMoved -> pairGunMovedLine(event.setRemainingMs, peerNoun = "Watch")
             is PairEvent.StaleControl -> pairStaleControlLine(event.control, peerNoun = "Watch")
+            // #222: the link came back and this phone's gun moved a few milliseconds to the watch's.
+            is PairEvent.GunCorrected -> pairGunCorrectedLine(event.shiftMs, peerNoun = "Watch")
         }
         pairNewsState.value = PairNews(text, ++pairNewsSerial)
     }
@@ -332,6 +336,7 @@ class MainActivity : ComponentActivity() {
                     onSyncToPhone = { syncTo(phone = true) },
                     onSyncToWatch = { syncTo(phone = false) },
                     readPairNotice = { boundService?.pairJoinNotice },
+                    readPairLinkLost = { PairRaces.get(this).linkLost },
                     pairNews = pairNewsState.value,
                     onPairNewsExpired = { expired ->
                         if (pairNewsState.value == expired) pairNewsState.value = null
@@ -412,7 +417,10 @@ class MainActivity : ComponentActivity() {
  *
  * [pairChoice] is the line for a conflict between the phone's start and the watch's (#220), already
  * worded, with [onSyncToPhone] and [onSyncToWatch] as the two answers; [readPairNotice] reads the
- * standing flag a joined race owes when its gun could not be placed inside the budget.
+ * standing flag a joined race owes when its gun could not be placed inside the budget, or a
+ * reconnect found the two guns further apart than it corrects by itself (#222).
+ * [readPairLinkLost] reads whether the running race had the watch in range and has lost it (#222),
+ * which puts the lowest line on the notice slot for as long as the two are apart.
  *
  * [pairNews] is a line about something the watch did (#221) — its Sync, or a control for a race not
  * running here — shown on the notice line for [PAIR_NEWS_DWELL_MS] and then handed back through
@@ -447,6 +455,7 @@ internal fun RaceTimerApp(
     onSyncToPhone: () -> Unit = {},
     onSyncToWatch: () -> Unit = {},
     readPairNotice: (() -> String?)? = null,
+    readPairLinkLost: (() -> Boolean)? = null,
     pairNews: PairNews? = null,
     onPairNewsExpired: (PairNews) -> Unit = {},
     @Suppress("UNUSED_PARAMETER") selectionVersion: Int = 0,
@@ -483,6 +492,9 @@ internal fun RaceTimerApp(
     // A joined race's standing flag (#220 AC 5): the service holds it until Sync or the race's end,
     // and this only reads it.
     var pairNotice by remember { mutableStateOf<String?>(null) }
+    // Whether this race had the watch in range and has lost it (#222 AC 1). The pair holds it, for
+    // the race rather than for this screen, and this only reads it.
+    var pairLinkLost by remember { mutableStateOf(false) }
 
     // The sequence a selection chose while a race was still running, held until the officer says
     // whether to end that race (#281 AC 4). Null whenever there is nothing to confirm — and it is
@@ -581,6 +593,7 @@ internal fun RaceTimerApp(
             }
             if (state != TimerState.RUNNING && state != TimerState.FINISHED) restoreNotice = null
             pairNotice = readPairNotice?.invoke()
+            pairLinkLost = readPairLinkLost?.invoke() == true
             delay(UI_REFRESH_MS)
         }
     }
@@ -806,8 +819,10 @@ internal fun RaceTimerApp(
             },
             // A joined race's flag outranks a restore's line: it is about the gun being counted to.
             // A line about what the watch just did outranks both, for its three seconds (#221): it
-            // is the news, and the standing line is back underneath it when it goes.
-            notice = pairNews?.text ?: pairNotice ?: restoreNotice,
+            // is the news, and the standing line is back underneath it when it goes. A lost link
+            // is last (#222): it asks nothing of the officer, and the race counts on regardless.
+            notice = pairNews?.text ?: pairNotice ?: restoreNotice
+                ?: pairLinkLostLine(peerNoun = "Watch").takeIf { pairLinkLost && raceActive },
             brightnessPrompt = brightnessPrompt,
             onKeepBright = { displayChoice.answerCountUpBrightness(keepBright = true) },
             onDimCountUp = { displayChoice.answerCountUpBrightness(keepBright = false) },

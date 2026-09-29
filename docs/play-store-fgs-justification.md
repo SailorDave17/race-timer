@@ -33,6 +33,10 @@ is there.
   between the fences with line breaks as single characters. **Console holds the #324 text until the
   owner re-pastes it**, which is due before the next upload of a build carrying #220 or #221 — one
   re-paste of this block covers both.
+- **#222 (2026-09-29) revised the declaration text below and not this block.** A reconnect re-sends
+  the race each device is running and its gun, which the block's sentence already names — *the
+  race's start … (which sequence, when the gun is …)* — so the block reads true as it stands and
+  #222 adds nothing to the re-paste above. The long form gained the sentence saying when.
 
 ```text
 Mad Cow Race Timer runs a sailboat race start sequence, a fixed countdown of commonly five minutes, on a Wear OS watch and on an Android phone. At exact, predetermined offsets it sounds tones and vibrations. The last one is the starting gun, and a boat that crosses the line before it is penalised.
@@ -104,7 +108,9 @@ Each standard type was considered and does not fit:
   until the gun the two devices keep exchanging clock readings. A Sync or End Race taken on one
   device is sent the same way — the moved gun, or the elapsed time the race was frozen at — after it
   has already been applied on the device that took it; and the choice of sequence on either start
-  screen is sent to the other's. The service never waits on any of it: the first cue has sounded and
+  screen is sent to the other's. When the two devices come back within reach during a race, each
+  sends the other the race it is running and where its gun stands, so that a start or an end one of
+  them missed while they were apart is caught up. The service never waits on any of it: the first cue has sounded and
   the foreground is taken before the start is sent, a Sync or End Race has taken effect before it is
   told, and nothing the service does depends on a reply. Nothing is uploaded, downloaded, backed up
   or synchronised.

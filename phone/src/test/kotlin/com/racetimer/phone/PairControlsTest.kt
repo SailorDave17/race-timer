@@ -7,7 +7,9 @@ import androidx.test.core.app.ApplicationProvider
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.JoinGun
 import com.racetimer.shared.RaceSequence
+import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.SetupChoice
+import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -92,6 +94,59 @@ class PairControlsTest {
 
         assertEquals(TimerState.IDLE, svc.runner.engine.currentState)
         assertNull("nothing ever took a lock", ShadowPowerManager.getLatestWakeLock())
+    }
+
+    // --- #222: a reconnect's correction, and a gap beyond it ----------------------------------------
+
+    private class Heard : TimerListener {
+        val syncs = mutableListOf<Long>()
+        override fun onCue(cue: SequenceCue) {}
+        override fun onGun() {}
+        override fun onTick(remainingMs: Long) {}
+        override fun onSync(snappedToMs: Long) {
+            syncs += snappedToMs
+        }
+    }
+
+    @Test
+    fun `a reconnect's correction moves the gun, persisted, re-sizes the lock, and is no Sync`() {
+        val svc = startedService()
+        val heard = Heard().also { svc.runner.engine.addListener(it) }
+        val first = ShadowPowerManager.getLatestWakeLock()
+        val corrected = svc.runner.engine.snapshot()!!.gunElapsedMs + 60L
+
+        assertTrue(svc.correctGun(JoinGun(corrected, 30L)))
+
+        assertEquals(corrected, svc.runner.engine.snapshot()?.gunElapsedMs)
+        assertEquals("a restore comes back to the corrected gun", corrected, persistence().saved()?.gunElapsedMs)
+        assertNotSame("the correction did not re-acquire the lock", first, ShadowPowerManager.getLatestWakeLock())
+        assertFalse(first.isHeld)
+        assertTrue("nobody tapped Sync, and nothing heard one", heard.syncs.isEmpty())
+    }
+
+    @Test
+    fun `a gap beyond the bound stands until a Sync here, and a correction inside the budget clears it`() {
+        val svc = startedService()
+        assertTrue(svc.gunsApart(8_000L))
+        assertEquals("Watch gun 8.0 s apart — tap Sync to confirm", svc.pairJoinNotice)
+
+        svc.onStartCommand(Intent().setAction(PhoneTimerService.ACTION_SYNC), 0, 2)
+        assertNull("the officer synced against the flag", svc.pairJoinNotice)
+
+        svc.gunsApart(-250L)
+        svc.correctGun(JoinGun(svc.runner.engine.snapshot()!!.gunElapsedMs, 30L))
+        assertNull(svc.pairJoinNotice)
+    }
+
+    @Test
+    fun `past the gun, or with no race, there is nothing to correct and no Sync to ask for`() {
+        assertFalse(createdService().correctGun(JoinGun(SystemClock.elapsedRealtime() + 60_000L, 30L)))
+        assertFalse(createdService().gunsApart(8_000L))
+
+        val svc = countingUp()
+        assertFalse(svc.correctGun(JoinGun(svc.runner.engine.snapshot()!!.gunElapsedMs + 50L, 30L)))
+        assertFalse(svc.gunsApart(8_000L))
+        assertNull(svc.pairJoinNotice)
     }
 
     // --- AC 2: the watch's End Race ---------------------------------------------------------------

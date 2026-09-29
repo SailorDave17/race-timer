@@ -295,6 +295,23 @@ class MessageContrastTest {
         )
     }
 
+    // --- The phone out of range mid-race (#222) ---------------------------------------------------
+
+    /** The states the lost-link line speaks in, derived by driving `armedNotice` as above. */
+    private fun statesTheLostLinkSpeaksIn(): Set<TimerState> =
+        TimerState.values().filter { armedNotice(it, cueVolumeRefused = false, pairLinkLost = true) != null }.toSet()
+
+    @Test fun `the lost-link line is legible on every background it can appear on`() {
+        // The same plate as the cue-volume warning, and a wider reach: it outlives the gun into a
+        // count-up. Derived, so the count-up's background is checked because the rule speaks there.
+        val reachable = backgroundsWhen { it in statesTheLostLinkSpeaksIn() }
+        assertTrue(
+            "the positive control: it meets the amber minute and the red final ten",
+            BG_ONE_MINUTE_ARGB in reachable && BG_FINAL_TEN_ARGB in reachable,
+        )
+        assertLegible("Tier 3 lost-link line", TIER3_TEXT_ARGB, TIER3_SCRIM_ARGB, reachable)
+    }
+
     // --- The countdown itself, which had no guard at all until #12 -----------------------------
 
     @Test fun `the countdown digits are legible on every background they can render on`() {

@@ -28,6 +28,7 @@ import com.racetimer.shared.StartPlan
 import com.racetimer.shared.TimerListener
 import com.racetimer.shared.TimerState
 import com.racetimer.shared.launchPlan
+import com.racetimer.shared.pairGunsApartLine
 import com.racetimer.shared.pairJoinNotice
 import com.racetimer.shared.startPlan
 
@@ -317,6 +318,31 @@ class PhoneTimerService : Service(), PairRaces.RaceService {
         // The re-compute #126 exists for, on the remote path: the move can put the gun later than
         // the lock was sized for. Only a countdown can have moved, so this always runs.
         acquireWakeLock()
+        return true
+    }
+
+    /**
+     * A reconnect's correction within D6's bound (#222): [moveGun]'s work with nothing a Sync is
+     * heard by. The phone gives a Sync no buzz or beep of its own — the snap is its feedback — so the
+     * difference here is only that the runner's engine tells no listener, and the persist the
+     * listener's `onSync` would have done is done here.
+     */
+    override fun correctGun(gun: JoinGun): Boolean {
+        if (!runner.correctGun(gun.gunMs)) return false
+        pairJoinNotice = pairJoinNotice(gun, peerNoun = "Watch", placedBy = PairControlledGun.SYNC)
+        persistSnapshot()
+        acquireWakeLock()
+        return true
+    }
+
+    /**
+     * The watch's gun came back further from this one than D6 corrects by itself (#222): the
+     * standing line asks for Sync, and clears as a joined race's does — on Sync, on a move placed
+     * inside the budget, and with the race.
+     */
+    override fun gunsApart(apartMs: Long): Boolean {
+        if (runner.engine.currentState != TimerState.RUNNING) return false
+        pairJoinNotice = pairGunsApartLine(apartMs, peerNoun = "Watch")
         return true
     }
 

@@ -18,9 +18,10 @@ import com.racetimer.shared.SetupChoice
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Start on either device (#220), and the race's controls and pre-start setup on either device
- * (#221), on the main thread: the one [PairStarts] and [PairSetup] this process runs, wired to the
- * Data Layer on one side and to whichever service runs the race on the other.
+ * Start on either device (#220), the race's controls and pre-start setup on either device (#221),
+ * and what a dropped link and its return mean for a race (#222), on the main thread: the one
+ * [PairStarts] and [PairSetup] this process runs, wired to the Data Layer on one side and to
+ * whichever service runs the race on the other.
  *
  * The rules themselves are `:shared`'s, where the JVM tests drive them across two simulated devices.
  * What is here is the Android residue, and it is one copy for both apps (D1's reason for this module):
@@ -96,6 +97,19 @@ class PairRaces private constructor(private val app: Context, private val link: 
 
         /** Put the peer's setup on whatever this service holds of the pre-start screen. */
         fun applySetup(choice: SetupChoice) {}
+
+        /**
+         * A reconnect's correction within D6's bound (#222): move the countdown's gun as [moveGun]
+         * does — cues re-aimed, wake lock re-sized, race persisted — with none of a Sync's buzz or
+         * beep, since nobody tapped anything. False when there is no countdown to move.
+         */
+        fun correctGun(gun: JoinGun): Boolean
+
+        /**
+         * The peer's gun came back [apartMs] from this one, beyond D6's bound (#222): put up the
+         * standing line asking for Sync. False when there is no countdown here to Sync.
+         */
+        fun gunsApart(apartMs: Long): Boolean
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -137,6 +151,10 @@ class PairRaces private constructor(private val app: Context, private val link: 
             override fun moveGun(gun: JoinGun): Boolean = service?.moveGun(gun) == true
 
             override fun endRaceAt(elapsedMs: Long): Long? = service?.endRaceAt(elapsedMs)
+
+            override fun correctGun(gun: JoinGun): Boolean = service?.correctGun(gun) == true
+
+            override fun gunsApart(apartMs: Long): Boolean = service?.gunsApart(apartMs) == true
         },
         clock = SystemMonotonicClock,
         console = installedConsole,
@@ -151,11 +169,26 @@ class PairRaces private constructor(private val app: Context, private val link: 
         link.onPeerSync = { sync -> main.post { starts.onPeerSync(sync) } }
         link.onPeerEnd = { end -> main.post { starts.onPeerEnd(end) } }
         link.onPeerSetup = { peerSetup -> main.post { setup.onPeerSetup(peerSetup) } }
-        link.onPeerNearby = { main.post { setup.onPeerNearby() } }
+        link.onPeerNearby = {
+            main.post {
+                setup.onPeerNearby()
+                starts.onPeerNearby()
+            }
+        }
+        link.onPeerCheck = { check -> main.post { starts.onPeerCheck(check) } }
+        // #222. Process-long, like this object: whether a race has lost its link is the race's, not
+        // any screen's, so it is kept current whatever is on view. Delivered on the main thread.
+        link.addStatusListener { status -> starts.onLinkStatus(status) }
     }
 
     /** The conflict waiting for the officer on the phone, or null. Always null on the watch. */
     val contest: PairContest? get() = starts.contest
+
+    /**
+     * Whether the race running here had the other device in range and has lost it (#222), read on
+     * the main thread by each app's screen for its standing line.
+     */
+    val linkLost: Boolean get() = starts.linkLost
 
     /** The service that runs races. Detach on destroy. */
     fun attach(service: RaceService) {

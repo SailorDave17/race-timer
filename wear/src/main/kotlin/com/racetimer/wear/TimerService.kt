@@ -31,6 +31,7 @@ import com.racetimer.shared.JoinGun
 import com.racetimer.shared.JoinOutcome
 import com.racetimer.shared.PairControlledGun
 import com.racetimer.shared.PairJoin
+import com.racetimer.shared.pairGunsApartLine
 import com.racetimer.shared.pairJoinNotice
 import com.racetimer.shared.cueStream
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
@@ -331,6 +332,32 @@ class TimerService : Service(), PairRaces.RaceService {
         // The re-compute #126 exists for, on the remote path: see ACTION_SYNC below for why a lock
         // sized at Start does not cover a gun a Sync moved. Only a countdown can have moved.
         acquireWakeLock()
+        return true
+    }
+
+    /**
+     * A reconnect's correction within D6's bound (#222): [moveGun]'s work without the buzz and beep.
+     * Those are what a Sync is felt and heard by, and nobody tapped one; the officer is told by the
+     * screen's banner instead. The engine tells no listener, so the persist its `onSync` would have
+     * done is done here.
+     */
+    override fun correctGun(gun: JoinGun): Boolean {
+        if (!engine.correctGun(gun.gunMs)) return false
+        scheduleNextCue()
+        pairJoinNotice = pairJoinNotice(gun, peerNoun = "Phone", placedBy = PairControlledGun.SYNC)
+        persistSnapshot()
+        acquireWakeLock()
+        return true
+    }
+
+    /**
+     * The phone's gun came back further from this one than D6 corrects by itself (#222): the
+     * standing line asks for Sync, on the degraded-recovery prompt's plate, and clears as a joined
+     * race's does — on Sync, on a move placed inside the budget, and with the race.
+     */
+    override fun gunsApart(apartMs: Long): Boolean {
+        if (engine.currentState != TimerState.RUNNING) return false
+        pairJoinNotice = pairGunsApartLine(apartMs, peerNoun = "Phone")
         return true
     }
 

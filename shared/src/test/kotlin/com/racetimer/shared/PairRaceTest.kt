@@ -104,8 +104,15 @@ class PairRaceTest {
         val events = mutableListOf<PairEvent>()
         val moves = mutableListOf<JoinGun>()
         val syncsHeard = mutableListOf<Long>()
+
+        /** Every reconnect correction the pair asked of this device (#222), taken or not. */
+        val corrections = mutableListOf<JoinGun>()
+
+        /** Every gap beyond D6's bound this device was told to flag for Sync (#222), and took. */
+        val flaggedApart = mutableListOf<Long>()
         val link: PairLink = PairLink(
             clock = device,
+            onStatus = { starts.onLinkStatus(it) },
             transport = object : PairTransport {
                 override fun send(peerId: String, payload: ByteArray, onFailed: () -> Unit) {
                     val text = String(payload, Charsets.UTF_8)
@@ -126,7 +133,11 @@ class PairRaceTest {
             onPeerSync = { starts.onPeerSync(it) },
             onPeerEnd = { starts.onPeerEnd(it) },
             onPeerSetup = { setup.onPeerSetup(it) },
-            onPeerNearby = { setup.onPeerNearby() },
+            onPeerNearby = {
+                setup.onPeerNearby()
+                starts.onPeerNearby()
+            },
+            onPeerCheck = { starts.onPeerCheck(it) },
         )
         val setup = PairSetup(book, link, this, device, console, initial = opensOn)
         val starts = PairStarts(book, link, this, device, console, onContest = { contests += it }, setup = setup, onEvent = { events += it })
@@ -210,6 +221,33 @@ class PairRaceTest {
 
         override fun endRaceAt(elapsedMs: Long): Long? = engine.endRaceAt(elapsedMs)?.also { cancelCue?.invoke() }
 
+        override fun correctGun(gun: JoinGun): Boolean {
+            corrections += gun
+            if (!engine.correctGun(gun.gunMs)) return false
+            armCues()
+            return true
+        }
+
+        override fun gunsApart(apartMs: Long): Boolean {
+            if (engine.currentState != TimerState.RUNNING) return false
+            flaggedApart += apartMs
+            return true
+        }
+
+        /**
+         * This device's gun, [byMs] away from where the pair put it — however a real gun comes to
+         * that (#222). The fixture for D6's bound: nothing in the pair produces a gap of a chosen
+         * size on demand, and the check that measures it still crosses the simulated link and is
+         * placed through its rounds. Quiet, as a correction is, so it sounds nothing.
+         */
+        fun skewGun(byMs: Long) {
+            val race = book.current ?: throw AssertionError("${device.id} has no race to skew")
+            val skewed = race.gun.gunMs + byMs
+            assertTrue("the positive control: a countdown to skew", engine.correctGun(skewed))
+            book.moved(race.copy(gun = JoinGun(skewed, race.gun.errorBoundMs)))
+            armCues()
+        }
+
         override fun atPreStart(): Boolean = engine.currentState == TimerState.IDLE
 
         override fun apply(choice: SetupChoice) {
@@ -229,7 +267,14 @@ class PairRaceTest {
 
     // A phone up for ten hours and a watch up for three, the watch 10 ppm slow: #218's pair.
     private val phone = Device("phone-node", world, bootReading = 36_000_000L, fastPpm = 0L)
-    private val watch = Device("watch-node", world, bootReading = 10_800_000L, fastPpm = -10L)
+
+    /**
+     * The watch's drift. #218's −10 ppm everywhere but D6's bound (#222), where a gap of exactly
+     * 100 ms has to measure as exactly 100: there it is zero, with the link symmetric, so the rounds
+     * place the other gun with no error at all and the only gap measured is the one put there.
+     */
+    private var watchPpm = -10L
+    private val watch by lazy { Device("watch-node", world, bootReading = 10_800_000L, fastPpm = watchPpm) }
 
     private var watchWallSkewMs = 0L
 
@@ -1003,9 +1048,10 @@ class PairRaceTest {
         watchNode.tapStart(BuiltInSequences.club)
         val clubGun = watchNode.gun()
         world.advance(5_000L)
+        // Tapped as the two meet. Since #222 the watch's check takes the phone over to the watch's
+        // later restart within a message's trip of meeting, so a Sync of the phone's old race is only
+        // still sent in that window — and it lands on a watch that left the race it names.
         restoreLink()
-        world.advance(1_000L)
-
         phoneNode.tapSync() // a Sync of the phone's race, which the watch left
         world.advance(1_000L)
 
@@ -1225,6 +1271,398 @@ class PairRaceTest {
         assertEquals("Phone sync ±180 ms — tap Sync to confirm", lines[0])
         assertEquals("Phone sync unmeasured — tap Sync to confirm", lines[2])
         for (line in lines) assertTrue("\"$line\" overflows the plate", MessageSurface.STATUS_LINE.holds(line) && line.length <= NOTICE_MAX_CHARS)
+    }
+
+    // --- #222: a dropped link, and its return -------------------------------------------------------
+
+    /** The watch walks out of Bluetooth range: nothing crosses, and both ends see it go. */
+    private fun walkApart() {
+        severed = true
+        dropLink()
+    }
+
+    /** And back: both ends see the other in range again, and the link carries messages. */
+    private fun walkBack() {
+        severed = false
+        restoreLink()
+    }
+
+    private fun checksSentBy(device: Device) = sent.count { it.first == device.id && it.second.startsWith("rtpair1 check") }
+
+    private fun corrected(node: Node) = node.events.filterIsInstance<PairEvent.GunCorrected>()
+
+    /** Both devices' guns as physical instants, read now: what a drop must not move. */
+    private fun physicalGuns() = physicalGun(phoneNode) to physicalGun(watchNode)
+
+    /**
+     * What a drop and its return must leave, whatever phase it came in: each device counted on to its
+     * own gun, unmoved by the drop, and the two fired it together, inside the bound the join reported.
+     */
+    private fun assertBothFireTogether() {
+        val bound = watchNode.book.current!!.gun.errorBoundMs ?: throw AssertionError("the watch's gun was never placed")
+        world.advance(15 * 60_000L)
+        val phoneGun = phoneNode.gunAt ?: throw AssertionError("the phone never fired its gun")
+        val watchGun = watchNode.gunAt ?: throw AssertionError("the watch never fired its gun")
+        assertTrue("guns fired ${abs(phoneGun - watchGun)} ms apart, bound $bound", abs(phoneGun - watchGun) <= bound + 2L)
+    }
+
+    /** A drop in the middle of a countdown, and the return: the phase AC 1 is about. */
+    @Test
+    fun `a drop mid-countdown leaves both counting to their own guns, and each says the link is lost`() {
+        raceUnderWay(intoMs = 10_000L)
+        assertFalse("the positive control: linked, nothing lost", phoneNode.starts.linkLost || watchNode.starts.linkLost)
+        val before = physicalGuns()
+
+        walkApart()
+        world.advance(60_000L)
+
+        assertTrue("the phone says so", phoneNode.starts.linkLost)
+        assertTrue("and so does the watch", watchNode.starts.linkLost)
+        // By construction: the engines read nothing the link says after the start, so nothing moved.
+        assertEquals("the phone's gun is where it was", before.first, physicalGun(phoneNode), 0.0)
+        assertEquals("the watch's gun is where it was", before.second, physicalGun(watchNode), 0.0)
+        assertEquals("both still counting", TimerState.RUNNING, watchNode.engine.currentState)
+
+        walkBack()
+        world.advance(2_000L)
+        assertFalse("back in range, nothing is lost", phoneNode.starts.linkLost || watchNode.starts.linkLost)
+        assertTrue("and nothing was flagged", phoneNode.flaggedApart.isEmpty() && watchNode.flaggedApart.isEmpty())
+        assertBothFireTogether()
+    }
+
+    @Test
+    fun `a drop in the lead-in leaves both counting through it, and the return moves nothing beyond D6`() {
+        linkUp()
+        val armed = withLeadIn(raceManager, 60)!!
+        phoneNode.tapStart(armed)
+        world.advance(5_000L)
+        assertTrue("the positive control: in the lead-in", isInLeadIn(armed, watchNode.engine.remainingMs))
+        val before = physicalGuns()
+
+        walkApart()
+        world.advance(20_000L)
+        assertTrue("still in the lead-in", isInLeadIn(armed, watchNode.engine.remainingMs))
+        assertTrue(phoneNode.starts.linkLost && watchNode.starts.linkLost)
+        assertEquals(before.first, physicalGun(phoneNode), 0.0)
+        assertEquals(before.second, physicalGun(watchNode), 0.0)
+
+        walkBack()
+        world.advance(2_000L)
+        assertTrue("the return came in the lead-in too", isInLeadIn(armed, watchNode.engine.remainingMs))
+        assertFalse(phoneNode.starts.linkLost || watchNode.starts.linkLost)
+        assertTrue(phoneNode.flaggedApart.isEmpty() && watchNode.flaggedApart.isEmpty())
+        assertBothFireTogether()
+    }
+
+    @Test
+    fun `a drop past the gun leaves both counting up, and the return moves nothing`() {
+        raceUnderWay(intoMs = raceManager.totalMs + 10_000L, sequence = raceManager)
+        assertEquals("the positive control: counting up", TimerState.COUNTING_UP, watchNode.engine.currentState)
+        val before = physicalGuns()
+
+        walkApart()
+        world.advance(30_000L)
+        assertTrue("a count-up is a race the link can be lost from", phoneNode.starts.linkLost && watchNode.starts.linkLost)
+
+        walkBack()
+        world.advance(2_000L)
+
+        assertFalse(phoneNode.starts.linkLost || watchNode.starts.linkLost)
+        assertEquals("both still counting up", TimerState.COUNTING_UP, phoneNode.engine.currentState)
+        assertEquals(TimerState.COUNTING_UP, watchNode.engine.currentState)
+        // Past the gun there is no countdown to move, so a check changes nothing on either device.
+        assertEquals(before.first, physicalGun(phoneNode), 0.0)
+        assertEquals(before.second, physicalGun(watchNode), 0.0)
+        assertTrue(corrected(phoneNode).isEmpty() && corrected(watchNode).isEmpty())
+        assertTrue(phoneNode.flaggedApart.isEmpty() && watchNode.flaggedApart.isEmpty())
+    }
+
+    @Test
+    fun `a start made before the devices met is taken when they meet, as it would have been on time`() {
+        linkUp()
+        walkApart()
+        phoneNode.tapStart(BuiltInSequences.usSailing)
+        world.advance(5_000L)
+        assertTrue("the positive control: the watch never heard of it", watchNode.joins.isEmpty())
+        assertFalse("a race that never had the link has not lost it", phoneNode.starts.linkLost)
+
+        walkBack()
+        world.advance(2_000L)
+
+        val join = watchNode.joins.single()
+        assertEquals("the idle watch named nothing; the phone's check did this", 0, checksSentBy(watch))
+        assertEquals("joined from idle, as #220's rule says", BuiltInSequences.usSailing, join.sequence)
+        assertTrue("placed through the rounds held across the drop", join.race.gun.inBudget)
+        assertTrue("guns ${gunGapMs()} ms apart", gunGapMs() <= join.race.gun.errorBoundMs!!)
+        assertFalse(phoneNode.starts.linkLost || watchNode.starts.linkLost)
+        assertBothFireTogether()
+    }
+
+    // D6 at its bound, through the simulated link: a gap of exactly 100 ms is corrected, 101 is not.
+
+    /**
+     * A race started on the **watch** and joined by the phone over a symmetric link with no drift, so
+     * the join is exact; then taken apart with the phone's gun [skewMs] off, and brought back.
+     *
+     * Started on the watch on purpose. Under one key, the gun its own device set leads; where nothing
+     * says so, the console does. A race started on the phone makes the two rules agree — the phone is
+     * both — so a fixture there passes with the wire's anchored bit inverted (*measured*, #222's
+     * mutation pass: 1 red against 3 predicted). Here they disagree, and only the anchored rule makes
+     * the phone the one that follows.
+     */
+    private fun meetAgainWithPhoneGunOffBy(skewMs: Long) {
+        watchPpm = 0L
+        phoneToWatchMs = 30L
+        watchToPhoneMs = 30L
+        raceUnderWay(intoMs = 10_000L, on = { watchNode })
+        assertEquals("the positive control: the fixture joins exactly", 0.0, gunGapMs(), 0.0)
+        walkApart()
+        phoneNode.skewGun(skewMs)
+        world.advance(20_000L)
+        walkBack()
+        world.advance(2_000L)
+    }
+
+    @Test
+    fun `a gap of exactly D6's bound is corrected on the device that follows, and said`() {
+        for (skew in listOf(PAIR_RECONNECT_BOUND_MS, -PAIR_RECONNECT_BOUND_MS)) {
+            val test = PairRaceTest()
+            test.meetAgainWithPhoneGunOffBy(skew)
+
+            assertEquals("skew $skew: the phone, which joined, follows", listOf(PairEvent.GunCorrected(-skew)), test.corrected(test.phoneNode))
+            assertEquals("skew $skew: back on the watch's gun", 0.0, test.gunGapMs(), 0.0)
+            assertTrue("skew $skew: the watch's own gun leads, and nothing moved there", test.watchNode.corrections.isEmpty())
+            assertTrue(test.phoneNode.flaggedApart.isEmpty())
+            assertEquals("skew $skew: both sent a check on meeting", 1, test.checksSentBy(test.watch))
+        }
+    }
+
+    @Test
+    fun `a gap one millisecond past D6's bound is never moved, and the device that follows is flagged for Sync`() {
+        for (skew in listOf(PAIR_RECONNECT_BOUND_MS + 1L, -PAIR_RECONNECT_BOUND_MS - 1L)) {
+            val test = PairRaceTest()
+            test.meetAgainWithPhoneGunOffBy(skew)
+
+            assertEquals("skew $skew: flagged, with the gap", listOf(-skew), test.phoneNode.flaggedApart)
+            assertTrue("skew $skew: nothing corrected", test.phoneNode.corrections.isEmpty() && test.corrected(test.phoneNode).isEmpty())
+            assertEquals("skew $skew: the gap stands until the officer syncs", abs(skew).toDouble(), test.gunGapMs(), 0.0)
+            assertTrue(test.watchNode.flaggedApart.isEmpty() && test.watchNode.corrections.isEmpty())
+        }
+    }
+
+    @Test
+    fun `a Sync taken while apart is flagged on the device that missed it, and a Sync there settles both`() {
+        raceUnderWay(intoMs = 8_000L) // 4:52
+        walkApart()
+        phoneNode.tapSync() // up to 5:00, 8 s later; the watch never hears of it
+        assertEquals("the positive control: the phone's Sync went nowhere", 0, syncsSentBy(phone))
+        world.advance(5_000L)
+        val watchGun = physicalGun(watchNode)
+
+        walkBack()
+        world.advance(2_000L)
+
+        val gap = watchNode.flaggedApart.single()
+        assertEquals("the phone's gun is 8 s later", 8_000.0, gap.toDouble(), 30.0)
+        assertEquals("beyond D6, the watch's gun is not moved by itself", watchGun, physicalGun(watchNode), 0.0)
+        assertTrue("the phone's Sync leads, so the phone flags nothing", phoneNode.flaggedApart.isEmpty())
+
+        watchNode.tapSync()
+        world.advance(1_000L)
+        val bound = phoneNode.moves.single().errorBoundMs!!
+        assertTrue("one Sync on the watch puts both on one gun: ${gunGapMs()} ms, bound $bound", gunGapMs() <= bound)
+    }
+
+    @Test
+    fun `a restart made while apart takes the other device over when they meet, and the phone offers the choice`() {
+        raceUnderWay(intoMs = 5_000L)
+        walkApart()
+        watchNode.stop()
+        watchNode.tapStart(BuiltInSequences.club) // tapped last, and the phone never heard of it
+        world.advance(5_000L)
+        assertEquals("the positive control: the phone still runs its own", BuiltInSequences.usSailing, phoneNode.engine.loadedSequence)
+
+        walkBack()
+        world.advance(2_000L)
+
+        assertEquals("the later tap wins, as #220's rule says", BuiltInSequences.club, phoneNode.engine.loadedSequence)
+        assertTrue("guns ${gunGapMs()} ms apart", gunGapMs() <= phoneNode.joins.last().race.gun.errorBoundMs!!)
+        val contest = phoneNode.starts.contest ?: throw AssertionError("the phone offers the choice")
+        assertEquals(BuiltInSequences.usSailing.id, contest.startedOn(here = true).sequenceId)
+    }
+
+    @Test
+    fun `an End Race taken while apart is sent back when they meet, and both freeze at its time`() {
+        raceUnderWay(intoMs = raceManager.totalMs + 30_000L, sequence = raceManager)
+        walkApart()
+        phoneNode.tapEndRace()
+        val phoneEnd = phoneNode.engine.remainingMs
+        world.advance(10_000L)
+        assertEquals("the positive control: the watch counts on", TimerState.COUNTING_UP, watchNode.engine.currentState)
+
+        walkBack()
+        world.advance(2_000L)
+
+        assertEquals(TimerState.RACE_ENDED, watchNode.engine.currentState)
+        assertEquals("both freeze the phone's race time", phoneEnd, watchNode.engine.remainingMs)
+        assertTrue("an end sent back is no stale control", watchNode.events.isEmpty())
+    }
+
+    @Test
+    fun `a race stopped here is not rejoined when the devices meet`() {
+        raceUnderWay(intoMs = 5_000L)
+        walkApart()
+        watchNode.stop() // Stop is local until #328
+        world.advance(5_000L)
+
+        walkBack()
+        world.advance(2_000L)
+
+        assertEquals(TimerState.IDLE, watchNode.engine.currentState)
+        assertEquals("the one join is the race's own", 1, watchNode.joins.size)
+        assertEquals("a device running nothing names no race", 0, checksSentBy(watch))
+        assertEquals("the positive control: the phone, still racing, did", 1, checksSentBy(phone))
+    }
+
+    @Test
+    fun `a race that had the peer only while it was being measured has still lost it when it goes`() {
+        pair() // found and nearby, and not one round completes: the link says Measuring
+        severed = true
+        phoneNode.tapStart(BuiltInSequences.usSailing)
+        world.advance(3_000L)
+        assertEquals("the positive control: still measuring", PairStatus.Measuring, phoneNode.link.status())
+        assertFalse(phoneNode.starts.linkLost)
+
+        dropLink()
+
+        assertTrue(phoneNode.starts.linkLost)
+    }
+
+    @Test
+    fun `a restart from GO while apart is a race that never had the link, whatever the last one lost`() {
+        raceUnderWay(intoMs = 10_000L, sequence = BuiltInSequences.club)
+        walkApart()
+        world.advance(BuiltInSequences.club.totalMs)
+        assertNotNull("the positive control: the gun fired, apart", phoneNode.gunAt)
+        assertEquals(TimerState.FINISHED, phoneNode.engine.currentState)
+
+        // Start on the GO! screen, before the gun's teardown has ended anything (#327's window).
+        phoneNode.tapStart(BuiltInSequences.club)
+
+        assertFalse(phoneNode.starts.linkLost)
+    }
+
+    // AC 3: the absence of a pair is a normal state.
+
+    @Test
+    fun `a phone with no watch is never told a link is lost`() {
+        present = false
+        phoneNode.peer = watchNode
+        phoneNode.link.onPeers(emptyList())
+        phoneNode.link.setActive(true)
+        phoneNode.tapStart(BuiltInSequences.usSailing)
+
+        repeat(12) {
+            world.advance(30_000L)
+            assertFalse("at ${world.now} ms", phoneNode.starts.linkLost)
+        }
+        assertEquals("and nothing was sent", 0, checksSentBy(phone))
+    }
+
+    @Test
+    fun `a watch reachable only through the cloud from the start is never a link lost`() {
+        // A watch left at home on its charger: the Data Layer finds it through the cloud, never nearby.
+        nearby = false
+        pair()
+        phoneNode.link.setActive(true)
+        world.advance(5_000L)
+        phoneNode.tapStart(BuiltInSequences.usSailing)
+
+        repeat(12) {
+            world.advance(30_000L)
+            assertFalse("at ${world.now} ms", phoneNode.starts.linkLost)
+        }
+    }
+
+    @Test
+    fun `a lost link is no longer said once the race is over`() {
+        raceUnderWay(intoMs = 10_000L)
+        walkApart()
+        world.advance(1_000L)
+        assertTrue("the positive control", phoneNode.starts.linkLost)
+
+        phoneNode.stop()
+
+        assertFalse(phoneNode.starts.linkLost)
+    }
+
+    // D6's judgement at the seam, where the translation's own bound is set by hand.
+
+    private fun raceFor(gunMs: Long, bound: Long?, gunKey: RaceKey = RaceKey(10L, 1L)) =
+        PairRace(RaceKey(10L, 1L), BuiltInSequences.usSailing.id, JoinGun(gunMs, bound), startedHere = bound == 0L, gunKey = gunKey)
+
+    private fun checkFor(gunMs: Long, bound: Long?, anchored: Boolean, gunKey: RaceKey = RaceKey(10L, 1L)) =
+        PeerCheck(RaceKey(10L, 1L), gunKey, BuiltInSequences.usSailing.id, JoinGun(gunMs, bound), anchored)
+
+    @Test
+    fun `the gun set last is the one followed, then the one set on its own device, then the console's`() {
+        val joined = raceFor(1_000L, bound = 30L)
+        val tapped = raceFor(1_000L, bound = 0L)
+        assertTrue("same key: a translated gun follows the peer's own", judgeGunCheck(joined, checkFor(1_050L, 30L, anchored = true), console = false) is GunCheck.Correct)
+        assertEquals("same key: a gun set here leads", GunCheck.Leads, judgeGunCheck(tapped, checkFor(1_050L, 30L, anchored = false), console = false))
+        assertTrue(
+            "a later Sync leads, whoever set the gun",
+            judgeGunCheck(tapped, checkFor(1_050L, 30L, anchored = false, gunKey = RaceKey(20L, 2L)), console = true) is GunCheck.Correct,
+        )
+        assertEquals(
+            "an older one follows",
+            GunCheck.Leads,
+            judgeGunCheck(raceFor(1_000L, 30L, gunKey = RaceKey(20L, 2L)), checkFor(1_050L, 0L, anchored = true), console = false),
+        )
+        assertEquals("nothing else to go on: the console leads", GunCheck.Leads, judgeGunCheck(joined, checkFor(1_050L, 30L, anchored = false), console = true))
+        assertTrue(judgeGunCheck(joined, checkFor(1_050L, 30L, anchored = false), console = false) is GunCheck.Correct)
+    }
+
+    @Test
+    fun `a gap the link cannot place is flagged only when even its bound cannot bring it inside D6`() {
+        val mine = raceFor(10_000L, bound = 30L)
+        assertEquals("no rounds: nothing can be said", GunCheck.Unmeasured, judgeGunCheck(mine, checkFor(18_000L, null, anchored = true), console = false))
+        // Out of D2's budget at ±300 ms: a 350 ms gap could be as little as 50, and one of 401 is past 100 whatever the error.
+        assertEquals(GunCheck.Unmeasured, judgeGunCheck(mine, checkFor(10_350L, 300L, anchored = true), console = false))
+        assertEquals(GunCheck.Unmeasured, judgeGunCheck(mine, checkFor(10_400L, 300L, anchored = true), console = false))
+        assertEquals(GunCheck.Apart(401L), judgeGunCheck(mine, checkFor(10_401L, 300L, anchored = true), console = false))
+        assertEquals("never corrected on a translation it cannot vouch for", GunCheck.Unmeasured, judgeGunCheck(mine, checkFor(10_010L, 300L, anchored = true), console = false))
+    }
+
+    // #222: the words.
+
+    @Test
+    fun `the lost-link line fits the watch's Tier 3 plate`() {
+        val line = pairLinkLostLine("Phone")
+        assertEquals("Phone out of range — counting alone", line)
+        assertEquals(NOTICE_PAIR_LINK_LOST, line)
+        assertTrue(line.length <= NOTICE_MAX_CHARS && MessageSurface.STATUS_LINE.holds(line))
+    }
+
+    @Test
+    fun `the gap line reads milliseconds under a second and tenths above, and fits the plate`() {
+        assertEquals("Phone gun 101 ms apart — tap Sync to confirm", pairGunsApartLine(101L, "Phone"))
+        assertEquals("the sign is not the officer's concern", "Phone gun 101 ms apart — tap Sync to confirm", pairGunsApartLine(-101L, "Phone"))
+        assertEquals("Watch gun 999 ms apart — tap Sync to confirm", pairGunsApartLine(999L, "Watch"))
+        assertEquals("Watch gun 1.0 s apart — tap Sync to confirm", pairGunsApartLine(1_000L, "Watch"))
+        assertEquals("Phone gun 8.0 s apart — tap Sync to confirm", pairGunsApartLine(7_981L, "Phone"))
+        // A day apart is further than any race runs; it still fits.
+        for (gap in listOf(101L, 999L, 59_999L, 86_400_000L)) {
+            val line = pairGunsApartLine(gap, "Phone")
+            assertTrue("\"$line\" overflows the plate", line.length <= NOTICE_MAX_CHARS && MessageSurface.STATUS_LINE.holds(line))
+        }
+    }
+
+    @Test
+    fun `the correction line fits the watch's banner at the bound`() {
+        assertEquals("Phone back — gun matched, 40 ms", pairGunCorrectedLine(-40L, "Phone"))
+        val line = pairGunCorrectedLine(PAIR_RECONNECT_BOUND_MS, "Phone")
+        assertTrue("\"$line\" overflows the banner", line.length <= NOTICE_MAX_CHARS && MessageSurface.BANNER.holds(line))
     }
 
     private companion object {

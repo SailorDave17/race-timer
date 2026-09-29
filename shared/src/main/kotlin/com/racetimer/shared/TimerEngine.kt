@@ -408,13 +408,31 @@ class TimerEngine(
      * and a move up must not sound it again.
      */
     fun moveGun(gunMs: Long): Boolean {
+        val now = clock.elapsedMs()
+        if (!reanchor(gunMs, now)) return false
+        listeners.forEach { it.onGunMoved(gunMs - now) }
+        return true
+    }
+
+    /**
+     * Move the running countdown's gun to [gunMs] by a reconnect's correction (#222, epic decision
+     * D6): the other device's gun, measured again after the link came back, within the bound D6
+     * corrects automatically — tens of milliseconds, never a Sync's minute.
+     *
+     * [moveGun]'s re-anchor and cue rule exactly, and **no listener hears it**. Nobody tapped
+     * anything, so there is no Sync to feel or hear, and a correction must not reach a listener that
+     * treats a moved gun as one ([TimerListener.onGunMoved] defaults to [TimerListener.onSync]). The
+     * caller persists the moved gun itself, as it would have in `onSync`.
+     */
+    fun correctGun(gunMs: Long): Boolean = reanchor(gunMs, clock.elapsedMs())
+
+    /** The one re-anchor [moveGun] and [correctGun] share: only a countdown moves. */
+    private fun reanchor(gunMs: Long, now: Long): Boolean {
         if (state != TimerState.RUNNING) return false
         val seq = sequence ?: return false
-        val now = clock.elapsedMs()
         val remaining = gunTimeMs - now
         gunTimeMs = gunMs
         queueCues(seq) { it.offsetMs < remaining }
-        listeners.forEach { it.onGunMoved(gunMs - now) }
         return true
     }
 
