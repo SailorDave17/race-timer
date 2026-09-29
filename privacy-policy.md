@@ -95,8 +95,11 @@ whenever it is running. Comparing the answers is how the two devices agree on wh
 within a fraction of a second.
 
 When you start, sync or end a race on either device, it tells the other one, so that both run the
-same race to the same gun and end it at the same time. And when you choose a start sequence, a custom
-length or a lead-in alert on either device's start screen, the other one's start screen follows.
+same race to the same gun and end it at the same time. When the two devices come back within reach
+of each other during a race, each tells the other which race it is running, so that a start or an
+end one of them missed while they were apart is caught up and the two guns are brought back
+together. And when you choose a start sequence, a custom length or a lead-in alert on either
+device's start screen, the other one's start screen follows.
 
 This is everything that is exchanged:
 
@@ -110,6 +113,7 @@ This is everything that is exchanged:
 | When a race is synced: the race's new gun, and when Sync was tapped, as readings of the devices' clocks, with a random number | To move the other device's gun to the same moment, and to decide which sync counts when both devices are synced at nearly the same moment |
 | When a race is ended: how long it ran, in milliseconds | So both devices show the same final race time |
 | When a start screen is set: which start sequence it will run and which lead-in alert it offers, when that choice was made as a reading of the devices' clocks, and a random number | So the other device's start screen shows the same choice, and to decide which choice counts when the two differ |
+| When the two devices come back within reach during a race: its start sequence, its gun, and when its Start and its latest Sync were tapped, as readings of the devices' clocks, with their random numbers, and whether that gun was set on the device sending it | So a start or an end one device missed while they were apart is caught up, and so the two guns can be compared and brought back together |
 
 - **It goes only to your other device.** It is never sent to the developer or to anyone else.
 - **It travels only over the direct connection between your watch and your phone.** The apps use the
@@ -118,8 +122,9 @@ This is everything that is exchanged:
   Timer sends nothing.
 - **It is not stored, beyond the race you are running and the start screen's choice.** Each app
   holds the readings, and what it was told about a race, in memory while it runs, and they are gone
-  when it stops. A race started on your other device — or synced there — is then saved on this one
-  exactly as a race you started here is: the sequence and the gun time, listed under *Information
+  when it stops. A race started on your other device — or synced there, or matched to it when the
+  two come back within reach — is then saved on this one exactly as a race you started here is: the
+  sequence and the gun time, listed under *Information
   stored on your device*, so it survives the app being closed. A start screen's choice made on your
   other device is saved on this one exactly as a choice you made here is: the start sequence you last
   chose and the lead-in time, in the same table.
