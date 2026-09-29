@@ -30,11 +30,14 @@ import com.racetimer.phone.ui.PhoneTheme
 import com.racetimer.phone.ui.SequencePickerScreen
 import com.racetimer.phone.ui.TimerScreen
 import android.os.SystemClock
+import com.racetimer.android.PairRaces
 import com.racetimer.android.WearablePairLink
 import com.racetimer.shared.BG_NORMAL_ARGB
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
+import com.racetimer.shared.PairContest
 import com.racetimer.shared.PairStatus
+import com.racetimer.shared.pairContestLine
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.TimerState
@@ -56,6 +59,13 @@ import kotlinx.coroutines.delay
  * here.
  */
 private const val UI_REFRESH_MS = 50L
+
+/**
+ * How often the app asks, whatever screen is up, whether the service has joined a race from the
+ * watch (#220). A joined race arrives with no tap here, so something has to notice it; a
+ * quarter-second before the countdown appears is well inside the first signal's minute.
+ */
+private const val RACE_WATCH_MS = 250L
 
 /**
  * The phone app: a standalone start-sequence timer for the committee-boat console.
@@ -131,6 +141,20 @@ class MainActivity : ComponentActivity() {
     private val pairListener: (PairStatus) -> Unit = { status ->
         val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         pairLineState.value = pairStatusLine(status, peerNoun = "Watch", showAbsent = debuggable)
+    }
+
+    /**
+     * The conflict between the phone's start and the watch's, while the officer has not chosen (#220),
+     * or null. Held by the process-wide [PairRaces], so a recreated activity finds it still waiting.
+     */
+    private val pairContestState = mutableStateOf<PairContest?>(null)
+
+    private val pairContestListener: (PairContest?) -> Unit = { pairContestState.value = it }
+
+    /** Move both devices to the start tapped on the phone ([phone] true) or on the watch. */
+    private fun syncTo(phone: Boolean) {
+        val contest = pairContestState.value ?: return
+        PairRaces.get(this).choose(contest.startedOn(here = phone))
     }
 
     /**
@@ -254,6 +278,10 @@ class MainActivity : ComponentActivity() {
                     // because that is when this store dies.
                     displayChoice = processDisplayChoice,
                     pairStatus = pairLineState.value,
+                    pairChoice = pairContestState.value?.let { pairContestLine(it, peerNoun = "Watch", selfNoun = "phone") },
+                    onSyncToPhone = { syncTo(phone = true) },
+                    onSyncToWatch = { syncTo(phone = false) },
+                    readPairNotice = { boundService?.pairJoinNotice },
                 )
             }
         }
@@ -275,9 +303,16 @@ class MainActivity : ComponentActivity() {
             addStatusListener(pairListener)
             setActive(true)
         }
+        // #220. Built with the link above, so a start the watch sends reaches this process from the
+        // first moment it is on screen — which is also the only moment it can start the service.
+        PairRaces.get(this).apply {
+            addContestListener(pairContestListener)
+            pairContestState.value = contest
+        }
     }
 
     override fun onStop() {
+        PairRaces.get(this).removeContestListener(pairContestListener)
         WearablePairLink.get(this).apply {
             setActive(false)
             removeStatusListener(pairListener)
@@ -312,6 +347,10 @@ class MainActivity : ComponentActivity() {
  *
  * [pairStatus] is the pair link's row for the pre-start screen (#219), already decided — whether to
  * draw it at all is `pairStatusLine`'s rule in `:shared`, not this composable's.
+ *
+ * [pairChoice] is the line for a conflict between the phone's start and the watch's (#220), already
+ * worded, with [onSyncToPhone] and [onSyncToWatch] as the two answers; [readPairNotice] reads the
+ * standing flag a joined race owes when its gun could not be placed inside the budget.
  */
 @Composable
 internal fun RaceTimerApp(
@@ -331,6 +370,10 @@ internal fun RaceTimerApp(
     onBoxAlertChosen: ((Int) -> Unit)? = null,
     displayChoice: DisplayChoiceViewModel = viewModel(),
     pairStatus: String? = null,
+    pairChoice: String? = null,
+    onSyncToPhone: () -> Unit = {},
+    onSyncToWatch: () -> Unit = {},
+    readPairNotice: (() -> String?)? = null,
 ) {
     var onTimerScreen by remember { mutableStateOf(false) }
     var onCustomScreen by remember { mutableStateOf(false) }
@@ -361,6 +404,9 @@ internal fun RaceTimerApp(
     // outlives a decline, so the next launch offers again — discarding is Start over's job alone.
     var offerConsumed by remember { mutableStateOf(false) }
     var restoreNotice by remember { mutableStateOf<String?>(null) }
+    // A joined race's standing flag (#220 AC 5): the service holds it until Sync or the race's end,
+    // and this only reads it.
+    var pairNotice by remember { mutableStateOf<String?>(null) }
 
     // The sequence a selection chose while a race was still running, held until the officer says
     // whether to end that race (#281 AC 4). Null whenever there is nothing to confirm — and it is
@@ -391,11 +437,34 @@ internal fun RaceTimerApp(
     // service binding lands, and re-keying on it also re-runs this after `onStop`/`onStart` drops
     // and restores the binding. `raceInProgress` is the runner's own rule (RUNNING or COUNTING_UP)
     // rather than a second copy of it here.
+    //
+    // **And then it watches for a join (#220).** A race can now begin with nobody touching this
+    // phone — the watch's start, joined in the service — so the answer taken when the binding landed
+    // is not the last one. Each join the runner counts takes the officer to the countdown from
+    // whatever screen is up; the Custom stepper and the lead-in screens come down with it, since each
+    // is a way of choosing a race that is already under way. Keyed on the join and not on "a race is
+    // running", deliberately: a local start reaches the timer screen by its own route, and the one
+    // arrangement with a race running under the picker — `ConfirmEndRaceTest`'s, #281's defence —
+    // must stay reachable rather than be navigated away from.
     LaunchedEffect(runner) {
         if (runner != null && runner.raceInProgress) {
             readout = runner.readout()
             state = runner.engine.currentState
             onTimerScreen = true
+        }
+        var followed = runner?.joins ?: return@LaunchedEffect
+        while (true) {
+            delay(RACE_WATCH_MS)
+            if (runner.joins == followed) continue
+            followed = runner.joins
+            if (runner.raceInProgress) {
+                onCustomScreen = false
+                onLeadInScreen = false
+                onLeadInCustomScreen = false
+                readout = runner.readout()
+                state = runner.engine.currentState
+                onTimerScreen = true
+            }
         }
     }
 
@@ -435,6 +504,7 @@ internal fun RaceTimerApp(
                 }
             }
             if (state != TimerState.RUNNING && state != TimerState.FINISHED) restoreNotice = null
+            pairNotice = readPairNotice?.invoke()
             delay(UI_REFRESH_MS)
         }
     }
@@ -650,12 +720,16 @@ internal fun RaceTimerApp(
                 endRaceNow()
                 refresh()
             },
-            notice = restoreNotice,
+            // A joined race's flag outranks a restore's line: it is about the gun being counted to.
+            notice = pairNotice ?: restoreNotice,
             brightnessPrompt = brightnessPrompt,
             onKeepBright = { displayChoice.answerCountUpBrightness(keepBright = true) },
             onDimCountUp = { displayChoice.answerCountUpBrightness(keepBright = false) },
             resumeOffer = if (offerConsumed) null else resumeOffer,
             pairStatus = pairStatus,
+            pairChoice = pairChoice,
+            onSyncToPhone = onSyncToPhone,
+            onSyncToWatch = onSyncToWatch,
             onResume = {
                 offerConsumed = true
                 startRace()

@@ -20,12 +20,17 @@ import androidx.core.app.NotificationCompat
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import com.racetimer.android.HapticManager
+import com.racetimer.android.PairRaces
 import com.racetimer.android.SystemMonotonicClock
 import com.racetimer.android.ToneManager
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.CueLoss
 import com.racetimer.shared.CueStream
 import com.racetimer.shared.CueTiming
+import com.racetimer.shared.JoinGun
+import com.racetimer.shared.JoinOutcome
+import com.racetimer.shared.PairJoin
+import com.racetimer.shared.pairJoinNotice
 import com.racetimer.shared.cueStream
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.isValidBoxAlert
@@ -61,6 +66,9 @@ import com.racetimer.shared.startPlan
  * - Clear the wake lock and stop itself when the sequence ends or is stopped — except a
  *   [com.racetimer.shared.RaceSequence.countUpAfterFinish] sequence, whose service instead keeps
  *   running as an elapsed-time stopwatch past the gun (see [engineListener]'s onGun handling).
+ * - Run a race the phone started ([ACTION_JOIN], #220) through the same arm as a Start, and tell the
+ *   phone about a race started here, once it is running. Which start wins is decided before the
+ *   intent arrives (`PairStarts`, through [PairRaces]); a watch with no phone runs what it always ran.
  */
 class TimerService : Service() {
 
@@ -102,6 +110,18 @@ class TimerService : Service() {
      */
     fun consumeRestoreNotice(): RestoreOutcome? =
         pendingRestoreNotice.also { pendingRestoreNotice = null }
+
+    /**
+     * The line a joined race owes the sailor when its gun could not be placed inside D2's budget
+     * (#220 AC 5), or null. The degraded-restore prompt's sibling, on the same Tier 3 line and cleared
+     * the same way — by Sync, the one act that settles a gun nobody can vouch for — or by the race
+     * ending. Held here rather than in the activity so a recreated activity still finds it.
+     */
+    @Volatile var pairJoinNotice: String? = null
+        private set
+
+    /** The pair's start rule (#220): the process-wide instance, told when a race starts and ends. */
+    private lateinit var pairRaces: PairRaces
 
     // --- Handler tick loop ----------------------------------------------------
 
@@ -274,6 +294,8 @@ class TimerService : Service() {
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         engine.addListener(engineListener)
         warmUpPickedSequence()
+        pairRaces = PairRaces.get(this)
+        pairRaces.attach { engine.currentState == TimerState.RUNNING || engine.currentState == TimerState.COUNTING_UP }
     }
 
     /**
@@ -472,7 +494,13 @@ class TimerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> {
+            // A race the phone started (#220) is armed through this same branch: the output checks
+            // below, and the #62 ordering after the anchor, are what make a race audible and on time,
+            // and a joined race needs every one of them. Only the anchor itself differs — the phone's
+            // gun rather than resume-or-fresh — so that is the one place the two part.
+            ACTION_START, ACTION_JOIN -> {
+                val joining = intent.action == ACTION_JOIN
+                val wasRunning = engine.currentState == TimerState.RUNNING || engine.currentState == TimerState.COUNTING_UP
                 val sequenceId = intent.getStringExtra(EXTRA_SEQUENCE_ID) ?: BuiltInSequences.usSailing.id
                 val sequence = findSequence(sequenceId)
 
@@ -520,10 +548,31 @@ class TimerService : Service() {
                 val freshStart = intent.getBooleanExtra(EXTRA_FRESH_START, false)
                 if (freshStart) clearPersistedState()
 
+                if (joining) {
+                    // The post-gun linger of the race before, if one is pending, would tear down
+                    // *whatever* is running when it fires — the joined race, three seconds in.
+                    gunTeardownPending = false
+                    handler.removeCallbacks(gunTeardownRunnable)
+                    val gunMs = intent.getLongExtra(EXTRA_GUN_ELAPSED_MS, 0L)
+                    val grace = intent.getLongExtra(EXTRA_LATE_CUE_GRACE_MS, 0L)
+                    if (engine.join(sequence, gunMs, grace) == JoinOutcome.EXPIRED) {
+                        // Nothing moved. `PairStarts` refuses a spent gun before sending the intent,
+                        // so this is the milliseconds between; an idle service still owes the
+                        // `startForeground` its `startForegroundService` promised.
+                        if (!wasRunning) declineForegroundStart()
+                        return START_NOT_STICKY
+                    }
+                    lastRestoreOutcome = null
+                    val boundMs = if (intent.hasExtra(EXTRA_ERROR_BOUND_MS)) intent.getLongExtra(EXTRA_ERROR_BOUND_MS, 0L) else null
+                    pairJoinNotice = pairJoinNotice(JoinGun(gunMs, boundMs), peerNoun = "Phone")
+                } else {
+                    pairJoinNotice = null
+                }
+
                 // Restore or run from the top — decided in `shared/`, from the same reading of the
                 // persisted keys the pre-start screen's Resume offer is built on, so the offer and
                 // what the tap does cannot disagree.
-                when (val plan = startPlan(freshStart, savedSnapshot(prefs), sequenceId, engine.currentState)) {
+                if (!joining) when (val plan = startPlan(freshStart, savedSnapshot(prefs), sequenceId, engine.currentState)) {
                     is StartPlan.Resume -> {
                         lastRestoreOutcome = engine.restore(sequence, plan.snapshot)
                         if (lastRestoreOutcome == RestoreOutcome.EXPIRED) {
@@ -603,8 +652,19 @@ class TimerService : Service() {
                 acquireWakeLock()
                 startForegroundWithNotification()
                 scheduleTickLoop()
+
+                // Last, after everything the race needs (#220). Telling the phone is a message the
+                // link drops when there is no phone, and nothing above waits on it. A joined race is
+                // the phone's own, and a restored one cannot say when it was tapped.
+                if (!joining && !foregroundStartRefused) {
+                    val gunMs = engine.snapshot()?.gunElapsedMs
+                    val fromTheTop = lastRestoreOutcome == null || lastRestoreOutcome == RestoreOutcome.EXPIRED
+                    if (fromTheTop && gunMs != null) pairRaces.startedHere(sequence.id, gunMs) else pairRaces.restored()
+                }
             }
             ACTION_SYNC -> {
+                // The sailor has checked the clock against a flag: a joined race's gun is theirs now.
+                pairJoinNotice = null
                 engine.sync()
                 // A snap re-anchors the gun and re-queues the unfired cues, so whatever was armed is
                 // now aimed at the wrong moment.
@@ -698,6 +758,7 @@ class TimerService : Service() {
     }
 
     override fun onDestroy() {
+        pairRaces.detach()
         handler.removeCallbacks(tickRunnable)
         handler.removeCallbacks(cueRunnable)
         releaseWakeLock()
@@ -841,7 +902,22 @@ class TimerService : Service() {
         // this obligation is deliberately not part of the race snapshot.
         restoreRaisedCueVolume()
         clearPersistedState()
+        // A race that ended owes no joined race's warning, and the pair stops holding for it (#220).
+        pairJoinNotice = null
+        pairRaces.ended()
         postedNotificationText = null
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    /** Keep the promise a `startForegroundService` made, for a join that runs nothing, and leave. */
+    private fun declineForegroundStart() {
+        try {
+            startForeground(RaceTimerApplication.TIMER_NOTIFICATION_ID, buildNotification(currentDisplayText()))
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Foreground refused for a join that runs nothing", e)
+            return
+        }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -1077,7 +1153,25 @@ class TimerService : Service() {
         const val ACTION_SYNC = "com.racetimer.wear.ACTION_SYNC"
         const val ACTION_STOP = "com.racetimer.wear.ACTION_STOP"
         const val ACTION_END_RACE = "com.racetimer.wear.ACTION_END_RACE"
+        const val ACTION_JOIN = "com.racetimer.wear.ACTION_JOIN"
         const val EXTRA_SEQUENCE_ID = "sequence_id"
+
+        /** On [ACTION_JOIN] (#220): the race's gun on this clock, and how late a cue may still sound. */
+        const val EXTRA_GUN_ELAPSED_MS = "gun_elapsed_ms"
+        const val EXTRA_LATE_CUE_GRACE_MS = "late_cue_grace_ms"
+
+        /** On [ACTION_JOIN]: the gun's worst-case error. Absent when nothing bounds it (unmeasured). */
+        const val EXTRA_ERROR_BOUND_MS = "error_bound_ms"
+
+        /** The intent that joins [join] — see [PairRaces]. Raw values, so nothing here needs parceling. */
+        fun joinIntent(context: Context, join: PairJoin): Intent =
+            Intent(context, TimerService::class.java).apply {
+                action = ACTION_JOIN
+                putExtra(EXTRA_SEQUENCE_ID, join.sequence.id)
+                putExtra(EXTRA_GUN_ELAPSED_MS, join.race.gun.gunMs)
+                putExtra(EXTRA_LATE_CUE_GRACE_MS, join.lateCueGraceMs)
+                join.race.gun.errorBoundMs?.let { putExtra(EXTRA_ERROR_BOUND_MS, it) }
+            }
 
         /** Set on [ACTION_START] to run the sequence from the top instead of resuming a saved race. */
         const val EXTRA_FRESH_START = "fresh_start"

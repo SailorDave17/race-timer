@@ -16,6 +16,7 @@ import com.racetimer.phone.ui.PhoneReadout
 import com.racetimer.phone.ui.TAG_CONTINUE
 import com.racetimer.phone.ui.TAG_FULL_BRIGHTNESS
 import com.racetimer.shared.BuiltInSequences
+import com.racetimer.shared.JOIN_LATE_CUE_GRACE_MS
 import com.racetimer.shared.MonotonicClock
 import com.racetimer.shared.RaceSequence
 import org.junit.Assert.assertEquals
@@ -83,6 +84,7 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
     fun launch(
         fullBrightness: Boolean = DisplayChoice.INITIAL.fullBrightness,
         applyDisplay: (DisplayChoice) -> Unit = {},
+        readPairNotice: (() -> String?)? = null,
     ) {
         compose.setContent {
             // The #239 flush loop rides the same frame pump that would otherwise spin forever —
@@ -96,6 +98,7 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
                     applyDisplay = applyDisplay,
                     runner = runner,
                     displayChoice = displayChoice,
+                    readPairNotice = readPairNotice,
                 )
             }
         }
@@ -146,6 +149,14 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
         runner.start()
         clock.nowMs += sequence.totalMs + PAST_GUN_MS
         runner.tick()
+    }
+
+    /**
+     * The watch's start arrives and the service joins it (#220): no tap on this screen at all. The
+     * watch tapped [lateByMs] ago, which is how far past its gun's anchor the join lands here.
+     */
+    fun joinFromTheWatch(sequence: RaceSequence = BuiltInSequences.usSailing, lateByMs: Long = 150L) {
+        runner.join(sequence, clock.nowMs - lateByMs + sequence.totalMs, JOIN_LATE_CUE_GRACE_MS)
     }
 
     /**

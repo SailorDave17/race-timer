@@ -307,7 +307,8 @@ What carries the answer, strongest first:
 1. **Nothing sent is any Data safety data type.** Each field is a device's time since boot in
    milliseconds, or a random number matching a question to its answer. The format is `PairMessage` in
    `shared/src/main/kotlin/com/racetimer/shared/PairLink.kt`: three message kinds, every field a
-   number. None of it is location, personal info, financial info, health and fitness, messages,
+   number. *(True of #219. #220 added a fourth kind, and this reason no longer leads — see* Race
+   starts over the link *below.)* None of it is location, personal info, financial info, health and fitness, messages,
    photos and videos, audio, files and docs, calendar, contacts, app activity, web browsing, app info
    and performance, or a device or other ID. Auto Backup's reason 3 has the same shape, and like it
    this does not depend on reading a definition a particular way. **Lead with it.**
@@ -329,6 +330,60 @@ on 2026-09-25 says what it collects. One statement that looks like the answer �
 notes on the *Wearable Support Library* — is about a different artifact and is not relied on here. So
 *the Wearable library itself collects nothing* is **not established**. It is the claim to settle
 first if Console or a reviewer asks.
+
+## Race starts over the link — re-checked for #220, 2026-09-28
+
+[#220](https://github.com/SailorDave17/race-timer/issues/220) makes a start on either device run the
+same race on both. It adds **no permission, no dependency and no component** —
+`docs/declared-surface.lock` is unchanged, and the lock is right not to notice — and it adds one
+message kind to what the app sends, which is what this section is about. The format is
+[`pair-protocol.md`](pair-protocol.md).
+
+**What a `start` carries that nothing did before:** the sequence the race runs (`us_sailing_5_4_1`,
+`custom_8m`), a random race id, the gun and the sending instant as readings of the sender's
+`elapsedRealtime`, and the tap's instant on the phone's `elapsedRealtime` — the stamp that decides
+which of two starts counts. **Every number is still a clock-since-boot reading or a random id.** The
+stamp was a wall-clock time of day in the story's first draft; hardware moved it to the phone's
+monotonic clock (`pair-protocol.md`), so no time of day crosses the link. And one change of timing:
+the clock readings are now exchanged from a start until its gun with the screen off, where #219
+exchanged them only while the app was on screen.
+
+### Every declaration, re-read
+
+| Console section | After #220 | Why |
+|---|---|---|
+| **Privacy policy URL** | Same URL, **revised content** | `docs/privacy-policy.md` revised in the same change: three rows added to what is exchanged, the during-a-race timing, effective date 28 September 2026. The live page updates when #220 merges — confirm the date there before the next upload |
+| **Data safety** | **No data collected. No data shared** — re-argued below, and it now rests on different reasons | A start is the first thing sent that says something about what the user did |
+| **Foreground service permissions** | **Text revised — the Console block needs re-pasting** | `docs/play-store-fgs-justification.md`: the Console block said the only thing sent is clock readings, and a start is more than that. The long-form `dataSync` bullet is rewritten too. Re-pasting is an owner act in Console, and until it is done Console holds the #324 text |
+| **Content ratings** | Unchanged | Still one user's own two devices: no user-to-user interaction, nothing shared with a third party |
+| Every other section | Unchanged | Nothing here touches ads, the advertising ID, target audience, health, finance, government, app access or data deletion |
+
+### Data safety, re-argued again
+
+**Reason 1 of the pair-link argument above no longer leads.** A start says *which sequence the user
+started*. That is the nearest thing this app has ever sent to one of Play's types: **App activity →
+App interactions** ("how a user interacts with your app"). It is arguable either way — it is the
+app's own state handed to the user's own other device, not a record of behaviour kept anywhere, and
+every other field is still a clock-since-boot reading or a random id — but an argument that has to
+be made is not the clean *nothing sent is any type* the #219 answer led with, and this document does
+not pretend otherwise.
+
+What carries the answer now, strongest first:
+
+1. **It goes to the user's own other device and nowhere else.** No server, no developer receipt, no
+   third party. Even on a reading that called a start *collected*, there is nothing *shared*.
+2. **Nothing is sent while the devices can reach each other only through the internet.** A start is
+   sent to, and taken from, a directly connected peer only, like every other message:
+   `PairLinkTest`'s "a start is neither sent to nor taken from a peer reachable only through the
+   cloud", which #220's mutation pass made fail on purpose (M5, 1 red as predicted).
+3. **It is held in memory, and used in real time to run the race.** The one exception is the joined
+   race itself, saved exactly as a race started on the device is, in the keys the stored-data table
+   above already lists.
+
+**The question to settle if Console or a reviewer asks**, stated rather than answered by default:
+whether a start is *App interactions, collected* (processed in real time, sent only to the user's own
+device, never shared). If it is, the change to the answer is small and additive. The owner's call at
+Console time — this section is the evidence for either answer.
 
 ## Content ratings — the questionnaire
 
@@ -366,6 +421,7 @@ change that, on the day it merges, makes something above **wrong**.
 | **In-app purchases or subscriptions** | **Financial features** and the content rating both change, and the store listing must say so |
 | **Free-text entry** (naming a custom sequence, say) | The content rating's user-generated-content answer changes, and Data safety may gain a type depending on where the text goes |
 | **Data Layer sync between the watch and the phone** ([#219](https://github.com/SailorDave17/race-timer/issues/219)) | **Landed 2026-09-25.** Data does now leave a device by the app's own action — clock readings, to the user's other device — and Data safety was re-answered from scratch in *The pair link* above rather than edited: same answer, new grounds, one gap named. The privacy policy and the FGS justification were rewritten where they said the app transmits nothing; no permission moved in either manifest. The watch's standalone `meta-data` was re-read and stays true, as predicted |
+| **Starts sent over the link** ([#220](https://github.com/SailorDave17/race-timer/issues/220)) | **Landed 2026-09-28.** No permission, dependency or component moved, so the lock stayed green — the example of a change this table predicts that the lock by construction cannot see. What moved is **what is sent**: a sequence id, the first thing sent that describes what the user did. The privacy policy, the FGS text (Console re-paste owed) and Data safety's reasons moved; Data safety's answer did not, pending the question in *Race starts over the link* |
 | **Haptics on the phone** ([#208](https://github.com/SailorDave17/race-timer/issues/208)) | **Landed 2026-09-05.** Added `VIBRATE` to the phone manifest. Nothing in this document moved — the permission was already declared by the watch and already in the app-wide set — and `docs/privacy-policy.md`'s permission table, which said `VIBRATE` was **watch-only**, was corrected in the same change, with its effective date. Kept as the worked example of a manifest change that moves one document and not the other |
 
 **One row of this table has already been half-resolved, and the correction is instructive.** It
@@ -391,7 +447,10 @@ Every claim above was checked against `develop` at `aafa5de` on **2026-08-11**, 
 for both form factors against `develop` at `f953e97` on 2026-08-17** (#212). **Re-checked on
 2026-09-25 for #219's Play services dependency**, against `6ff147f` plus that story's diff — see
 *The pair link*. That pass re-read both merged release manifests and re-ran the four-tree sweep
-below, which still finds only the two Auto Backup comments.
+below, which still finds only the two Auto Backup comments. **Re-checked on 2026-09-28 for #220**
+against `f0e279d` plus that story's diff — see *Race starts over the link*. No manifest or
+dependency moved (`declared-surface.py --check` green in the story's gate worktree), so the
+manifest readings below were not repeated.
 
 **Check the merged manifest, not the source file.** The shipped permission set is what
 `wear/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml`

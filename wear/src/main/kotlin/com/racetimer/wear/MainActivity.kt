@@ -34,6 +34,7 @@ import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable as wearComposable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.racetimer.android.HapticManager
+import com.racetimer.android.PairRaces
 import com.racetimer.android.SystemMonotonicClock
 import com.racetimer.android.WearablePairLink
 import com.racetimer.shared.BuiltInSequences
@@ -71,6 +72,7 @@ import com.racetimer.wear.ui.CustomDurationScreen
 import com.racetimer.wear.ui.DEFAULT_CUSTOM_MINUTES
 import com.racetimer.wear.ui.LeadInDurationScreen
 import com.racetimer.wear.ui.LeadInPickerScreen
+import com.racetimer.wear.ui.RESYNC_PROMPT_RECOVERED
 import com.racetimer.wear.ui.RaceTimerTheme
 import com.racetimer.wear.ui.SequencePickerScreen
 import com.racetimer.wear.ui.TimerScreen
@@ -131,6 +133,14 @@ class MainActivity : ComponentActivity() {
     private var uiSequenceName by mutableStateOf(BuiltInSequences.usSailing.name)
     private var uiSyncLabel by mutableStateOf<String?>(null)
     private var uiShowResyncPrompt by mutableStateOf(false)
+
+    /**
+     * The words on the re-sync line: a degraded restore's, or a joined race's when the phone's gun
+     * could not be placed inside the budget (#220 AC 5). One line, because both say the same thing —
+     * the gun is best-effort, confirm it at the next flag — and the second is the one shown when both
+     * apply, since a join replaced whatever was restored.
+     */
+    private var uiResyncPromptText by mutableStateOf(RESYNC_PROMPT_RECOVERED)
 
     /** Set once the sailor taps Sync after a degraded recovery, dismissing the re-sync prompt. */
     private var resyncAcknowledged = false
@@ -308,6 +318,13 @@ class MainActivity : ComponentActivity() {
      */
     private var timerScreenShowing = false
 
+    /**
+     * The navigation the composition built, held so a race nobody started from this screen can bring
+     * the timer face back (#220): the phone's start is joined in the service, and the sailor may be
+     * in the picker when it lands.
+     */
+    private var navController: NavController? = null
+
     // --- The ambient half of the brightness rule (#12) --------------------------
     //
     // #65 forces the panel to "maximum" during the sequence. Measured on this watch, that override
@@ -412,6 +429,7 @@ class MainActivity : ComponentActivity() {
                 // controller reports its current destination as soon as the listener is added, and
                 // again on every navigate and pop.
                 DisposableEffect(navController) {
+                    this@MainActivity.navController = navController
                     val listener = NavController.OnDestinationChangedListener { _, destination, _ ->
                         timerScreenShowing = destination.route == NAV_TIMER
                         // Applied now rather than on the next refresh pass, so the picker lets go as
@@ -419,7 +437,10 @@ class MainActivity : ComponentActivity() {
                         applyDisplayPolicy(uiTimerState)
                     }
                     navController.addOnDestinationChangedListener(listener)
-                    onDispose { navController.removeOnDestinationChangedListener(listener) }
+                    onDispose {
+                        navController.removeOnDestinationChangedListener(listener)
+                        this@MainActivity.navController = null
+                    }
                 }
 
                 SwipeDismissableNavHost(
@@ -434,6 +455,7 @@ class MainActivity : ComponentActivity() {
                             sequenceName = uiSequenceName,
                             syncLabel = uiSyncLabel,
                             showResyncPrompt = uiShowResyncPrompt,
+                            resyncPromptText = uiResyncPromptText,
                             message = uiMessage,
                             onMessageExpired = { uiMessage = null },
                             resumeOffered = uiResumeOffered,
@@ -540,6 +562,9 @@ class MainActivity : ComponentActivity() {
             addStatusListener(pairListener)
             setActive(true)
         }
+        // #220. Built with the link, so a start the phone sends reaches this process from the first
+        // moment the watch app is on screen — which is also the only moment it can start the service.
+        PairRaces.get(this)
     }
 
     override fun onStop() {
@@ -1171,9 +1196,20 @@ class MainActivity : ComponentActivity() {
         )
         // A race the engine is actually running outranks a saved one: it has already been answered.
         clearResumeOffer()
+        // A race the phone started can be running a sequence this watch did not have selected (#220).
+        // The selection follows the race, as it does for one started here, so the name on screen and
+        // the next Start both describe the race the pair ran. Compared without any lead-in, which the
+        // line below takes out of the selection while the engine still runs the armed sequence — so a
+        // race armed here matches and is left alone, and this fires once per joined race, not per pass.
+        engine.loadedSequence?.let { running ->
+            if (leadInBaseId(running.id) != leadInBaseId(selectedSequence.id)) applySelection(running)
+        }
         // And the lead-in that armed it was a per-race choice, spent the moment the engine took the
         // race (#104) — see [dropLeadInFromSelection].
         dropLeadInFromSelection()
+        // A running race is shown on the timer face (#220). Every start made here already navigates
+        // there first; a joined one arrives with the sailor wherever they were, the picker included.
+        if (!timerScreenShowing) navController?.popBackStack(NAV_TIMER, inclusive = false)
         uiTimerState = engine.currentState
         // Sync has nothing to snap to until the sequence proper is under way. Read from the engine's
         // own sequence and its live clock rather than from the selection, which no longer carries the
@@ -1193,10 +1229,15 @@ class MainActivity : ComponentActivity() {
         }
         announceRestoreOutcome()
         announceCueLoss()
-        // Prompt a re-sync only while a degraded recovery is still running and unconfirmed.
-        uiShowResyncPrompt = timerService?.lastRestoreOutcome == RestoreOutcome.DEGRADED &&
-            engine.currentState == TimerState.RUNNING &&
-            !resyncAcknowledged
+        // Prompt a re-sync only while a degraded recovery is still running and unconfirmed — or while
+        // a joined race runs on a gun the link could not place inside the budget (#220 AC 5). The
+        // service clears the second on Sync itself, so it needs no acknowledgement here.
+        val joinNotice = timerService?.pairJoinNotice
+        uiShowResyncPrompt = engine.currentState == TimerState.RUNNING && (
+            joinNotice != null ||
+                (timerService?.lastRestoreOutcome == RestoreOutcome.DEGRADED && !resyncAcknowledged)
+            )
+        uiResyncPromptText = joinNotice ?: RESYNC_PROMPT_RECOVERED
         // Keep-screen-on and the max-brightness override, both keyed off the engine state (and
         // keep-screen-on off which screen is up, #300). The rules and the reasoning behind each state
         // live in `shared/ScreenPolicy.kt`, where the JVM suite can assert them — including the two

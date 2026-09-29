@@ -48,7 +48,7 @@ class PairLinkTest {
         val id: String,
         private val world: World,
         private val bootReading: Long,
-        private val fastPpm: Long = 0L,
+        val fastPpm: Long = 0L,
     ) : MonotonicClock {
         var jumpMs = 0L
         override fun elapsedMs(): Long = exactAt(world.now).toLong()
@@ -94,11 +94,13 @@ class PairLinkTest {
 
     private inner class Side(val device: Device, air: Air, world: World, firstId: Long) {
         val statuses = mutableListOf<PairStatus>()
+        val peerStarts = mutableListOf<PeerStart>()
         val link = PairLink(
             clock = device,
             transport = air.transportFor(this),
             scheduler = PairScheduler { delayMs, task -> world.at(delayMs, task) },
             onStatus = { statuses += it },
+            onPeerStart = { peerStarts += it },
             firstRoundId = firstId,
         )
     }
@@ -400,14 +402,118 @@ class PairLinkTest {
             PairMessage.Ping(-3L),
             PairMessage.Pong(Long.MAX_VALUE, 12L, 13L),
             PairMessage.Sample(1L, -2L, 3L, 4L),
+            PairMessage.Start(1_790_000_000_000L, -9L, 36_000_000L, 36_300_000L, "scholastic_race_manager_alert60s"),
         )
         messages.forEach { assertEquals(it, PairMessage.decode(it.encode())) }
     }
 
     @Test
-    fun `a message that is not exactly one of the three is dropped`() {
-        val rejected = listOf("", "rtpair1", "rtpair2 ping 1", "rtpair1 ping", "rtpair1 ping 1 2", "rtpair1 ping x", "rtpair1 pong 1 2", "rtpair1 gun 1")
+    fun `a message that is not exactly one of the four is dropped`() {
+        val rejected = listOf(
+            "", "rtpair1", "rtpair2 ping 1", "rtpair1 ping", "rtpair1 ping 1 2", "rtpair1 ping x", "rtpair1 pong 1 2", "rtpair1 gun 1",
+            // A start with a field missing, a field too many, a number that is not one, and an id
+            // that is not a sequence id.
+            "rtpair1 start 1 2 3 club_3_2_1", "rtpair1 start 1 2 3 4 5 club_3_2_1", "rtpair1 start 1 2 x 4 club_3_2_1",
+            "rtpair1 start 1 2 3 4 club-3", "rtpair1 start 1 2 3 4 ",
+        )
         rejected.forEach { assertNull(it, PairMessage.decode(it.toByteArray(Charsets.UTF_8))) }
+    }
+
+    // --- a start crosses the link (#220) --------------------------------------------------------
+
+    private fun startOn(clockOf: Device, gunInMs: Long, sequenceId: String = "us_sailing_5_4_1"): PairRace =
+        PairRace(RaceKey(1L, 7L), sequenceId, JoinGun(clockOf.elapsedMs() + gunInMs, 0L), startedHere = true)
+
+    /** The physical instant a reading of [device]'s clock names. Inverts [Device.exactAt]. */
+    private fun physicalAt(device: Device, reading: Long): Double =
+        (reading - device.exactAt(0L)) / (1.0 + device.fastPpm / 1_000_000.0)
+
+    @Test
+    fun `a start lands on the other device at the same physical gun, inside the bound it reports`() {
+        discover()
+        a.link.setActive(true)
+        world.advance(5_000L)
+
+        val race = startOn(phone, gunInMs = 5 * 60_000L)
+        a.link.announce(race)
+        world.advance(1_000L)
+
+        val start = b.peerStarts.single()
+        assertEquals(race.key, start.key)
+        assertEquals("us_sailing_5_4_1", start.sequenceId)
+        val bound = start.gun.errorBoundMs ?: throw AssertionError("a linked pair translates the gun")
+        assertTrue(start.gun.inBudget)
+        val error = kotlin.math.abs(physicalAt(watch, start.gun.gunMs) - physicalAt(phone, race.gun.gunMs))
+        assertTrue("the two guns are $error ms apart, bound $bound", error <= bound)
+    }
+
+    @Test
+    fun `with no rounds a start is anchored to its arrival, and says it is unmeasured`() {
+        discover()
+        val race = startOn(phone, gunInMs = 3 * 60_000L)
+        a.link.announce(race)
+        world.advance(1_000L)
+
+        val start = b.peerStarts.single()
+        assertNull("nothing bounds a gun with no rounds behind it", start.gun.errorBoundMs)
+        assertTrue(!start.gun.inBudget)
+        // Late by the one-way leg, 60 ms here, and never early: arrival is after sending.
+        val lateMs = physicalAt(watch, start.gun.gunMs) - physicalAt(phone, race.gun.gunMs)
+        assertTrue("the arrival-anchored gun is $lateMs ms late", lateMs in 59.0..62.0)
+    }
+
+    @Test
+    fun `a start is neither sent to nor taken from a peer reachable only through the cloud`() {
+        air.nearby = false
+        discover()
+
+        a.link.announce(startOn(phone, gunInMs = 60_000L))
+        world.advance(1_000L)
+        assertTrue("nothing sent over the cloud", air.sent.none { it.second.startsWith("rtpair1 start") })
+
+        // And one that does arrive from a peer seen only through the cloud is not taken.
+        b.link.onMessage(phone.id, PairMessage.Start(1L, 2L, phone.elapsedMs(), phone.elapsedMs() + 60_000L, "club_3_2_1").encode(), watch.elapsedMs())
+        assertTrue(b.peerStarts.isEmpty())
+
+        // The positive control: the same message from a nearby peer is taken, so the refusal above
+        // is the nearby check and not a malformed message.
+        air.nearby = true
+        discover()
+        b.link.onMessage(phone.id, PairMessage.Start(1L, 2L, phone.elapsedMs(), phone.elapsedMs() + 60_000L, "club_3_2_1").encode(), watch.elapsedMs())
+        assertEquals(1, b.peerStarts.size)
+    }
+
+    @Test
+    fun `a hold keeps an off-screen device measuring until the gun, then stops`() {
+        discover()
+        a.link.holdUntil(phone.elapsedMs() + 70_000L)
+        world.advance(200_000L)
+
+        // A burst at the hold, then one every 30 s after each ends — at 0, ~30 and ~60 s — and none
+        // after the gun at 70 s.
+        assertEquals(15, pingsFrom(phone))
+    }
+
+    @Test
+    fun `ending a hold stops the asking at once`() {
+        discover()
+        a.link.holdUntil(phone.elapsedMs() + 10 * 60_000L)
+        world.advance(5_000L)
+        a.link.endHold()
+        world.advance(10 * 60_000L)
+
+        assertEquals("the burst at the hold and nothing after", 5, pingsFrom(phone))
+    }
+
+    @Test
+    fun `a screen leaving the link does not end a hold`() {
+        discover()
+        a.link.setActive(true)
+        a.link.holdUntil(phone.elapsedMs() + 70_000L)
+        a.link.setActive(false)
+        world.advance(200_000L)
+
+        assertEquals(15, pingsFrom(phone))
     }
 
     // --- the status row -------------------------------------------------------------------------

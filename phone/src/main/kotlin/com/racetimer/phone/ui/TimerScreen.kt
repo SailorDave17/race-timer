@@ -4,9 +4,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -33,6 +37,10 @@ const val TAG_DIM_COUNT_UP = "count-up-dim"
 
 /** Test tag for the pair's status row (#219). */
 const val TAG_PAIR_STATUS = "pair-status"
+
+/** Test tags for the choice between the phone's start and the watch's (#220). */
+const val TAG_SYNC_TO_PHONE = "pair-sync-to-phone"
+const val TAG_SYNC_TO_WATCH = "pair-sync-to-watch"
 
 /**
  * How much of the shorter screen dimension the readout may occupy vertically.
@@ -116,6 +124,14 @@ private const val GLYPH_WIDTH_FRACTION = 0.68f
  *                      Drawn on the pre-start screen only, small and last, so it moves nothing a
  *                      running race lays out. Null draws nothing, and is what a phone with no watch
  *                      gets.
+ * @param pairChoice    The line saying the watch started too and which start both devices follow
+ *                      (#220), or null. While a countdown runs it puts the choice of either start
+ *                      in front of the officer: the owner's rule at #220's pickup is that the later
+ *                      tap wins and the console says so, with a way back to the other. Above the
+ *                      readout for the brightness prompt's reason — nowhere near Sync and Stop, which
+ *                      an urgent thumb is reaching for.
+ * @param onSyncToPhone Tapped to run both devices on the phone's start.
+ * @param onSyncToWatch Tapped to run both devices on the watch's start.
  */
 @Composable
 fun TimerScreen(
@@ -137,6 +153,9 @@ fun TimerScreen(
     inLeadIn: Boolean = false,
     onLeadIn: () -> Unit = {},
     pairStatus: String? = null,
+    pairChoice: String? = null,
+    onSyncToPhone: () -> Unit = {},
+    onSyncToWatch: () -> Unit = {},
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -178,6 +197,10 @@ fun TimerScreen(
 
             if (brightnessPrompt) {
                 CountUpBrightnessPrompt(onKeepBright = onKeepBright, onDim = onDimCountUp)
+            }
+
+            if (state == TimerState.RUNNING && pairChoice != null) {
+                PairStartChoice(line = pairChoice, onSyncToPhone = onSyncToPhone, onSyncToWatch = onSyncToWatch)
             }
 
             Text(
@@ -332,6 +355,60 @@ fun TimerScreen(
 
 /** The lead-in control's label, shared with the tests so the copy lives in one place (#207). */
 const val LEAD_IN_LABEL = "Lead-in"
+
+/**
+ * Both starts, and which one both devices are following (#220): tap the other to move both there.
+ *
+ * Two equal halves with the device named on each, rather than Keep and Switch. A Keep reads as the
+ * safe tap, and here neither is: the officer is choosing which signal the race is timed from.
+ */
+@Composable
+private fun PairStartChoice(line: String, onSyncToPhone: () -> Unit, onSyncToWatch: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = line,
+            color = Color.White,
+            fontSize = 16.sp,
+            textAlign = TextAlign.Center,
+        )
+        // The two halves have to read as equals, and on the owner's SM-S918U they did not: "Sync to
+        // phone" wrapped inside the default 24 dp side padding while "Sync to watch" did not, and the
+        // halves drew at two heights (measured on hardware, #220). Narrower padding fits both on one
+        // line there; the shared height keeps them equal on a phone or a font size where one wraps.
+        Row(
+            modifier = Modifier.fillMaxWidth(0.9f).padding(top = 8.dp).height(IntrinsicSize.Min),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            Button(
+                onClick = onSyncToPhone,
+                colors = ButtonDefaults.buttonColors(),
+                contentPadding = CHOICE_PADDING,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(end = 8.dp)
+                    .testTag(TAG_SYNC_TO_PHONE),
+            ) {
+                Text(text = "Sync to phone", fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            }
+            Button(
+                onClick = onSyncToWatch,
+                colors = ButtonDefaults.buttonColors(),
+                contentPadding = CHOICE_PADDING,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(start = 8.dp)
+                    .testTag(TAG_SYNC_TO_WATCH),
+            ) {
+                Text(text = "Sync to watch", fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
+/** Inside each half of the pair choice: Material's vertical padding, a third of its horizontal. */
+private val CHOICE_PADDING = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
 
 /**
  * The one question a count-up asks, and only when there is something to release (#279).
