@@ -36,8 +36,13 @@ import com.racetimer.shared.BG_NORMAL_ARGB
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.DEFAULT_BOX_ALERT_SECONDS
 import com.racetimer.shared.PairContest
+import com.racetimer.shared.PairEvent
 import com.racetimer.shared.PairStatus
+import com.racetimer.shared.SetupChoice
+import com.racetimer.shared.leadInBaseId
 import com.racetimer.shared.pairContestLine
+import com.racetimer.shared.pairGunMovedLine
+import com.racetimer.shared.pairStaleControlLine
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.TimerState
@@ -66,6 +71,19 @@ private const val UI_REFRESH_MS = 50L
  * quarter-second before the countdown appears is well inside the first signal's minute.
  */
 private const val RACE_WATCH_MS = 250L
+
+/**
+ * How long a line about something the watch did stays up (#221): the watch's Sync, or a control it
+ * sent for a race this phone is not running. The watch's Tier 1 banner's three seconds, for its
+ * reason — news, with nothing to do about it on this screen.
+ */
+internal const val PAIR_NEWS_DWELL_MS = 3_000L
+
+/**
+ * A line about something the watch did (#221), numbered so that the same words twice — two stale
+ * Syncs in a row — are two lines, each shown for its own dwell.
+ */
+internal data class PairNews(val text: String, val serial: Long)
 
 /**
  * The phone app: a standalone start-sequence timer for the committee-boat console.
@@ -155,6 +173,35 @@ class MainActivity : ComponentActivity() {
     private fun syncTo(phone: Boolean) {
         val contest = pairContestState.value ?: return
         PairRaces.get(this).choose(contest.startedOn(here = phone))
+    }
+
+    /** The line about something the watch just did (#221), or null once its dwell has run. */
+    private val pairNewsState = mutableStateOf<PairNews?>(null)
+    private var pairNewsSerial = 0L
+
+    private val pairEventListener: (PairEvent) -> Unit = { event ->
+        val text = when (event) {
+            is PairEvent.GunMoved -> pairGunMovedLine(event.setRemainingMs, peerNoun = "Watch")
+            is PairEvent.StaleControl -> pairStaleControlLine(event.control, peerNoun = "Watch")
+        }
+        pairNewsState.value = PairNews(text, ++pairNewsSerial)
+    }
+
+    /**
+     * Bumped whenever the watch's setup lands on this phone's pre-start screen (#221). The runner's
+     * selection is not Compose state, so this is what tells the screen to read it again.
+     */
+    private val selectionVersionState = mutableStateOf(0)
+
+    /**
+     * The watch's setup, put where this activity keeps its half of the pre-start screen: the alert
+     * the lead-in picker opens on, and the length the Custom stepper opens on. The selection itself
+     * is the service's runner, which [PairRaces] has already moved by the time this runs.
+     */
+    private val setupListener: (SetupChoice) -> Unit = { choice ->
+        lastBoxAlertState.value = choice.boxAlertSeconds
+        BuiltInSequences.customMinutes(choice.sequenceId)?.let { customMinutesState.value = it }
+        selectionVersionState.value++
     }
 
     /**
@@ -255,8 +302,11 @@ class MainActivity : ComponentActivity() {
                     collectRestoreNotice = { boundService?.consumeRestoreNotice() },
                     // Every selection, including a Custom one just dialled: the id is the whole
                     // record, so remembering it is what makes the next cold launch open where the
-                    // officer left off (#209).
-                    onSequencePicked = { boundService?.savePickedSequence(it.id) },
+                    // officer left off (#209). And the watch's pre-start screen follows it (#221).
+                    onSequencePicked = {
+                        boundService?.savePickedSequence(it.id)
+                        PairRaces.get(this).picked(SetupChoice(leadInBaseId(it.id), lastBoxAlertState.value))
+                    },
                     initialCustomMinutes = customMinutesState.value,
                     // A lead-in start is always a fresh start (#207, the watch's rule): the picker
                     // is a deliberate two-tap arming of a race that does not exist yet, so it must
@@ -282,6 +332,11 @@ class MainActivity : ComponentActivity() {
                     onSyncToPhone = { syncTo(phone = true) },
                     onSyncToWatch = { syncTo(phone = false) },
                     readPairNotice = { boundService?.pairJoinNotice },
+                    pairNews = pairNewsState.value,
+                    onPairNewsExpired = { expired ->
+                        if (pairNewsState.value == expired) pairNewsState.value = null
+                    },
+                    selectionVersion = selectionVersionState.value,
                 )
             }
         }
@@ -305,14 +360,21 @@ class MainActivity : ComponentActivity() {
         }
         // #220. Built with the link above, so a start the watch sends reaches this process from the
         // first moment it is on screen — which is also the only moment it can start the service.
+        // #221: and what the watch's Sync, End Race and setup do here reaches the screen.
         PairRaces.get(this).apply {
             addContestListener(pairContestListener)
             pairContestState.value = contest
+            addEventListener(pairEventListener)
+            addSetupListener(setupListener)
         }
     }
 
     override fun onStop() {
-        PairRaces.get(this).removeContestListener(pairContestListener)
+        PairRaces.get(this).apply {
+            removeContestListener(pairContestListener)
+            removeEventListener(pairEventListener)
+            removeSetupListener(setupListener)
+        }
         WearablePairLink.get(this).apply {
             setActive(false)
             removeStatusListener(pairListener)
@@ -351,6 +413,17 @@ class MainActivity : ComponentActivity() {
  * [pairChoice] is the line for a conflict between the phone's start and the watch's (#220), already
  * worded, with [onSyncToPhone] and [onSyncToWatch] as the two answers; [readPairNotice] reads the
  * standing flag a joined race owes when its gun could not be placed inside the budget.
+ *
+ * [pairNews] is a line about something the watch did (#221) — its Sync, or a control for a race not
+ * running here — shown on the notice line for [PAIR_NEWS_DWELL_MS] and then handed back through
+ * [onPairNewsExpired].
+ *
+ * [selectionVersion] moves when the watch's setup has changed the runner's selection, which is not
+ * Compose state. **It is read nowhere, and changing is its whole job**: a new value makes the caller
+ * run this composable again, and that run reads `runner.selected` afresh — the name, and the length
+ * the next Start will run. A `refresh()` keyed on it sat here first and was *measured* redundant in
+ * #221's mutation pass (deleted, 0 red against a predicted 1: `PairNewsOnScreenTest` stayed green),
+ * so it is not kept. Removing the parameter itself is what that test catches.
  */
 @Composable
 internal fun RaceTimerApp(
@@ -374,6 +447,9 @@ internal fun RaceTimerApp(
     onSyncToPhone: () -> Unit = {},
     onSyncToWatch: () -> Unit = {},
     readPairNotice: (() -> String?)? = null,
+    pairNews: PairNews? = null,
+    onPairNewsExpired: (PairNews) -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") selectionVersion: Int = 0,
 ) {
     var onTimerScreen by remember { mutableStateOf(false) }
     var onCustomScreen by remember { mutableStateOf(false) }
@@ -507,6 +583,14 @@ internal fun RaceTimerApp(
             pairNotice = readPairNotice?.invoke()
             delay(UI_REFRESH_MS)
         }
+    }
+
+    // A line about something the watch did (#221) is news, and goes after its dwell. Keyed on the
+    // line itself, which is numbered, so a second line with the same words gets a dwell of its own.
+    LaunchedEffect(pairNews) {
+        val news = pairNews ?: return@LaunchedEffect
+        delay(PAIR_NEWS_DWELL_MS)
+        onPairNewsExpired(news)
     }
 
     // A race the officer is actively running — the countdown, and (#206) the count-up past the gun,
@@ -721,7 +805,9 @@ internal fun RaceTimerApp(
                 refresh()
             },
             // A joined race's flag outranks a restore's line: it is about the gun being counted to.
-            notice = pairNotice ?: restoreNotice,
+            // A line about what the watch just did outranks both, for its three seconds (#221): it
+            // is the news, and the standing line is back underneath it when it goes.
+            notice = pairNews?.text ?: pairNotice ?: restoreNotice,
             brightnessPrompt = brightnessPrompt,
             onKeepBright = { displayChoice.answerCountUpBrightness(keepBright = true) },
             onDimCountUp = { displayChoice.answerCountUpBrightness(keepBright = false) },

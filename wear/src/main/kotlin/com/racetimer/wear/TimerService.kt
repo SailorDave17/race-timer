@@ -29,6 +29,7 @@ import com.racetimer.shared.CueStream
 import com.racetimer.shared.CueTiming
 import com.racetimer.shared.JoinGun
 import com.racetimer.shared.JoinOutcome
+import com.racetimer.shared.PairControlledGun
 import com.racetimer.shared.PairJoin
 import com.racetimer.shared.pairJoinNotice
 import com.racetimer.shared.cueStream
@@ -69,8 +70,13 @@ import com.racetimer.shared.startPlan
  * - Run a race the phone started ([ACTION_JOIN], #220) through the same arm as a Start, and tell the
  *   phone about a race started here, once it is running. Which start wins is decided before the
  *   intent arrives (`PairStarts`, through [PairRaces]); a watch with no phone runs what it always ran.
+ * - Take the phone's Sync and End Race as this watch's own (#221), as the pair's
+ *   [PairRaces.RaceService]: a moved gun re-aims the cues and re-sizes the wake lock exactly as
+ *   [ACTION_SYNC] does (#126 must not be reborn through the remote path), and is felt and heard as a
+ *   Sync here is; an ended race freezes as [ACTION_END_RACE] freezes it. A Sync or End Race taken
+ *   here is told to the phone after it has been taken.
  */
-class TimerService : Service() {
+class TimerService : Service(), PairRaces.RaceService {
 
     // --- Binder ---------------------------------------------------------------
 
@@ -295,7 +301,44 @@ class TimerService : Service() {
         engine.addListener(engineListener)
         warmUpPickedSequence()
         pairRaces = PairRaces.get(this)
-        pairRaces.attach { engine.currentState == TimerState.RUNNING || engine.currentState == TimerState.COUNTING_UP }
+        pairRaces.attach(this)
+    }
+
+    // --- The pair's view of this service (#221) ------------------------------------------------
+
+    override fun raceRunning(): Boolean =
+        engine.currentState == TimerState.RUNNING || engine.currentState == TimerState.COUNTING_UP
+
+    /**
+     * IDLE and nothing else. FINISHED is the gun still reading "GO!" for its linger, and RACE_ENDED a
+     * summary waiting for Done — both a race on screen, which a setup from the phone must not
+     * replace. The selection itself is the activity's; this only says whether it may be moved.
+     */
+    override fun atPreStart(): Boolean = engine.currentState == TimerState.IDLE
+
+    /**
+     * The phone's Sync, on this clock: [ACTION_SYNC]'s work around a gun given rather than snapped.
+     * The engine tells its listeners, and the service's own hears it as a Sync — buzzed, beeped and
+     * persisted — as the owner's rule at #221's pickup asks.
+     *
+     * The flag a joined race carries follows the gun it is now counting to: cleared when the move was
+     * placed inside D2's budget, and saying so in a Sync's words when it was not (#220 AC 5).
+     */
+    override fun moveGun(gun: JoinGun): Boolean {
+        if (!engine.moveGun(gun.gunMs)) return false
+        scheduleNextCue()
+        pairJoinNotice = pairJoinNotice(gun, peerNoun = "Phone", placedBy = PairControlledGun.SYNC)
+        // The re-compute #126 exists for, on the remote path: see ACTION_SYNC below for why a lock
+        // sized at Start does not cover a gun a Sync moved. Only a countdown can have moved.
+        acquireWakeLock()
+        return true
+    }
+
+    /** The phone's End Race: frozen at the phone's time, the summary left up for Done as ever. */
+    override fun endRaceAt(elapsedMs: Long): Long? {
+        val held = engine.endRaceAt(elapsedMs) ?: return null
+        updateOngoingNotification()
+        return held
     }
 
     /**
@@ -665,7 +708,7 @@ class TimerService : Service() {
             ACTION_SYNC -> {
                 // The sailor has checked the clock against a flag: a joined race's gun is theirs now.
                 pairJoinNotice = null
-                engine.sync()
+                val taken = engine.sync()
                 // A snap re-anchors the gun and re-queues the unfired cues, so whatever was armed is
                 // now aimed at the wrong moment.
                 scheduleNextCue()
@@ -690,6 +733,8 @@ class TimerService : Service() {
                 // delivered to a service the system created just to carry it (see below), where there
                 // is no race to hold a lock for.
                 if (engine.currentState == TimerState.RUNNING) acquireWakeLock()
+                // Last, as a start is told (#221): the phone moves to the gun this snap produced.
+                if (taken) engine.snapshot()?.gunElapsedMs?.let { pairRaces.syncedHere(it) }
                 // The intent can land on a service the system created just to deliver it — the app
                 // was killed, or the race has already ended. There is then nothing to sync and no
                 // countdown to hold open, so don't leave a started service sitting idle. COUNTING_UP
@@ -709,8 +754,11 @@ class TimerService : Service() {
                 // than tearing down — the whole point is to leave the final time on screen for the
                 // race committee to read. The tick loop's RACE_ENDED branch won't post this update
                 // itself (it never runs again after this call), so do it once here.
+                val wasCountingUp = engine.currentState == TimerState.COUNTING_UP
                 engine.endRace()
                 updateOngoingNotification()
+                // The phone ends at the time frozen here (#221).
+                if (wasCountingUp && engine.currentState == TimerState.RACE_ENDED) pairRaces.endedHere(-engine.remainingMs)
             }
             ACTION_STOP -> {
                 // Also the way out of a restored race the sailor did not want, or a RACE_ENDED

@@ -43,8 +43,12 @@ import com.racetimer.shared.DeviceReadiness
 import com.racetimer.shared.ForegroundRefusalLatch
 import com.racetimer.shared.LaunchNotice
 import com.racetimer.shared.NoticeTier
+import com.racetimer.shared.PairEvent
 import com.racetimer.shared.PairStatus
 import com.racetimer.shared.RaceSequence
+import com.racetimer.shared.SetupChoice
+import com.racetimer.shared.pairGunMovedLine
+import com.racetimer.shared.pairStaleControlLine
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.StartNotice
@@ -234,6 +238,34 @@ class MainActivity : ComponentActivity() {
         uiPairStatus = pairStatusLine(status, peerNoun = "Phone", showAbsent = debuggable)
     }
 
+    /**
+     * What the phone's controls did here (#221). Its Sync takes the place a Sync here takes — the
+     * label under the readout, naming the phone — and a control for a race this watch is not running
+     * is a Tier 1 banner: news about the pair, with nothing to do about it on this screen.
+     */
+    private val pairEventListener: (PairEvent) -> Unit = { event ->
+        when (event) {
+            is PairEvent.GunMoved -> showSyncLabel(pairGunMovedLine(event.setRemainingMs, peerNoun = "Phone"))
+            is PairEvent.StaleControl -> showTransientMessage(pairStaleControlLine(event.control, peerNoun = "Phone"))
+        }
+    }
+
+    /**
+     * The phone's setup, onto this watch's pre-start screen (#221): the selection when no race is on
+     * screen here — the pair asks the service before it sends anything this way, and this checks
+     * again, since a race can start in between — and the two values the pickers open on either way.
+     * Registered for the activity's whole life rather than while it is visible, because the selection
+     * lives in this activity: one kept in the background would otherwise come back holding the old one.
+     */
+    private val setupListener: (SetupChoice) -> Unit = { choice ->
+        lastBoxAlertSeconds = choice.boxAlertSeconds
+        BuiltInSequences.customMinutes(choice.sequenceId)?.let { customMinutes = it }
+        val engineState = timerService?.engine?.currentState
+        if (engineState == null || engineState == TimerState.IDLE) {
+            BuiltInSequences.resolve(choice.sequenceId)?.let { applySelection(it) }
+        }
+    }
+
     private var selectedSequence: RaceSequence = BuiltInSequences.usSailing
 
     /**
@@ -420,6 +452,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         restorePendingSelection()
+        // #221: after the launch has read its own memory, so the phone's setup lands on top of it.
+        PairRaces.get(this).addSetupListener(setupListener)
 
         setContent {
             RaceTimerTheme {
@@ -478,7 +512,7 @@ class MainActivity : ComponentActivity() {
                     wearComposable(NAV_PICKER) {
                         SequencePickerScreen(
                             onSequenceSelected = { seq ->
-                                applySelection(seq)
+                                applySelection(seq, picked = true)
                                 navController.popBackStack()
                             },
                             onCustomSelected = { navController.navigate(NAV_CUSTOM) },
@@ -489,7 +523,7 @@ class MainActivity : ComponentActivity() {
                             initialMinutes = customMinutes,
                             onConfirm = { chosenMinutes ->
                                 customMinutes = chosenMinutes
-                                applySelection(BuiltInSequences.custom(chosenMinutes))
+                                applySelection(BuiltInSequences.custom(chosenMinutes), picked = true)
                                 // Back to the timer face, not to the picker: the sailor has finished
                                 // choosing, and the picker they passed through has nothing left to
                                 // offer. popBackStack() alone would strand them on it.
@@ -564,11 +598,13 @@ class MainActivity : ComponentActivity() {
         }
         // #220. Built with the link, so a start the phone sends reaches this process from the first
         // moment the watch app is on screen — which is also the only moment it can start the service.
-        PairRaces.get(this)
+        // #221: and what the phone's Sync and End Race did here reaches the screen.
+        PairRaces.get(this).addEventListener(pairEventListener)
     }
 
     override fun onStop() {
         super.onStop()
+        PairRaces.get(this).removeEventListener(pairEventListener)
         WearablePairLink.get(this).apply {
             setActive(false)
             removeStatusListener(pairListener)
@@ -585,6 +621,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        PairRaces.get(this).removeSetupListener(setupListener)
+        super.onDestroy()
+    }
+
     // --- Sequence selection ---------------------------------------------------
 
     /**
@@ -592,8 +633,13 @@ class MainActivity : ComponentActivity() {
      *
      * The duration is reflected immediately rather than at Start, so picking a sequence shows what
      * is about to be run instead of the previous one's total.
+     *
+     * [picked] is true only for the sailor's own choice on the picker or the stepper, which the
+     * phone's pre-start screen then follows (#221). Every other path here — the launch reading its
+     * memory, the selection following a running race, the phone's own setup arriving — is not a
+     * pick and is not told: the phone either sent it or is running the race it came from.
      */
-    private fun applySelection(seq: RaceSequence) {
+    private fun applySelection(seq: RaceSequence, picked: Boolean = false) {
         selectedSequence = seq
         uiSequenceName = seq.name
         uiRemainingMs = seq.totalMs
@@ -613,6 +659,13 @@ class MainActivity : ComponentActivity() {
         // the launch path, where this runs from onCreate before onStart has bound — onServiceConnected
         // makes the same call as soon as there is something to call it on.
         timerService?.warmUpCues(seq)
+        if (picked) PairRaces.get(this).picked(SetupChoice(leadInBaseId(seq.id), lastBoxAlertSeconds))
+    }
+
+    /** Flash [label] under the readout, as a Sync does, for [SYNC_LABEL_DURATION_MS]. */
+    private fun showSyncLabel(label: String) {
+        uiSyncLabel = label
+        uiHandler.postDelayed({ if (uiSyncLabel == label) uiSyncLabel = null }, SYNC_LABEL_DURATION_MS)
     }
 
     /**
@@ -1044,11 +1097,11 @@ class MainActivity : ComponentActivity() {
         // Drives the countdown while running, at the engine's own cadence and on its thread.
         override fun onTick(remainingMs: Long) = refreshUiState()
 
-        override fun onSync(snappedToMs: Long) {
-            val label = "Synced → ${formatCountdown(snappedToMs)}"
-            uiSyncLabel = label
-            uiHandler.postDelayed({ uiSyncLabel = null }, SYNC_LABEL_DURATION_MS)
-        }
+        override fun onSync(snappedToMs: Long) = showSyncLabel("Synced → ${formatCountdown(snappedToMs)}")
+
+        // The phone's Sync (#221) names the phone: the pair's event says so, with the countdown the
+        // phone's Sync set (`pairEventListener`). Left to the default, this would say "Synced" first.
+        override fun onGunMoved(remainingMs: Long) = Unit
 
         override fun onClockAdjusted(remainingMs: Long) {
             showTransientMessage("Clock changed — countdown held steady")

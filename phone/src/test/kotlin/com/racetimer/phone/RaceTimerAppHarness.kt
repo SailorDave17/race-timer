@@ -73,6 +73,15 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
     private var generation by mutableStateOf(0)
 
     /**
+     * The line about something the watch did (#221), as `MainActivity` holds it: set by the pair's
+     * event, and cleared by the screen when its dwell has run.
+     */
+    var pairNews by mutableStateOf<PairNews?>(null)
+
+    /** Bumped as `MainActivity` bumps it when the watch's setup moves the runner's selection (#221). */
+    var selectionVersion by mutableStateOf(0)
+
+    /**
      * Compose the whole app and answer the display surface, leaving the sequence picker up.
      *
      * [fullBrightness] answers the launch surface's second switch, and [applyDisplay] records what
@@ -99,6 +108,9 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
                     runner = runner,
                     displayChoice = displayChoice,
                     readPairNotice = readPairNotice,
+                    pairNews = pairNews,
+                    onPairNewsExpired = { expired -> if (pairNews == expired) pairNews = null },
+                    selectionVersion = selectionVersion,
                 )
             }
         }

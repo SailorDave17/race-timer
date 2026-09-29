@@ -1,16 +1,20 @@
-# Pair Protocol — One Start, One Race, on Either Device
+# Pair Protocol — One Race, One Clock, on Either Device
 
 What crosses the Wearable Data Layer between the phone app and the watch app, and the rules each
 device applies to it. The link that measures the two clocks is
 [#219](https://github.com/SailorDave17/race-timer/issues/219); a start that runs the same race on
-both is [#220](https://github.com/SailorDave17/race-timer/issues/220). Both belong to epic
+both is [#220](https://github.com/SailorDave17/race-timer/issues/220); Sync, End Race and the
+pre-start setup taken on either device and applied on both are
+[#221](https://github.com/SailorDave17/race-timer/issues/221). All belong to epic
 [#196](https://github.com/SailorDave17/race-timer/issues/196), whose decision registry the D-numbers
 below refer to.
 
 The code is the authority and this file points at it: the protocol is `PairLink`
-(`shared/.../PairLink.kt`) and the start rule is `PairStarts` and `PairRaceBook`
-(`shared/.../PairRace.kt`), all in `:shared`, where the JVM tests drive two simulated devices against
-each other. The Android glue is one copy in `:shared-android` (`WearablePairLink`, `PairRaces`).
+(`shared/.../PairLink.kt`), the start and control rules are `PairStarts` and `PairRaceBook`
+(`shared/.../PairRace.kt`), and the setup rule is `PairSetup` (`shared/.../PairSetup.kt`), all in
+`:shared`, where the JVM tests drive two simulated devices against each other. The Android glue is one
+copy in `:shared-android` (`WearablePairLink`, `PairRaces`), and each app's service carries a control
+out as `PairRaces.RaceService`.
 
 ## The budget the hardware story measures
 
@@ -37,8 +41,8 @@ D2 was ratified on three conditions for the production link. Where each one live
 
 One line of UTF-8 text each, a version tag first: `rtpair1 <kind> <fields…>`. A device that reads a
 tag or a kind it does not know drops the line, so two app versions that disagree about the format
-have no link rather than a wrong one. The version tag did not move for #220: an app from before it
-reads `start` as a kind it does not know and drops it.
+have no link rather than a wrong one. The version tag did not move for #220 or #221: an app from
+before either reads the new kind as one it does not know and drops it.
 
 | Kind | Fields | Sent when |
 |---|---|---|
@@ -46,10 +50,16 @@ reads `start` as a kind it does not know and drops it.
 | `pong` | round id, when the ping arrived, when the reply left — on the answering clock | The answer |
 | `sample` | the four stamps of a completed round, as the asker holds it | So the answering device keeps the round too, and both estimates rest on the same rounds |
 | `start` | the stamp (the tap, on the phone's clock), the race id, when it left and the gun (both on the sender's clock), and the sequence id | A race was started, or kept after a conflict and sent again (#220) |
+| `sync` | the Sync's stamp (on the phone's clock) and a random id, the race id, when it left and the moved gun (both on the sender's clock) | A Sync was taken, or kept after two crossed and sent again (#221) |
+| `end` | the race id, and the elapsed time the race was frozen at | End Race was taken, or an earlier end kept and sent back (#221) |
+| `setup` | the pick's stamp (on the phone's clock) and a random id, the lead-in alert in seconds, and the sequence id without any lead-in | A pre-start pick was made, the peer came into range, a race ended, or the later pick is sent back (#221) |
 
-Every field is a number except a start's sequence id. That id is the string a saved race already
-carries (`custom_8m`, `scholastic_race_manager_alert60s`), and `BuiltInSequences.resolve` rebuilds
-Custom lengths and lead-ins from it. It is checked against `[A-Za-z0-9_]{1,64}` at both ends.
+Every field is a number except the sequence id a `start` or a `setup` ends with. That id is the
+string a saved race already carries (`custom_8m`, `scholastic_race_manager_alert60s`), and
+`BuiltInSequences.resolve` rebuilds Custom lengths and lead-ins from it. It is checked against
+`[A-Za-z0-9_]{1,64}` at both ends, and a setup's alert against the values the lead-in picker can
+offer. An `end`'s elapsed time is a duration, not a clock reading: it is the same number on both
+clocks, and crosses untranslated.
 
 ## A start
 
@@ -146,31 +156,134 @@ by its id keeps its own gun for it: exact for the one it started, rather than a 
 its own gun back across the link.
 
 The choice is up only while the countdown runs. It is never offered on the watch, and never for two
-starts that were both tapped on the watch: then the phone was following the watch all along.
+starts that were both tapped on the watch: then the phone was following the watch all along. A Sync
+on either device takes it down (#221): the officer has just set the gun against the flag, which is
+the question the choice was asking.
+
+## Sync on either device (#221 AC 1)
+
+**A Sync travels as the gun it produced, never as "sync now".** The device where Sync is tapped
+snaps its own countdown as it always has (up to the minute inside 10 s, floored beyond, #150), and
+only a snap it actually took is sent: one refused in a lead-in or by the double-tap guard moves
+nothing and says nothing. The message carries the new gun on the sender's clock, and the receiver
+moves it onto its own through the rounds it holds — `translateGun`, the start's translation, never a
+wall clock. Each device snapping for itself would round two readings a message's trip apart, and
+4:50.0 rounds up to 5:00 where 4:49.9 floors to 4:00: a minute between wrist and console.
+
+The receiver moves its gun (`TimerEngine.moveGun`) and does everything around it that a Sync there
+does: the cues still to come are re-aimed, and the ones it has already sounded stay sounded — the
+same rule as its own Sync, so both devices sound the same cues after one Sync; the race is
+persisted; **the wake lock is re-sized from what is left to run (#221 AC 4)**, because a moved gun
+can be later than the lock was sized for, which is #126's defect reached by a new road; and the
+Sync is felt and heard, with the label naming the device that took it — *Phone synced → 5:00* on the
+watch, *Watch synced → 5:00* on the phone's notice line. The label reads the countdown the peer's
+Sync set, as the peer read it when sending — the `sync` carries the gun and the sending instant on
+the sender's clock — to the nearest second. It is not worked out from this device's countdown when
+the move lands: that is a message's trip later, and on the owner's pair a Sync took about 0.6 s to
+cross, which read *Watch synced → 0:59* for a Sync to 1:00 until #221's hardware run found it.
+
+A gun that could not be placed inside D2's budget is flagged as a joined start's is, in a Sync's
+words (*Phone sync ±180 ms — tap Sync to confirm*), and one placed inside it clears the flag.
+
+**Two Syncs that cross settle on the later.** Each Sync carries a key made exactly as a start's is
+— the instant on the phone's clock, raised past everything the device has seen, then a random id —
+and each race remembers the key its gun was last set under (`PairRace.gunKey`). A device takes a
+Sync only if it outranks that key; one that holds the later sends its own again, so the pair
+converges even when one of the two is lost in transit.
+
+## End Race on either device (#221 AC 2)
+
+**End Race travels as the elapsed time it froze**, and the receiver freezes at that time rather than
+at its own reading when the message lands (`TimerEngine.endRaceAt`). The final elapsed time is the
+number the committee writes down, and a reading taken a message's trip later could floor to a
+different second on the two screens. Each device winds down as its own End Race does: the phone
+leaves the foreground and clears its saved race; the watch leaves its summary up until Done.
+
+**Two End Race taps that cross settle on the earlier.** A device already ended keeps the earlier of
+its own end and the peer's, and one that keeps its own sends it back, so the pair converges on one
+time even when one of the two is lost.
+
+## A control for a race not running here (#221 AC 3)
+
+Every `sync` and `end` names its race. A device applies one only to **the race it names, and only
+while that race is running here**; anything else is dropped and said — *Phone synced a race not
+running here* as a Tier 1 banner on the watch, *Watch ended a race not running here* on the phone's
+notice line for three seconds. It is never applied to whatever the device happens to be running.
+That covers a control delayed past a link drop and a restart on this device, and one for a race
+this device has since stopped: a device remembers the race it last started or joined after the race
+is over, so a late control for it is recognised as its own rather than taken for another's.
+
+A control reaches a device whose race is running whether or not its screen is on — unlike a start,
+which needs the receiving app open: the race's foreground service keeps the process, and with it the
+link, alive, and the control is carried out by that service directly rather than by starting one.
+
+## The pre-start setup (#221 AC 5, epic decision D8)
+
+What a pre-start screen is set to — **the sequence the next Start runs, and the alert the lead-in
+picker opens on** — mirrors across the pair, so one device drives the other from the dock. A Custom
+length is part of the sequence (`custom_8m`), so it mirrors as a selection does. A lead-in is not:
+arming one starts the race on both apps, and the start mirrors it; what mirrors before a start is
+the alert both pickers open on (the owner's reading of D8 at #221's pickup).
+
+**The rule, decided by the owner at #221's pickup: the later pick wins, ordered like starts.**
+
+- Every pick carries a key made exactly as a start's is: the instant **on the phone's clock**,
+  raised past everything the device has seen, then a random id. The watch places its pick on the
+  phone's clock through the offset its rounds hold — **held through a drop**, so a pick made on the
+  watch out of range is still ordered by when it was made.
+- **A setup nobody has touched loses to any that has been.** What an app opens on comes from its own
+  memory and has no key in this process, as a restored race has none. **When neither has been
+  touched, the phone's wins**: the tie is broken by which device is the console, so both reach it.
+- **A race is a pick of its own sequence.** A race started here takes the start's key, since it is
+  the latest thing the officer did; a race joined here keeps this device's key, so the device whose
+  start it was wins the comparison afterwards. Either way the setup follows the race — its sequence
+  without the lead-in, and a lead-in's alert — so after a race both screens are set to what was run.
+- **A device with a race on screen takes no setup**: not a countdown, not a count-up, not a "GO!"
+  still showing, not a frozen summary waiting for Done. Only its pre-start screen shows a setup.
+
+**When the two are compared:** every pick is sent as it is made; both devices send theirs when the
+peer comes into range (`PairLink`'s `onPeerNearby`); and a device sends its own when its race is over
+and its pre-start screen is back. Both compare the same two keys, so they always reach the same
+answer, and the device holding the later pick sends it back — which is also how a device that was
+busy when the other picked catches up once its race is over.
+
+A setup whose sequence this app cannot resolve is not taken, rather than shown as something else.
 
 ## What each device keeps
 
-No wall-clock time crosses the link: every number a start carries is a reading of a device's clock
-since boot, or a random id.
+No wall-clock time crosses the link: every number a start, a Sync or a pick carries is a reading of a
+device's clock since boot, a random id, or — for End Race — a duration.
 
-The keys and race ids live in memory (`PairRaceBook`, the most recent 64), for the process's life. A
-joined race is saved as any race is — its sequence and its gun on this device's clock — so it is
-restored after a process death like one started here, without its key.
+The keys and race ids live in memory (`PairRaceBook`, the most recent 64), for the process's life,
+and so do the setup's key (`PairSetup`). A joined race is saved as any race is — its sequence and its
+gun on this device's clock — so it is restored after a process death like one started here, without
+its key; a moved gun is saved the same way. A setup taken from the peer is saved as a pick made here
+is — the sequence and the lead-in alert, in the keys each app already had — without its key.
 
 ## What the pair does not do yet
 
-- **Sync and End Race are local.** Mirroring them, and pre-start setup (D8), is
-  [#221](https://github.com/SailorDave17/race-timer/issues/221).
-- **Stop is mirrored by no story.** A Stop on one device leaves the other counting. A Start tapped
+- **Stop is mirrored by no story yet.** A Stop on one device leaves the other counting. A Start tapped
   after it takes the other device over, as the rule above says, so a general recall restarts both.
+  [#328](https://github.com/SailorDave17/race-timer/issues/328) mirrors it under the control rule
+  above.
+- **A race restored after a process death takes no control from the peer, and sends none.** It has
+  no key and no race id here, so a Sync or End Race naming the race it was is stale on this device,
+  and one taken on it is not told. The next start on either device joins both again.
+- **A single Sync lost in transit is not sent again.** Only two that cross are resent, by the device
+  holding the later. The two guns then differ by the Sync until the next one, and finding that is a
+  reconnect's question — [#222](https://github.com/SailorDave17/race-timer/issues/222)'s, below.
 - **A disagreement found after a reconnect is not corrected.** That is D6, ratified at 100 ms, and
   [#222](https://github.com/SailorDave17/race-timer/issues/222)'s.
 - **Nothing here is measured on hardware.** [#223](https://github.com/SailorDave17/race-timer/issues/223)
-  measures the skew at the gun against D2 on release builds.
+  measures the skew at the gun against D2 on release builds, and observes the mirrored controls and
+  setup on the owner's pair.
 
 ## Where it is tested
 
-`PairRaceTest` drives two simulated devices — each with its own clock, link, book and engine —
-through every rule above and judges each by the physical instant both guns fire. `PairLinkTest`
-covers the wire and the nearby rule; `TimerEngineTest` covers `join`; each app's `PairJoinTest` covers
-the service arm; `FollowRemoteStartTest` and `TimerScreenPairChoiceTest` cover the phone's screen.
+`PairRaceTest` drives two simulated devices — each with its own clock, link, book, setup and engine
+— through every rule above and judges each by the physical instant both guns fire. `PairLinkTest`
+covers the wire, the nearby rule and the held offset; `TimerEngineTest` covers `join`, `moveGun` and
+`endRaceAt`; each app's `PairJoinTest` covers the service arm, and each app's `PairControlsTest` the
+service carrying out the peer's Sync (the wake lock re-sized, #221 AC 4), End Race and setup;
+`FollowRemoteStartTest`, `TimerScreenPairChoiceTest` and `PairNewsOnScreenTest` cover the phone's
+screen.

@@ -354,10 +354,49 @@ class PhoneRaceRunner(
      * The caller that holds the wake lock must re-size it after this — a sync can move the gun
      * *later*, and #126 measured the lock expiring mid-race when only Start ever sized it. That
      * re-acquire lives in [PhoneTimerService], beside the lock it re-sizes.
+     *
+     * @return whether the snap was taken — only a taken one is told to the watch (#221).
      */
-    fun sync() {
-        engine.sync()
+    fun sync(): Boolean {
+        val taken = engine.sync()
         armCueDispatch()
+        return taken
+    }
+
+    /**
+     * Move the countdown's gun to [gunMs], the watch's Sync on this clock (#221) — the gun the
+     * watch's snap produced, never a snap of this phone's own reading (`TimerEngine.moveGun`).
+     *
+     * Re-armed for [sync]'s reason: the move re-anchors every remaining cue. The wake lock is the
+     * caller's to re-size, as it is after [sync].
+     *
+     * @return whether a countdown was moved. False past the gun or with no race.
+     */
+    fun moveGun(gunMs: Long): Boolean {
+        val moved = engine.moveGun(gunMs)
+        armCueDispatch()
+        return moved
+    }
+
+    /**
+     * End the count-up at [elapsedMs], the watch's End Race (#221): the time the watch froze, not
+     * this phone's reading when the message landed, so the committee reads one race time on both.
+     * An End Race already taken here keeps the earlier of the two (`TimerEngine.endRaceAt`).
+     *
+     * Journalled as [endRace] is — the end of a race cycle, marked as the watch's — and only on the
+     * end itself, not on the second of two that crossed, which moves a frozen number and nothing more.
+     *
+     * @return the elapsed time now frozen, or null with no race-manager race to end here.
+     */
+    fun endRaceAt(elapsedMs: Long): Long? {
+        val wasCountingUp = engine.currentState == TimerState.COUNTING_UP
+        val held = engine.endRaceAt(elapsedMs) ?: return null
+        armCueDispatch()
+        if (wasCountingUp) {
+            journal.record("race_end", "seq" to selected.id, "elapsedMs" to held, "peer" to 1)
+            journal.flush()
+        }
+        return held
     }
 
     /**

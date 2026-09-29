@@ -95,6 +95,10 @@ class PairLinkTest {
     private inner class Side(val device: Device, air: Air, world: World, firstId: Long) {
         val statuses = mutableListOf<PairStatus>()
         val peerStarts = mutableListOf<PeerStart>()
+        val peerSyncs = mutableListOf<PeerSync>()
+        val peerEnds = mutableListOf<PeerEnd>()
+        val peerSetups = mutableListOf<PeerSetup>()
+        var nearbyNews = 0
         val link = PairLink(
             clock = device,
             transport = air.transportFor(this),
@@ -102,6 +106,10 @@ class PairLinkTest {
             onStatus = { statuses += it },
             onPeerStart = { peerStarts += it },
             firstRoundId = firstId,
+            onPeerSync = { peerSyncs += it },
+            onPeerEnd = { peerEnds += it },
+            onPeerSetup = { peerSetups += it },
+            onPeerNearby = { nearbyNews++ },
         )
     }
 
@@ -403,18 +411,28 @@ class PairLinkTest {
             PairMessage.Pong(Long.MAX_VALUE, 12L, 13L),
             PairMessage.Sample(1L, -2L, 3L, 4L),
             PairMessage.Start(1_790_000_000_000L, -9L, 36_000_000L, 36_300_000L, "scholastic_race_manager_alert60s"),
+            PairMessage.Sync(36_000_500L, -4L, 7L, 36_000_600L, 36_300_000L),
+            PairMessage.End(-9L, 2_700_000L),
+            PairMessage.Setup(36_000_500L, 11L, 60L, "custom_8m"),
+            PairMessage.Setup(Long.MIN_VALUE, 1L, 0L, "us_sailing_race_manager"),
         )
         messages.forEach { assertEquals(it, PairMessage.decode(it.encode())) }
     }
 
     @Test
-    fun `a message that is not exactly one of the four is dropped`() {
+    fun `a message that is not exactly one of the kinds is dropped`() {
         val rejected = listOf(
             "", "rtpair1", "rtpair2 ping 1", "rtpair1 ping", "rtpair1 ping 1 2", "rtpair1 ping x", "rtpair1 pong 1 2", "rtpair1 gun 1",
             // A start with a field missing, a field too many, a number that is not one, and an id
             // that is not a sequence id.
             "rtpair1 start 1 2 3 club_3_2_1", "rtpair1 start 1 2 3 4 5 club_3_2_1", "rtpair1 start 1 2 x 4 club_3_2_1",
             "rtpair1 start 1 2 3 4 club-3", "rtpair1 start 1 2 3 4 ",
+            // #221: a sync a field short or long, an end with none or a negative elapsed time, and a
+            // setup with no id, a bad id, a number that is not one, or an alert no picker offers.
+            "rtpair1 sync 1 2 3 4", "rtpair1 sync 1 2 3 4 5 6", "rtpair1 sync 1 2 x 4 5",
+            "rtpair1 end 1", "rtpair1 end 1 -5", "rtpair1 end 1 2 3",
+            "rtpair1 setup 1 2 60", "rtpair1 setup 1 2 60 club-3", "rtpair1 setup 1 x 60 club_3_2_1",
+            "rtpair1 setup 1 2 3 club_3_2_1", "rtpair1 setup 1 2 121 club_3_2_1", "rtpair1 setup 1 2 -60 club_3_2_1",
         )
         rejected.forEach { assertNull(it, PairMessage.decode(it.toByteArray(Charsets.UTF_8))) }
     }
@@ -481,6 +499,98 @@ class PairLinkTest {
         discover()
         b.link.onMessage(phone.id, PairMessage.Start(1L, 2L, phone.elapsedMs(), phone.elapsedMs() + 60_000L, "club_3_2_1").encode(), watch.elapsedMs())
         assertEquals(1, b.peerStarts.size)
+    }
+
+    // --- a race's controls and the pre-start setup cross the link (#221) --------------------------
+
+    @Test
+    fun `a Sync lands on the other device at the same physical gun, through the same translation as a start`() {
+        discover()
+        a.link.setActive(true)
+        world.advance(5_000L)
+
+        // The phone's race after a Sync: the gun moved, under a Sync's key.
+        val synced = startOn(phone, gunInMs = 4 * 60_000L).copy(gunKey = RaceKey(9L, 3L))
+        a.link.announceSync(synced)
+        world.advance(1_000L)
+
+        val sync = b.peerSyncs.single()
+        assertEquals("the race it names", synced.key.raceId, sync.raceId)
+        assertEquals("the countdown it set, on the sender's own clock", 4 * 60_000L, sync.setRemainingMs)
+        assertEquals("ordered by the Sync's key, not the start's", RaceKey(9L, 3L), sync.key)
+        val bound = sync.gun.errorBoundMs ?: throw AssertionError("a linked pair translates the gun")
+        val error = kotlin.math.abs(physicalAt(watch, sync.gun.gunMs) - physicalAt(phone, synced.gun.gunMs))
+        assertTrue("the two guns are $error ms apart, bound $bound", error <= bound)
+    }
+
+    @Test
+    fun `an End Race and a setup arrive as they were sent`() {
+        discover()
+        a.link.announceEnd(raceId = 7L, elapsedMs = 2_712_345L)
+        b.link.announceSetup(RaceKey(5L, 6L), SetupChoice("custom_8m", 45))
+        world.advance(1_000L)
+
+        assertEquals(PeerEnd(7L, 2_712_345L), b.peerEnds.single())
+        assertEquals(PeerSetup(RaceKey(5L, 6L), SetupChoice("custom_8m", 45)), a.peerSetups.single())
+    }
+
+    @Test
+    fun `a Sync, an End Race and a setup are neither sent to nor taken from a peer reachable only through the cloud`() {
+        air.nearby = false
+        discover()
+        val race = startOn(phone, gunInMs = 60_000L)
+
+        a.link.announceSync(race)
+        a.link.announceEnd(race.key.raceId, 1_000L)
+        a.link.announceSetup(RaceKey(1L, 1L), SetupChoice("club_3_2_1", 0))
+        world.advance(1_000L)
+        assertTrue("nothing sent over the cloud", air.sent.none { it.second.matches(Regex("rtpair1 (sync|end|setup) .*")) })
+
+        val arriving = listOf(
+            PairMessage.Sync(1L, 2L, 3L, phone.elapsedMs(), phone.elapsedMs() + 60_000L),
+            PairMessage.End(3L, 1_000L),
+            PairMessage.Setup(1L, 2L, 0L, "club_3_2_1"),
+        )
+        arriving.forEach { b.link.onMessage(phone.id, it.encode(), watch.elapsedMs()) }
+        assertTrue(b.peerSyncs.isEmpty() && b.peerEnds.isEmpty() && b.peerSetups.isEmpty())
+
+        // The positive control: the same messages from a nearby peer are taken.
+        air.nearby = true
+        discover()
+        arriving.forEach { b.link.onMessage(phone.id, it.encode(), watch.elapsedMs()) }
+        assertEquals(listOf(1, 1, 1), listOf(b.peerSyncs.size, b.peerEnds.size, b.peerSetups.size))
+    }
+
+    @Test
+    fun `the peer coming into range is news once, and again each time it returns`() {
+        discover()
+        assertEquals(1, b.nearbyNews)
+        discover()
+        assertEquals("the same peer, still nearby, is no news", 1, b.nearbyNews)
+
+        air.nearby = false
+        discover()
+        air.nearby = true
+        discover()
+
+        assertEquals(2, b.nearbyNews)
+    }
+
+    @Test
+    fun `the offset is held through a drop, so a watch out of range still reads the console's clock`() {
+        discover()
+        b.link.setActive(true)
+        world.advance(65_000L)
+        assertContainsTruth(b.link.status(), of = phone, from = watch)
+
+        air.nearby = false
+        discover()
+        world.advance(60_000L)
+
+        assertEquals("the positive control: the phone is out of range", PairStatus.NotNearby, b.link.status())
+        val held = b.link.peerOffsetMs() ?: throw AssertionError("the rounds held before the drop still say where the phone's clock is")
+        val error = kotlin.math.abs(held - trueOffset(phone, watch))
+        assertTrue("the held offset is $error ms from the truth", error <= PAIR_SKEW_BUDGET_MS)
     }
 
     @Test

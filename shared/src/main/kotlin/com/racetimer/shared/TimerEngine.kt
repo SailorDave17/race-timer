@@ -112,6 +112,18 @@ interface TimerListener {
     fun onSync(snappedToMs: Long)
 
     /**
+     * Called when the other device's Sync moved this device's gun ([TimerEngine.moveGun], #221).
+     *
+     * Defaults to [onSync], deliberately: the owner's rule at #221's pickup is that a peer's Sync
+     * does here what a Sync tapped here does — persisted, felt and heard — so a listener that only
+     * knows about Sync already treats it right, and one that must tell the two apart (the label that
+     * names which device synced) overrides this.
+     *
+     * @param remainingMs The new remaining ms: the sender's whole minute, less the message's trip.
+     */
+    fun onGunMoved(remainingMs: Long) = onSync(remainingMs)
+
+    /**
      * Called when a wall-clock adjustment (e.g. an NTP correction or manual time change) is
      * detected while the countdown is running. The monotonic countdown itself is unaffected;
      * [remainingMs] is the still-correct remaining time. Implementers may surface a brief
@@ -287,6 +299,39 @@ class TimerEngine(
     }
 
     /**
+     * End a race-manager race at [elapsedMs] past its gun: the other device's End Race (#221).
+     *
+     * **The frozen time is the one the other device froze**, not this device's own reading when the
+     * message lands. The final elapsed time is the number the committee writes down, and a reading
+     * taken a message's trip later could floor to a different second on the two screens. A
+     * duration is the same on both clocks — the pair's drift over an hour's race is a tenth of a
+     * second at the stated rate — so it needs no translation.
+     *
+     * From [TimerState.COUNTING_UP] this ends the race as [endRace] does. From
+     * [TimerState.RACE_ENDED] it keeps **the earlier of the two ends**, so two End Race taps that
+     * cross on the link settle on one time on both devices. Anywhere else there is no race to end.
+     *
+     * @return the elapsed time now frozen here — [elapsedMs], or this device's own earlier end — or
+     *         null when there was no race to end.
+     */
+    fun endRaceAt(elapsedMs: Long): Long? {
+        val at = elapsedMs.coerceAtLeast(0L)
+        return when (state) {
+            TimerState.COUNTING_UP -> {
+                pausedRemainingMs = -at
+                state = TimerState.RACE_ENDED
+                at
+            }
+            TimerState.RACE_ENDED -> {
+                // remainingMs is frozen negative in RACE_ENDED: the elapsed time, sign flipped.
+                if (at < -pausedRemainingMs) pausedRemainingMs = -at
+                -pausedRemainingMs
+            }
+            else -> null
+        }
+    }
+
+    /**
      * Snap the running countdown to a whole minute, per [snapToMinute]: up by at most
      * [LATE_TAP_WINDOW_MS], down by anything else.
      *
@@ -305,10 +350,12 @@ class TimerEngine(
      * exists to enable (#150).
      *
      * @param guardMs Minimum interval between consecutive syncs.
+     * @return whether the snap was taken. A refused one moved nothing, so it is nothing to tell the
+     *         other device of a pair (#221).
      */
-    fun sync(guardMs: Long = 1_000L) {
-        if (state != TimerState.RUNNING) return
-        val seq = sequence ?: return
+    fun sync(guardMs: Long = 1_000L): Boolean {
+        if (state != TimerState.RUNNING) return false
+        val seq = sequence ?: return false
 
         val now = clock.elapsedMs()
         val remaining = gunTimeMs - now
@@ -320,12 +367,12 @@ class TimerEngine(
         // and seven seconds of lead vanish — the exact misalignment the lead-in exists to prevent,
         // with no signal to notice it by. Refused *before* the double-tap guard is armed, so it
         // costs a later, legitimate sync nothing.
-        if (isInLeadIn(seq, remaining)) return
+        if (isInLeadIn(seq, remaining)) return false
 
         // null == never synced this session, so the first sync is always allowed. (Do not fold this
         // into a sentinel Long: `now - Long.MIN_VALUE` overflows negative and swallowed every
         // first sync of a race.)
-        lastSyncTimeMs?.let { if (now - it < guardMs) return }
+        lastSyncTimeMs?.let { if (now - it < guardMs) return false }
         lastSyncTimeMs = now
 
         val snapped = snapToMinute(remaining)
@@ -340,6 +387,35 @@ class TimerEngine(
         queueCues(seq) { it.offsetMs < remaining }
 
         listeners.forEach { it.onSync(snapped) }
+        return true
+    }
+
+    /**
+     * Move the running countdown's gun to [gunMs]: the other device's Sync, already on this clock
+     * (#221).
+     *
+     * **The gun is moved, not re-snapped.** Each device snapping its own countdown would round two
+     * readings a message's trip apart — and 4:50.0 rounds up to 5:00 where 4:49.9 floors to 4:00 —
+     * so the device that synced sends the gun its snap produced, and this one takes that gun through
+     * the same translation a start's takes. Both then count to one gun.
+     *
+     * Not refused in a lead-in and not guarded against a double tap, where [sync] is: both are rules
+     * about a tap, and the tap was judged on the device that took it. Only a countdown can move, so
+     * past the gun, or with no race, this returns false and nothing changes.
+     *
+     * The cues requeued are those still to come by the countdown as it read *before* the move — the
+     * rule [sync] uses, for sync's reason: a cue at or above that reading has sounded here already,
+     * and a move up must not sound it again.
+     */
+    fun moveGun(gunMs: Long): Boolean {
+        if (state != TimerState.RUNNING) return false
+        val seq = sequence ?: return false
+        val now = clock.elapsedMs()
+        val remaining = gunTimeMs - now
+        gunTimeMs = gunMs
+        queueCues(seq) { it.offsetMs < remaining }
+        listeners.forEach { it.onGunMoved(gunMs - now) }
+        return true
     }
 
     /** Monotonic time of the last accepted [sync], or null if none yet. Backs the double-tap guard. */

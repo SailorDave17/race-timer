@@ -1451,4 +1451,157 @@ class TimerEngineTest {
         assertEquals(90_000L, engine.remainingMs)
         assertEquals("a joined race persists like any other", fakeNow + 90_000L, engine.snapshot()?.gunElapsedMs)
     }
+
+    // --- The other device's Sync and End Race (#221) ----------------------------------------------
+
+    @Test fun `sync says whether it was taken, so only a taken one is told to the other device`() {
+        engine.load(BuiltInSequences.usSailing)
+        assertFalse("nothing is running", engine.sync())
+        engine.start()
+        fakeNow = 8_000L
+        assertTrue(engine.sync())
+        fakeNow += 500L
+        assertFalse("inside the double-tap guard", engine.sync())
+    }
+
+    @Test fun `a sync refused in a lead-in says so`() {
+        val armed = withLeadIn(BuiltInSequences.scholasticRaceManager, 60)!!
+        engine.load(armed)
+        engine.start()
+        fakeNow = 5_000L
+        assertFalse(engine.sync())
+    }
+
+    @Test fun `a moved gun is the gun it was given, not a snap of this device's own reading`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        // This device reads 4:49.94 — its own snap would floor to 4:00 — while the other device
+        // tapped at 4:50.00 and rounded up to 5:00. The 5:00 gun arrives here 60 ms after it was set.
+        fakeNow = 10_060L
+        val gun = fakeNow + 5 * 60_000L - 60L
+
+        assertTrue(engine.moveGun(gun))
+
+        assertEquals(5 * 60_000L - 60L, engine.remainingMs)
+        assertEquals("and it is what a restore comes back to", gun, engine.snapshot()?.gunElapsedMs)
+    }
+
+    @Test fun `a gun moved up does not sound again a cue this device already sounded`() {
+        engine.load(BuiltInSequences.club)
+        engine.start()
+        engine.tick()
+        assertEquals("the positive control: 3:00 sounded at the start", listOf(3 * 60_000L), cues.map { it.offsetMs })
+        fakeNow = 5_000L
+
+        engine.moveGun(fakeNow + 3 * 60_000L)
+        engine.tick()
+        fakeNow += 60_000L
+        engine.tick()
+
+        assertEquals(listOf(3 * 60_000L, 2 * 60_000L), cues.map { it.offsetMs })
+    }
+
+    @Test fun `a gun moved down sounds the cue it lands on`() {
+        engine.load(BuiltInSequences.club) // 3:00, 2:00, 1:00, then the last five seconds
+        engine.start()
+        engine.tick()
+        fakeNow = 40_000L // 2:20 remaining
+
+        // The other device floored to 2:00, and the move arrived 60 ms later: 1:59.94.
+        engine.moveGun(fakeNow + 2 * 60_000L - 60L)
+        engine.tick()
+
+        assertEquals(listOf(3 * 60_000L, 2 * 60_000L), cues.map { it.offsetMs })
+    }
+
+    @Test fun `a gun moved down queues exactly what a Sync down to the same minute queues`() {
+        // Both devices of a pair must sound the same cues after one Sync, so the device that moves
+        // takes the rule of the device that snapped — whatever that rule does with a run-up the snap
+        // skipped past (US Sailing's 4:05 to 4:01, sounded in the tick after a snap from 4:20).
+        fun heardAfter(move: (TimerEngine) -> Unit): List<Long> {
+            val heard = mutableListOf<Long>()
+            var now = 0L
+            val e = TimerEngine(MonotonicClock { now }, fakeWallClock)
+            e.addListener(object : TimerListener {
+                override fun onCue(cue: SequenceCue) { heard += cue.offsetMs }
+                override fun onGun() {}
+                override fun onTick(remainingMs: Long) {}
+                override fun onSync(snappedToMs: Long) {}
+            })
+            e.load(BuiltInSequences.usSailing)
+            e.start()
+            e.tick()
+            now = 40_000L // 4:20: a Sync floors to 4:00
+            move(e)
+            e.tick()
+            return heard
+        }
+
+        val snapped = heardAfter { assertTrue(it.sync()) }
+        val moved = heardAfter { it.moveGun(40_000L + 4 * 60_000L) }
+
+        assertEquals(snapped, moved)
+    }
+
+    @Test fun `a listener that knows only Sync hears a moved gun as one`() {
+        engine.load(BuiltInSequences.usSailing)
+        engine.start()
+        fakeNow = 8_000L
+
+        engine.moveGun(fakeNow + 5 * 60_000L)
+
+        assertEquals("persisted, felt and heard as a Sync here would be", 5 * 60_000L, syncedTo)
+    }
+
+    @Test fun `only a countdown's gun moves`() {
+        val seq = BuiltInSequences.scholasticRaceManager
+        engine.load(seq)
+        assertFalse("no race", engine.moveGun(1_000L))
+        engine.start()
+        advanceTo(seq.totalMs)
+        assertEquals("the positive control: past the gun", TimerState.COUNTING_UP, engine.currentState)
+        val elapsed = engine.remainingMs
+
+        assertFalse(engine.moveGun(fakeNow + 60_000L))
+
+        assertEquals(TimerState.COUNTING_UP, engine.currentState)
+        assertEquals(elapsed, engine.remainingMs)
+    }
+
+    @Test fun `ending at the other device's elapsed time freezes that time, not this clock's`() {
+        val seq = BuiltInSequences.scholasticRaceManager
+        engine.load(seq)
+        engine.start()
+        advanceTo(seq.totalMs)
+        fakeNow += 45_300L // this device reads 45.3 s when the other device's 45.0 s arrives
+
+        assertEquals(45_000L, engine.endRaceAt(45_000L))
+
+        assertEquals(TimerState.RACE_ENDED, engine.currentState)
+        assertEquals(-45_000L, engine.remainingMs)
+    }
+
+    @Test fun `of two ends that cross, the earlier is kept`() {
+        val seq = BuiltInSequences.scholasticRaceManager
+        engine.load(seq)
+        engine.start()
+        advanceTo(seq.totalMs)
+        fakeNow += 45_300L
+        engine.endRace()
+
+        assertEquals("the other device's earlier end is taken", 45_000L, engine.endRaceAt(45_000L))
+        assertEquals("and a later one does not undo it", 45_000L, engine.endRaceAt(46_000L))
+        assertEquals(-45_000L, engine.remainingMs)
+    }
+
+    @Test fun `there is nothing to end before the gun, or with no race`() {
+        val seq = BuiltInSequences.scholasticRaceManager
+        engine.load(seq)
+        assertNull(engine.endRaceAt(1_000L))
+        engine.start()
+
+        assertNull(engine.endRaceAt(1_000L))
+
+        assertEquals(TimerState.RUNNING, engine.currentState)
+    }
 }

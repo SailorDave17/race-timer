@@ -19,8 +19,13 @@ import com.racetimer.shared.PairRace
 import com.racetimer.shared.PairScheduler
 import com.racetimer.shared.PairStatus
 import com.racetimer.shared.PairTransport
+import com.racetimer.shared.PeerEnd
 import com.racetimer.shared.PeerNode
+import com.racetimer.shared.PeerSetup
 import com.racetimer.shared.PeerStart
+import com.racetimer.shared.PeerSync
+import com.racetimer.shared.RaceKey
+import com.racetimer.shared.SetupChoice
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
 
@@ -51,7 +56,8 @@ import java.util.concurrent.Executor
  * **Starts cross it both ways (#220)**, and the rule for what they mean is `:shared`'s `PairStarts`,
  * which [PairRaces] drives on the main thread. This class is a [PairAnnouncer] for it, posting each
  * call onto the link's own thread, and hands every start the peer sends to [onPeerStart] — on the
- * link's thread, the moment it is decoded.
+ * link's thread, the moment it is decoded. **So do a race's Sync and End Race, and the pre-start
+ * setup (#221)**, each through its own callback, the same way.
  */
 class WearablePairLink private constructor(private val app: Context) : PairAnnouncer {
 
@@ -75,7 +81,32 @@ class WearablePairLink private constructor(private val app: Context) : PairAnnou
     @Volatile
     var onPeerStart: ((PeerStart) -> Unit)? = null
 
-    private val link = PairLink(
+    /** Receives each Sync the peer takes, on the link's thread (#221). Set once by [PairRaces]. */
+    @Volatile
+    var onPeerSync: ((PeerSync) -> Unit)? = null
+
+    /** Receives each End Race the peer takes, on the link's thread (#221). Set once by [PairRaces]. */
+    @Volatile
+    var onPeerEnd: ((PeerEnd) -> Unit)? = null
+
+    /** Receives each setup the peer sends, on the link's thread (#221). Set once by [PairRaces]. */
+    @Volatile
+    var onPeerSetup: ((PeerSetup) -> Unit)? = null
+
+    /** Told when the peer becomes reachable directly, on the link's thread (#221). Set once by [PairRaces]. */
+    @Volatile
+    var onPeerNearby: (() -> Unit)? = null
+
+    /**
+     * The peer's clock minus this one's from the rounds the link holds, readable from any thread, or
+     * null with none. Refreshed on every status the link publishes, which it does on every kept round
+     * and every change of peer — and **not cleared when the peer goes out of range**, because the
+     * rounds are not (see [PairLink.peerOffsetMs]).
+     */
+    @Volatile
+    private var heldOffsetMs: Long? = null
+
+    private val link: PairLink = PairLink(
         clock = SystemMonotonicClock,
         transport = object : PairTransport {
             override fun send(peerId: String, payload: ByteArray, onFailed: () -> Unit) {
@@ -96,10 +127,15 @@ class WearablePairLink private constructor(private val app: Context) : PairAnnou
         },
         onStatus = { published ->
             status = published
+            refreshHeldOffset()
             main.post { listeners.forEach { it(published) } }
         },
         log = { Log.i(TAG, it) },
         onPeerStart = { start -> onPeerStart?.invoke(start) },
+        onPeerSync = { sync -> onPeerSync?.invoke(sync) },
+        onPeerEnd = { end -> onPeerEnd?.invoke(end) },
+        onPeerSetup = { setup -> onPeerSetup?.invoke(setup) },
+        onPeerNearby = { onPeerNearby?.invoke() },
     )
 
     private val messageListener = MessageClient.OnMessageReceivedListener { event ->
@@ -126,6 +162,18 @@ class WearablePairLink private constructor(private val app: Context) : PairAnnou
         handler.post { link.announce(race) }
     }
 
+    override fun announceSync(race: PairRace) {
+        handler.post { link.announceSync(race) }
+    }
+
+    override fun announceEnd(raceId: Long, elapsedMs: Long) {
+        handler.post { link.announceEnd(raceId, elapsedMs) }
+    }
+
+    override fun announceSetup(key: RaceKey, choice: SetupChoice) {
+        handler.post { link.announceSetup(key, choice) }
+    }
+
     override fun holdUntil(untilMs: Long) {
         handler.post { link.holdUntil(untilMs) }
     }
@@ -135,10 +183,16 @@ class WearablePairLink private constructor(private val app: Context) : PairAnnou
     }
 
     /**
-     * From the last status the link published, readable from any thread. Published on every kept
-     * round, so it is at most a burst old, and a burst ages an offset by well under a millisecond.
+     * From the rounds held when the link last published, readable from any thread. Published on
+     * every kept round, so it is at most a burst old, and a burst ages an offset by well under a
+     * millisecond. Held through a drop (#221), as the rounds are.
      */
-    override fun peerOffsetMs(): Long? = (status as? PairStatus.Linked)?.offsetMs
+    override fun peerOffsetMs(): Long? = heldOffsetMs
+
+    /** On [thread], as every status is published: the link is read nowhere else. */
+    private fun refreshHeldOffset() {
+        heldOffsetMs = link.peerOffsetMs()
+    }
 
     /** Receives every status on the main thread, starting with the current one. */
     fun addStatusListener(listener: (PairStatus) -> Unit) {
