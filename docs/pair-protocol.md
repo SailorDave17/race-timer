@@ -346,9 +346,12 @@ is — the sequence and the lead-in alert, in the keys each app already had — 
   the stale rounds, reporting itself in budget. That is
   [#330](https://github.com/SailorDave17/race-timer/issues/330)'s. A running race holds a wake lock,
   so the rounds a check is placed through are held across a drop, not a suspend.
-- **Nothing here is measured on hardware.** [#223](https://github.com/SailorDave17/race-timer/issues/223)
-  measures the skew at the gun against D2 on release builds, observes the mirrored controls and
-  setup on the owner's pair, and forces a drop mid-sequence (#222's lines and D6 on hardware).
+- **D6 has not been seen on hardware, and nor has the pair under the watch's DND and doze states.**
+  [#223](https://github.com/SailorDave17/race-timer/issues/223) measured the gun on release builds,
+  34–94 ms including the two speakers' output latencies. It saw Sync, End Race and the setup mirror
+  both ways, and a drop's *out of range* lines on both screens
+  ([`pair-hardware.md`](pair-hardware.md)). Its link came back after the gun, so D6 had nothing to act
+  on. Both are [#335](https://github.com/SailorDave17/race-timer/issues/335)'s.
 
 ## Where it is tested
 

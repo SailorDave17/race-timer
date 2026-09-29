@@ -186,8 +186,9 @@ What this instrument cannot see, so that none of it is read as covered:
 - **Clock agreement only, not the sound.** Each device's own cue latency adds on top of the clock skew:
   the watch's audible cue is at most 61 ms late against its schedule (#82). What the officer's ear hears
   between wrist and console is this budget plus the difference between the two devices' output
-  latencies. [#223](https://github.com/SailorDave17/race-timer/issues/223) measures the real thing at the
-  gun, on release builds.
+  latencies. [#223](https://github.com/SailorDave17/race-timer/issues/223) measured the real thing at the
+  gun on release builds with one microphone: 34–94 ms across four clean guns, the phone sounding first
+  every time ([`pair-hardware.md`](pair-hardware.md)).
 - **A one-sided delay is bounded, not measured** (above). The skew numbers at the two guns are
   differences between two translations, each good to its stated bound. They are not observations of
   two sounds.
@@ -195,4 +196,5 @@ What this instrument cannot see, so that none of it is read as covered:
   as reported by `Node.isNearby()`. No direct Wi-Fi link was seen or tested.
 - **Debug builds, sideloaded.** A Play-installed build is signed with Google's key, so a Play-installed
   watch and a sideloaded phone cannot pair at all. The epic records this. It does not change the
-  physics, but #223's release-build run is the one that counts.
+  physics, but #223's release-build run is the one that counts, and it paired on upload-key builds
+  sideloaded on both devices.
