@@ -94,6 +94,7 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
         fullBrightness: Boolean = DisplayChoice.INITIAL.fullBrightness,
         applyDisplay: (DisplayChoice) -> Unit = {},
         readPairNotice: (() -> String?)? = null,
+        readPairLinkLost: (() -> Boolean)? = null,
     ) {
         compose.setContent {
             // The #239 flush loop rides the same frame pump that would otherwise spin forever —
@@ -108,6 +109,7 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
                     runner = runner,
                     displayChoice = displayChoice,
                     readPairNotice = readPairNotice,
+                    readPairLinkLost = readPairLinkLost,
                     pairNews = pairNews,
                     onPairNewsExpired = { expired -> if (pairNews == expired) pairNews = null },
                     selectionVersion = selectionVersion,

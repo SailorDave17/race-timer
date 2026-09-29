@@ -20,6 +20,18 @@ import kotlin.random.Random
 const val JOIN_LATE_CUE_GRACE_MS: Long = 500L
 
 /**
+ * Epic #196 decision D6, ratified with D2 at #218's gate on 2026-09-25: the largest disagreement
+ * between the two devices' guns for one race that a reconnect corrects without anyone tapping
+ * anything (#222). Beyond it nothing moves by itself, and the officer is told instead.
+ *
+ * The same number as [PAIR_SKEW_BUDGET_MS], for #218's reason: the pair measured 10 ppm of drift, a
+ * held offset ages about 0.6 ms a minute, and so every disagreement drift can produce lies inside
+ * 100 ms. A larger one after a reconnect is something else — a Sync taken while the two were apart,
+ * a clock that stepped — and that is exactly the case D6 sends to a notice (`docs/pair-skew.md`).
+ */
+const val PAIR_RECONNECT_BOUND_MS: Long = 100L
+
+/**
  * How one start is ordered against another (#220): [stamp] first, [raceId] to break a tie.
  *
  * **The start tapped last wins** — the owner's rule at #220's pickup, 2026-09-28. [stamp] is the
@@ -74,8 +86,82 @@ data class PairRace(
     val gunKey: RaceKey = key,
 )
 
-/** A start the nearby peer announced, its gun already moved onto this device's clock. */
-data class PeerStart(val key: RaceKey, val sequenceId: String, val gun: JoinGun)
+/**
+ * A start the nearby peer announced, its gun already moved onto this device's clock. [gunKey] is the
+ * key that gun was set under: the start's own, unless it came in a [PeerCheck] after a Sync moved it.
+ */
+data class PeerStart(val key: RaceKey, val sequenceId: String, val gun: JoinGun, val gunKey: RaceKey = key)
+
+/**
+ * The race the nearby peer is running, sent when the link came back (#222): its start's [key] and
+ * [sequenceId], and its gun as it now stands — [gun], already moved onto this clock, set under
+ * [gunKey]. [anchored] is whether the peer set that gun itself (a start or a Sync tapped there)
+ * rather than placing it through the link.
+ */
+data class PeerCheck(
+    val key: RaceKey,
+    val gunKey: RaceKey,
+    val sequenceId: String,
+    val gun: JoinGun,
+    val anchored: Boolean,
+) {
+    /** The race as a start, for a device that is not running it: #220's rule decides what happens. */
+    fun asStart(): PeerStart = PeerStart(key, sequenceId, gun, gunKey)
+}
+
+/** What a device does about its own gun when the peer's check names the race it is running (#222). */
+sealed interface GunCheck {
+
+    /** This device's gun is the one both follow. Nothing moves here; the peer judges its own. */
+    data object Leads : GunCheck
+
+    /** Within D6's bound: move to [gun], which is [shiftMs] from where this device's gun was. */
+    data class Correct(val gun: JoinGun, val shiftMs: Long) : GunCheck
+
+    /**
+     * Beyond D6's bound, and so never moved by itself: the officer is owed a notice asking for Sync.
+     * [apartMs] is the peer's gun less this device's.
+     */
+    data class Apart(val apartMs: Long) : GunCheck
+
+    /** The link cannot measure the gap well enough to say which of the two it is. */
+    data object Unmeasured : GunCheck
+}
+
+/**
+ * The reconnect policy, epic decision D6 as the owner ratified it (#222): what [mine] — the race
+ * running here — does about its gun, told [check], the peer's gun for the same race.
+ *
+ * **Whose gun is followed.** The one set last, by [PairRace.gunKey] — the rule two crossing Syncs
+ * settle by (#221), so a Sync one device took while the two were apart makes it the one followed.
+ * Under the same key, the gun its device set itself rather than placed through the link: exact on
+ * one clock, where the other is a translation of it. Both devices hold both keys and both answers,
+ * so they always agree which of them judges; that one alone moves or says so. The console breaks a
+ * tie nothing else can, as it does for two untouched setups.
+ *
+ * **What the follower does.** Measured through the link's rounds, the gap is at worst out by the
+ * translation's bound. Placed inside D2's budget and within [PAIR_RECONNECT_BOUND_MS], it is
+ * corrected. Beyond it — measured so, or so far beyond that even an unplaced gun's bound cannot
+ * bring it inside — it is never applied by itself; the officer is told, and taps Sync against the
+ * next flag. Anything the link cannot place well enough to say either is [GunCheck.Unmeasured].
+ */
+fun judgeGunCheck(mine: PairRace, check: PeerCheck, console: Boolean): GunCheck {
+    val mineAnchored = mine.gun.errorBoundMs == 0L
+    val peerLeads = when {
+        check.gunKey != mine.gunKey -> check.gunKey > mine.gunKey
+        check.anchored != mineAnchored -> check.anchored
+        else -> !console
+    }
+    if (!peerLeads) return GunCheck.Leads
+    val bound = check.gun.errorBoundMs ?: return GunCheck.Unmeasured
+    val apartMs = check.gun.gunMs - mine.gun.gunMs
+    val placed = bound <= PAIR_SKEW_BUDGET_MS
+    return when {
+        placed && abs(apartMs) <= PAIR_RECONNECT_BOUND_MS -> GunCheck.Correct(check.gun, apartMs)
+        placed || abs(apartMs) - bound > PAIR_RECONNECT_BOUND_MS -> GunCheck.Apart(apartMs)
+        else -> GunCheck.Unmeasured
+    }
+}
 
 /**
  * A Sync the nearby peer took of race [raceId] (#221), its gun already moved onto this clock.
@@ -246,7 +332,7 @@ class PairRaceBook(
             start.sequenceId,
             prior?.gun ?: start.gun,
             startedHere = prior?.startedHere == true,
-            gunKey = prior?.let { maxOf(it.gunKey, start.key) } ?: start.key,
+            gunKey = prior?.let { maxOf(it.gunKey, start.gunKey) } ?: start.gunKey,
         )
         remember(race)
         val mine = current
@@ -300,6 +386,9 @@ interface PairAnnouncer {
     /** Send this device's pre-start setup under [key] (#221). */
     fun announceSetup(key: RaceKey, choice: SetupChoice)
 
+    /** Send which race this device is running and its gun as it stands, the link having come back (#222). */
+    fun announceCheck(race: PairRace)
+
     /** Keep measuring until [untilMs] on this clock, whatever is on screen. */
     fun holdUntil(untilMs: Long)
 
@@ -339,6 +428,20 @@ interface PairRaceHost {
      * own earlier end — or null when there is no race-manager race here to end.
      */
     fun endRaceAt(elapsedMs: Long): Long?
+
+    /**
+     * Move the running countdown's gun to [gun], a reconnect's correction within D6's bound (#222):
+     * the cues re-aimed, the wake lock re-sized (#126), the race persisted — and nothing a Sync is
+     * felt or heard by, since nobody tapped anything. False when there is no countdown to move.
+     */
+    fun correctGun(gun: JoinGun): Boolean
+
+    /**
+     * The peer's gun for the race counting down here came back [apartMs] from this device's, beyond
+     * D6's bound (#222): owe the officer the standing line that asks for Sync, until a Sync settles
+     * it. False when there is no countdown here, and so no Sync to ask for.
+     */
+    fun gunsApart(apartMs: Long): Boolean
 }
 
 /** Why a control from the peer was not applied here: which control it was (#221 AC 3). */
@@ -359,6 +462,13 @@ sealed interface PairEvent {
      * and was discarded rather than applied to whatever is running (#221 AC 3).
      */
     data class StaleControl(val control: PairControl) : PairEvent
+
+    /**
+     * The link came back and this device's gun was moved [shiftMs] to the peer's, within D6's bound
+     * (#222). Said, briefly, because the owner's rule at #222's pickup is that a dropped link never
+     * bends a running race silently — however little it bends it.
+     */
+    data class GunCorrected(val shiftMs: Long) : PairEvent
 }
 
 /** A race to join: which, what it runs, and how late a cue may be and still sound ([JOIN_LATE_CUE_GRACE_MS]). */
@@ -393,6 +503,15 @@ data class PairContest(val followed: PairRace, val other: PairRace) {
  * one elapsed time, the earlier of two that cross. A control names its race, and one for a race this
  * device is not running is dropped and said ([PairEvent.StaleControl]) — never applied to another.
  *
+ * **A dropped link is information, never a dead clock (#222).** Nothing a device counts reads the
+ * link after its start, so a drop changes nothing about either count, by construction; what it does
+ * change is what the officer is told. A race that had the peer in range and lost it is [linkLost]
+ * for as long as the two are apart. When they meet again each sends the race it is running
+ * ([onPeerNearby]), and the owner's rule at #222's pickup decides what the other does with it: a
+ * start it never heard of is taken by #220's rule, as if it had just arrived; an End Race it missed
+ * is sent back; and the same race's gun is judged by D6 ([judgeGunCheck]) — corrected within
+ * [PAIR_RECONNECT_BOUND_MS] and said, and beyond it never moved, only flagged for a Sync.
+ *
  * @param console whether this device is the console: the phone. Its clock is the one every start is
  *                ordered on ([RaceKey]), and it is the device that puts a [PairContest] in front of
  *                the officer — the owner wanted to be told on the console.
@@ -417,10 +536,35 @@ class PairStarts(
     var contest: PairContest? = null
         private set
 
+    /**
+     * Whether the race running here had the peer in range and has lost it (#222 AC 1): the line
+     * the officer is owed for as long as the two devices are apart. Read by each app's screen on its
+     * own refresh, as the joined race's flag is.
+     *
+     * **Only for a race that had a link.** A phone with no watch, or a watch left reachable only
+     * through the cloud — at home on its charger — never had one for this race, and is never told
+     * so: phone-standalone is a hard requirement, and the absence of a pair is a normal state
+     * (#222 AC 3). A race restored after a process death cannot be named to the peer, and has none.
+     */
+    var linkLost: Boolean = false
+        private set
+
+    /** Whether the link can carry a gun right now: the peer in range, measured or being measured. */
+    private var nearby = false
+
+    /** Whether the race running here has had the peer in range at any moment since it began. */
+    private var linkedThisRace = false
+
+    /** The race this device ended, and the elapsed time it froze at: sent back to a peer that missed it. */
+    private var endedAt: Pair<Long, Long>? = null
+
     /** This device just started a race from the top: tell the peer, and measure until its gun. */
     fun startedHere(sequenceId: String, gunMs: Long) {
         val race = book.startedHere(sequenceId, gunMs, consoleNowMs(clock, console, link))
         setContest(null)
+        endedAt = null
+        linkedThisRace = nearby
+        refreshLink()
         link.holdUntil(gunMs)
         link.announce(race)
         setup?.raced(race)
@@ -430,6 +574,95 @@ class PairStarts(
     fun restored() {
         book.unannounced()
         setContest(null)
+        refreshLink()
+    }
+
+    /**
+     * What the link can do now (#222), from every status it publishes. A peer in range — measured, or
+     * found and being measured — carries a gun; out of range, gone, or no Data Layer at all, it does
+     * not, and a race that had it has lost it.
+     */
+    fun onLinkStatus(status: PairStatus) {
+        nearby = status is PairStatus.Linked || status == PairStatus.Measuring
+        refreshLink()
+    }
+
+    /**
+     * The peer has just come into range (#222): found, or back after a drop. Tell it which race is
+     * running here and where its gun stands, so it can take a start it missed, send back an End Race
+     * this device missed, or measure how far apart the two guns came out. A device with no race to
+     * name — idle, or running one restored after a process death — sends nothing, and the peer's
+     * check reaches it all the same.
+     */
+    fun onPeerNearby() {
+        val race = book.current ?: return
+        if (host.raceRunning()) link.announceCheck(race)
+    }
+
+    /**
+     * The peer's check arrived: the race it is running and its gun as it stands (#222).
+     *
+     * - **The race running here:** its gun is judged by D6 ([judgeGunCheck]).
+     * - **The race this device ended:** the peer missed the End Race, and it is sent back, so the
+     *   peer freezes at the time frozen here (#221's earlier-end rule does the rest).
+     * - **The race this device stopped:** nothing. Stop is not mirrored until #328, and a stopped
+     *   race is never rejoined.
+     * - **Any other race:** it is a start this device never heard of, and #220's rule takes it as
+     *   one — joined from idle, and a running race switched or kept by which was tapped last.
+     */
+    fun onPeerCheck(check: PeerCheck) {
+        val mine = book.current
+        if (mine == null || mine.key.raceId != check.key.raceId) return onPeerStart(check.asStart())
+        book.saw(check.gunKey)
+        val ended = endedAt
+        when {
+            host.raceRunning() -> judge(mine, check)
+            ended != null && ended.first == mine.key.raceId -> {
+                log("peer check for a race ended here: sending the end again, race=${mine.key.raceId}")
+                link.announceEnd(ended.first, ended.second)
+            }
+            // [PairRaceBook.decide] would refuse a rejoin too, as a race it knows under that key, so
+            // "a race stopped here is not rejoined" passes without this branch. What only this
+            // branch holds is the End Race above, which must not go that way.
+            else -> log("peer check for a race stopped here: nothing to do, race=${mine.key.raceId}")
+        }
+    }
+
+    private fun judge(mine: PairRace, check: PeerCheck) {
+        val raceId = mine.key.raceId
+        when (val verdict = judgeGunCheck(mine, check, console)) {
+            GunCheck.Leads -> log("peer check: the gun here leads, race=$raceId")
+            GunCheck.Unmeasured -> log("peer check: the link cannot measure the gap, race=$raceId")
+            is GunCheck.Correct -> when {
+                verdict.shiftMs == 0L -> log("peer check: the guns agree, race=$raceId")
+                host.correctGun(verdict.gun) -> {
+                    log("peer check: gun corrected ${verdict.shiftMs} ms, race=$raceId")
+                    book.moved(mine.copy(gun = verdict.gun, gunKey = check.gunKey))
+                    link.holdUntil(verdict.gun.gunMs)
+                    onEvent(PairEvent.GunCorrected(verdict.shiftMs))
+                }
+                else -> log("peer check: no countdown here to correct, race=$raceId")
+            }
+            is GunCheck.Apart ->
+                if (host.gunsApart(verdict.apartMs)) {
+                    log("peer check: guns ${verdict.apartMs} ms apart, flagged for Sync, race=$raceId")
+                } else {
+                    log("peer check: guns ${verdict.apartMs} ms apart, no countdown here, race=$raceId")
+                }
+        }
+    }
+
+    /**
+     * [linkLost], from what is known now: a named race running here that has had the peer in range,
+     * and has not now. Recomputed on every status and on every start, join and end.
+     */
+    private fun refreshLink() {
+        val racing = book.current != null && host.raceRunning()
+        if (!racing) linkedThisRace = false else if (nearby) linkedThisRace = true
+        val lost = racing && linkedThisRace && !nearby
+        if (lost == linkLost) return
+        linkLost = lost
+        log(if (lost) "link lost mid-race" else "link back, or the race is over")
     }
 
     /**
@@ -441,6 +674,7 @@ class PairStarts(
     fun ended() {
         link.endHold()
         setContest(null)
+        refreshLink()
         setup?.ended()
     }
 
@@ -460,6 +694,7 @@ class PairStarts(
     /** This device's End Race froze its race [elapsedMs] past the gun (#221): tell the peer. */
     fun endedHere(elapsedMs: Long) {
         val race = book.current ?: return
+        endedAt = race.key.raceId to elapsedMs
         link.endHold()
         link.announceEnd(race.key.raceId, elapsedMs)
     }
@@ -498,6 +733,7 @@ class PairStarts(
         val race = book.current
         if (race == null || race.key.raceId != end.raceId) return stale(PairControl.END_RACE, "not the race here, race=${end.raceId}")
         val held = host.endRaceAt(end.elapsedMs) ?: return stale(PairControl.END_RACE, "no race counting up here, race=${end.raceId}")
+        endedAt = race.key.raceId to held
         link.endHold()
         if (held < end.elapsedMs) {
             log("peer end later than the one here: sending it again, race=${end.raceId}")
@@ -558,6 +794,9 @@ class PairStarts(
             return false
         }
         book.joined(race)
+        endedAt = null
+        linkedThisRace = nearby
+        refreshLink()
         link.holdUntil(race.gun.gunMs)
         setup?.raced(race)
         return true
@@ -615,6 +854,36 @@ fun pairStaleControlLine(control: PairControl, peerNoun: String): String = when 
     PairControl.SYNC -> "$peerNoun synced a race not running here"
     PairControl.END_RACE -> "$peerNoun ended a race not running here"
 }
+
+/**
+ * The standing line a race owes the officer while the link it had is lost (#222 AC 1): the Tier 3
+ * line on the watch, and the phone's notice line. What happened, then what it means for the count —
+ * nothing, since each device runs its own engine — in rule 5's order.
+ */
+fun pairLinkLostLine(peerNoun: String): String = "$peerNoun out of range — counting alone"
+
+/**
+ * The standing line a reconnect leaves when the two guns came back further apart than D6 corrects by
+ * itself (#222 AC 2): how far, and the one act that settles it. [apartMs] reads in milliseconds below a
+ * second, where a disagreement just past the bound would otherwise round to "0.1 s", and in tenths of
+ * a second above it.
+ */
+fun pairGunsApartLine(apartMs: Long, peerNoun: String): String {
+    val magnitude = if (apartMs == Long.MIN_VALUE) Long.MAX_VALUE else abs(apartMs)
+    val gap = if (magnitude < 1_000L) {
+        "$magnitude ms"
+    } else {
+        val tenths = (magnitude + 50L) / 100L
+        String.format(Locale.ROOT, "%d.%d s", tenths / 10L, tenths % 10L)
+    }
+    return "$peerNoun gun $gap apart — tap Sync to confirm"
+}
+
+/**
+ * The Tier 1 line a reconnect's correction leaves on the device whose gun moved (#222): the link is
+ * back, and by how much the gun moved to match — never more than [PAIR_RECONNECT_BOUND_MS].
+ */
+fun pairGunCorrectedLine(shiftMs: Long, peerNoun: String): String = "$peerNoun back — gun matched, ${abs(shiftMs)} ms"
 
 /**
  * The line the peer's Sync leaves where a Sync here leaves "Synced → 4:00" (#221): the same news,

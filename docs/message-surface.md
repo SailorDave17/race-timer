@@ -86,7 +86,7 @@ driven by the `message: String?` parameter and cleared through `onMessageExpired
 | Backing | `#FF3A2A00` (opaque dark amber), 8 dp rounded corners, 8 × 3 dp padding |
 | Lifetime | `showTransientMessage` sets `uiMessage`; a `LaunchedEffect` **in `TimerScreen`** clears it after `MESSAGE_DURATION_MS` = 3 s, counted from the composition that puts it on screen |
 | Interaction | None. Not tappable, not dismissible, does not block anything |
-| Consumers | All via `showTransientMessage`: `restorePendingSelection` → "Saved race unreadable — starting fresh" and "Saved sequence unreadable — using default"; `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady"; `announceRestoreOutcome` → "Resumed race in progress" (`EXACT`) and "Old race ended — starting fresh" (`EXPIRED`); `announceCueLoss` → "Cue silent — wrist still buzzing" (`DROPPED`) and "Cue cut short — wrist still buzzing" (`TRUNCATED`), #161; `pairEventListener` → "Phone synced a race not running here" and "Phone ended a race not running here" (`PairEvent.StaleControl`), #221. *(This cell counted its consumers until #221, which would have made the count wrong by adding two; it lists them instead.)* |
+| Consumers | All via `showTransientMessage`: `restorePendingSelection` → "Saved race unreadable — starting fresh" and "Saved sequence unreadable — using default"; `TimerListener.onClockAdjusted` → "Clock changed — countdown held steady"; `announceRestoreOutcome` → "Resumed race in progress" (`EXACT`) and "Old race ended — starting fresh" (`EXPIRED`); `announceCueLoss` → "Cue silent — wrist still buzzing" (`DROPPED`) and "Cue cut short — wrist still buzzing" (`TRUNCATED`), #161; `pairEventListener` → "Phone synced a race not running here" and "Phone ended a race not running here" (`PairEvent.StaleControl`), #221, and "Phone back — gun matched, *N* ms" (`PairEvent.GunCorrected`), #222. *(This cell counted its consumers until #221, which would have made the count wrong by adding two; it lists them instead.)* |
 
 ### Why it is below the readout, and why the screen owns the timer (#102)
 
@@ -209,8 +209,9 @@ persisting until the sailor acts because each asks for something a 3 s banner co
 |---|---|---|---|
 | Degraded-recovery prompt | "Recovered — tap Sync to confirm" | `RUNNING`, after a `DEGRADED` restore, until Sync is tapped | **Yes** — `#FF3A2A00`, added by #123 |
 | The same prompt, for a race joined from the phone (#220) or a gun the phone's Sync moved (#221) | "Phone start ±*N* ms — tap Sync to confirm", or "Phone start unmeasured — tap Sync to confirm"; after the phone's Sync, "Phone sync ±*N* ms — …" and "Phone sync unmeasured — …" | `RUNNING`, after joining a race — or taking the phone's Sync — whose gun the link could not place inside the pair's 100 ms budget, until Sync is tapped here, a later Sync from the phone lands inside the budget, or the race ends | **Yes** — the same line, so the same scrim |
+| The same prompt, for a gun the phone's came back apart from (#222) | "Phone gun *N* ms apart — tap Sync to confirm" below a second, "Phone gun *N.N* s apart — …" above | `RUNNING`, after the link came back and this watch's gun measured further than D6's 100 ms from the phone's it follows; cleared as the line above is | **Yes** — the same line |
 | Discard warning (#89) | "Start discards saved *name*" | `IDLE` pre-start only, cleared by `clearResumeOffer` | No — navy is its whole exposure |
-| `StartNotice` warning line (#13, #96) | the three Tier 3 rows of the catalogue below, plus "Do Not Disturb — cues silent, wrist still buzzing" | `IDLE` for #13's three; `RUNNING` for #96's | **Yes** — `#FF3A2A00` |
+| `StartNotice` warning line (#13, #96, #222) | the three Tier 3 rows of the catalogue below, plus "Do Not Disturb — cues silent, wrist still buzzing", and "Phone out of range — counting alone" | `IDLE` for #13's three; `RUNNING` for #96's; `RUNNING` and `COUNTING_UP` for #222's, which yields to #96's | **Yes** — `#FF3A2A00` |
 
 They are the `showResyncPrompt`, `discardWarning` and `warningNotice` blocks of `TimerScreen`, in
 that precedence order — named rather than cited by line, because the two line ranges this paragraph
@@ -403,6 +404,9 @@ screen fails rather than wraps. *It asserted only the first of those until #231,
 | Race joined from the phone on a gun outside the pair's budget | 3 | "Phone start ±*N* ms — tap Sync to confirm" / "Phone start unmeasured — tap Sync to confirm" | Sync — **shipped** (#220), on the degraded-recovery line. The copy is `pairJoinNotice` in `shared/PairRace.kt`, not `StartPreconditions.kt`, and `PairRaceTest` holds it against this plate and the 60-character ceiling at the widest bounds a link produces |
 | The phone's Sync moved the gun outside the pair's budget | 3 | "Phone sync ±*N* ms — tap Sync to confirm" / "Phone sync unmeasured — tap Sync to confirm" | Sync — **shipped** (#221), the same line and the same `pairJoinNotice`, in a Sync's words; `PairRaceTest` holds these to the plate as well |
 | A Sync or End Race from the phone for a race not running here | 1 | "Phone synced a race not running here" / "Phone ended a race not running here" | none — **shipped** (#221). The copy is `pairStaleControlLine` in `shared/PairRace.kt`, and `PairRaceTest` holds it against the banner's line budget and the 60-character ceiling. News about the pair, not a condition to act on here, so Tier 1 |
+| The phone out of range, for a race that had it (#222) | 3 | "Phone out of range — counting alone" | none — the lowest line of the tier, `RUNNING` and `COUNTING_UP`. The copy is `pairLinkLostLine` in `shared/PairRace.kt` through `armedNotice`, and `StartPreconditionsTest` holds it to the plate |
+| The phone's gun came back beyond D6's bound (#222) | 3 | "Phone gun 8.0 s apart — tap Sync to confirm" | Sync — on the degraded-recovery line, `pairGunsApartLine` in `shared/PairRace.kt`; `PairRaceTest` holds it to the plate |
+| The link came back and the gun was matched within D6's bound (#222) | 1 | "Phone back — gun matched, 40 ms" | none — news, `pairGunCorrectedLine`; `PairRaceTest` holds it to the banner |
 | Cue volume raise refused (Do Not Disturb) | 3 | "Do Not Disturb — cues silent, wrist still buzzing" | none — **shipped** (#96), `RUNNING` only |
 | Cue dropped mid-race | 1 | "Cue silent — wrist still buzzing" | none — **shipped** (#161) |
 | Cue truncated mid-race | 1 | "Cue cut short — wrist still buzzing" | none — **shipped** (#161) |
@@ -539,8 +543,10 @@ call; what has not been demonstrated is the tail-write site setting the notice.
 Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144, #277,
 #303.
 Owner: SailorDave17.
-Last reviewed: 2026-09-26 (#303 added the time of day at the rim, which gives way to Tier 3 and
-Tier 2, and rule 6 now names it. Before that, 2026-09-25: #277 darkened the one-minute amber to `#553000`. The state table, the
+Last reviewed: 2026-09-29 (#222 added the lost link's Tier 3 line, the first that speaks through a
+count-up, which `MessageContrastTest` now drives there; the reconnect's flag on the re-sync prompt;
+and its correction's Tier 1 banner. Before that, 2026-09-26: #303 added the time of day at the rim,
+which gives way to Tier 3 and Tier 2, and rule 6 now names it. Before that, 2026-09-25: #277 darkened the one-minute amber to `#553000`. The state table, the
 Tier 2 worst case and border figure, and the old-amber labels on the defect history were updated to
 match. Before that, 2026-08-13: #231 — the copy budget gained the surface it was derived for. The
 ~60-character rule was Tier 1's arithmetic applied to all three surfaces; the per-surface figures now

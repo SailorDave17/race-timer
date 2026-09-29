@@ -133,6 +133,12 @@ sealed interface PairStatus {
  * [onPeerNearby] says when a peer becomes reachable directly, which is when the setups of two
  * devices are compared.
  *
+ * **When the link comes back, each device says which race it is running, and where its gun is
+ * (#222).** A check carries a start's fields and the gun as it now stands, with the key that gun was
+ * set under, placed on this clock as a start's is ([PeerCheck]). It is the gun measured again
+ * through the rounds, which are held across the drop, so it waits for no fresh round and no
+ * reconnect stall.
+ *
  * **Not thread-safe, by design.** Every call, and every callback given to the transport and the
  * scheduler, must run on one thread. The glue gives the Data Layer that thread's looper, so incoming
  * messages already arrive on it and nothing is posted between a message landing and its stamp.
@@ -144,6 +150,8 @@ sealed interface PairStatus {
  * @param onPeerEnd    an End Race the nearby peer took (#221).
  * @param onPeerSetup  the nearby peer's pre-start setup (#221).
  * @param onPeerNearby the peer has just become reachable directly: found, or back in Bluetooth range.
+ * @param onPeerCheck  the race the nearby peer is running and its gun as it stands, sent when the
+ *                     link came back (#222), the gun already on this device's clock.
  */
 class PairLink(
     private val clock: MonotonicClock,
@@ -157,6 +165,7 @@ class PairLink(
     private val onPeerEnd: (PeerEnd) -> Unit = {},
     private val onPeerSetup: (PeerSetup) -> Unit = {},
     private val onPeerNearby: () -> Unit = {},
+    private val onPeerCheck: (PeerCheck) -> Unit = {},
 ) : PairAnnouncer {
 
     private class Pending(val peerId: String, val sentMs: Long)
@@ -297,6 +306,33 @@ class PairLink(
         if (sendToNearbyPeer("end") { PairMessage.End(raceId, elapsedMs) }) log("end sent race=$raceId")
     }
 
+    /**
+     * Tell the nearby peer which race this device is running and where its gun now stands (#222):
+     * sent when the link comes back, so the two can find a start one of them missed and measure how
+     * far apart their guns came out.
+     *
+     * [PairRace.gun]'s bound is sent as one bit — whether this device anchored the gun itself (zero)
+     * or placed it through a translation — which is what decides whose gun the other one follows
+     * when both hold it under the same key (see `PairStarts.onPeerCheck`).
+     */
+    override fun announceCheck(race: PairRace) {
+        if (sendToNearbyPeer("check") {
+                PairMessage.Check(
+                    race.key.stamp,
+                    race.key.raceId,
+                    race.gunKey.stamp,
+                    race.gunKey.raceId,
+                    clock.elapsedMs(),
+                    race.gun.gunMs,
+                    anchored = race.gun.errorBoundMs == 0L,
+                    sequenceId = race.sequenceId,
+                )
+            }
+        ) {
+            log("check sent race=${race.key.raceId}")
+        }
+    }
+
     /** Tell the nearby peer the setup this device's pre-start screen holds, under [key] (#221). */
     override fun announceSetup(key: RaceKey, choice: SetupChoice) {
         if (sendToNearbyPeer("setup") { PairMessage.Setup(key.stamp, key.raceId, choice.boxAlertSeconds.toLong(), choice.sequenceId) }) {
@@ -422,6 +458,18 @@ class PairLink(
             is PairMessage.Setup -> fromNearbyPeer(fromId, "setup") {
                 log("setup from peer seq=${message.sequenceId} alert=${message.boxAlertSeconds}")
                 onPeerSetup(PeerSetup(RaceKey(message.stamp, message.setupId), SetupChoice(message.sequenceId, message.boxAlertSeconds.toInt())))
+            }
+            is PairMessage.Check -> fromNearbyPeer(fromId, "check") {
+                log("check from peer race=${message.raceId}")
+                onPeerCheck(
+                    PeerCheck(
+                        key = RaceKey(message.stamp, message.raceId),
+                        gunKey = RaceKey(message.gunStamp, message.gunId),
+                        sequenceId = message.sequenceId,
+                        gun = placeGun(message.gunMs, message.sentMs, receivedMs),
+                        anchored = message.anchored,
+                    ),
+                )
             }
         }
     }
@@ -637,12 +685,12 @@ class PairLink(
  * A device that reads a tag it does not know drops the message, so two app versions that disagree
  * about the format have no link rather than a wrong one.
  *
- * Every field is a number except the last of a [Start] or a [Setup], which is a sequence id: the one
- * string the persisted race already carries, and which `BuiltInSequences.resolve` rebuilds lead-in
- * and Custom durations from. The version tag did not move when [Start] was added (#220), nor when
- * [Sync], [End] and [Setup] were (#221). An app from before either reads the new kind as one it does
- * not know and drops the line, which is the no-link-rather-than-a-wrong-one rule above applied to
- * one message rather than to the whole link.
+ * Every field is a number except the last of a [Start], a [Setup] or a [Check], which is a sequence
+ * id: the one string the persisted race already carries, and which `BuiltInSequences.resolve`
+ * rebuilds lead-in and Custom durations from. The version tag did not move when [Start] was added
+ * (#220), nor when [Sync], [End] and [Setup] were (#221), nor for [Check] (#222). An app from before
+ * any of them reads the new kind as one it does not know and drops the line, which is the
+ * no-link-rather-than-a-wrong-one rule above applied to one message rather than to the whole link.
  */
 internal sealed interface PairMessage {
 
@@ -735,6 +783,33 @@ internal sealed interface PairMessage {
         override fun encode() = withSequenceId(wire("setup", stamp, setupId, boxAlertSeconds), sequenceId)
     }
 
+    /**
+     * The race the sender is running, sent when the link came back (#222): a [Start]'s identity —
+     * [stamp] and [raceId], and [sequenceId] — with the gun as it now stands, [gunMs] on the sender's
+     * clock read at [sentMs], under the key it was last set by ([gunStamp], [gunId]: a Sync's, or the
+     * start's own). [anchored] is whether the sender set that gun itself rather than placing it
+     * through the link.
+     */
+    data class Check(
+        val stamp: Long,
+        val raceId: Long,
+        val gunStamp: Long,
+        val gunId: Long,
+        val sentMs: Long,
+        val gunMs: Long,
+        val anchored: Boolean,
+        val sequenceId: String,
+    ) : PairMessage {
+        init {
+            require(SEQUENCE_ID.matches(sequenceId)) { "not a sequence id: $sequenceId" }
+        }
+
+        override fun encode() = withSequenceId(
+            wire("check", stamp, raceId, gunStamp, gunId, sentMs, gunMs, if (anchored) 1L else 0L),
+            sequenceId,
+        )
+    }
+
     companion object {
         const val VERSION = "rtpair1"
 
@@ -759,6 +834,9 @@ internal sealed interface PairMessage {
                 "start" -> return withTrailingSequenceId(parts.drop(2), numbers = 4) { f, id -> Start(f[0], f[1], f[2], f[3], id) }
                 "setup" -> return withTrailingSequenceId(parts.drop(2), numbers = 3) { f, id ->
                     if (f[2] in 0L..Int.MAX_VALUE.toLong() && isValidBoxAlert(f[2].toInt())) Setup(f[0], f[1], f[2], id) else null
+                }
+                "check" -> return withTrailingSequenceId(parts.drop(2), numbers = 7) { f, id ->
+                    if (f[6] == 0L || f[6] == 1L) Check(f[0], f[1], f[2], f[3], f[4], f[5], anchored = f[6] == 1L, sequenceId = id) else null
                 }
             }
             val fields = parts.drop(2).map { it.toLongOrNull() ?: return null }

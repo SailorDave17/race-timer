@@ -19,6 +19,7 @@ import com.racetimer.shared.PairRace
 import com.racetimer.shared.PairScheduler
 import com.racetimer.shared.PairStatus
 import com.racetimer.shared.PairTransport
+import com.racetimer.shared.PeerCheck
 import com.racetimer.shared.PeerEnd
 import com.racetimer.shared.PeerNode
 import com.racetimer.shared.PeerSetup
@@ -57,7 +58,8 @@ import java.util.concurrent.Executor
  * which [PairRaces] drives on the main thread. This class is a [PairAnnouncer] for it, posting each
  * call onto the link's own thread, and hands every start the peer sends to [onPeerStart] — on the
  * link's thread, the moment it is decoded. **So do a race's Sync and End Race, and the pre-start
- * setup (#221)**, each through its own callback, the same way.
+ * setup (#221)**, each through its own callback, the same way — **and the check each device sends
+ * when the link comes back (#222)**.
  */
 class WearablePairLink private constructor(private val app: Context) : PairAnnouncer {
 
@@ -96,6 +98,10 @@ class WearablePairLink private constructor(private val app: Context) : PairAnnou
     /** Told when the peer becomes reachable directly, on the link's thread (#221). Set once by [PairRaces]. */
     @Volatile
     var onPeerNearby: (() -> Unit)? = null
+
+    /** Receives each check the peer sends when the link comes back, on the link's thread (#222). Set once by [PairRaces]. */
+    @Volatile
+    var onPeerCheck: ((PeerCheck) -> Unit)? = null
 
     /**
      * The peer's clock minus this one's from the rounds the link holds, readable from any thread, or
@@ -136,6 +142,7 @@ class WearablePairLink private constructor(private val app: Context) : PairAnnou
         onPeerEnd = { end -> onPeerEnd?.invoke(end) },
         onPeerSetup = { setup -> onPeerSetup?.invoke(setup) },
         onPeerNearby = { onPeerNearby?.invoke() },
+        onPeerCheck = { check -> onPeerCheck?.invoke(check) },
     )
 
     private val messageListener = MessageClient.OnMessageReceivedListener { event ->
@@ -172,6 +179,10 @@ class WearablePairLink private constructor(private val app: Context) : PairAnnou
 
     override fun announceSetup(key: RaceKey, choice: SetupChoice) {
         handler.post { link.announceSetup(key, choice) }
+    }
+
+    override fun announceCheck(race: PairRace) {
+        handler.post { link.announceCheck(race) }
     }
 
     override fun holdUntil(untilMs: Long) {

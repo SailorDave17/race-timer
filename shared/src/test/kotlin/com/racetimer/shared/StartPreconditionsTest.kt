@@ -86,7 +86,9 @@ class StartPreconditionsTest {
         }
         for (state in TimerState.values()) {
             for (refused in listOf(false, true)) {
-                armedNotice(state, refused)?.let { add(it.tier.surface to it.text) }
+                for (linkLost in listOf(false, true)) {
+                    armedNotice(state, refused, linkLost)?.let { add(it.tier.surface to it.text) }
+                }
             }
         }
         for (loss in CueLoss.values()) {
@@ -409,6 +411,24 @@ class StartPreconditionsTest {
         assertNotNull(armedNotice(TimerState.RUNNING, cueVolumeRefused = true))
         assertNull(armedNotice(TimerState.RUNNING, cueVolumeRefused = false))
         assertNull(armedNotice(TimerState.IDLE, cueVolumeRefused = true))
+    }
+
+    // --- armedNotice: the phone out of range mid-race (#222) --------------------------------------
+
+    @Test fun `a lost link to the phone speaks through the countdown and the count-up, and nowhere else`() {
+        val speaks = TimerState.values().filter { armedNotice(it, cueVolumeRefused = false, pairLinkLost = true) != null }.toSet()
+        assertEquals(setOf(TimerState.RUNNING, TimerState.COUNTING_UP), speaks)
+        val notice = armedNotice(TimerState.COUNTING_UP, cueVolumeRefused = false, pairLinkLost = true)!!
+        assertEquals(NoticeTier.WARNING, notice.tier)
+        assertEquals(NOTICE_PAIR_LINK_LOST, notice.text)
+        assertEquals("nothing to tap on a running race — rule 3", StartRemedy.NONE, notice.remedy)
+        assertFalse(notice.blocksStart)
+    }
+
+    @Test fun `a lost link yields to the cue-volume warning, which is about being heard at all`() {
+        assertEquals(NOTICE_CUE_VOLUME_REFUSED, armedNotice(TimerState.RUNNING, cueVolumeRefused = true, pairLinkLost = true)?.text)
+        // The negative control: without the refusal, the lost link is what speaks.
+        assertEquals(NOTICE_PAIR_LINK_LOST, armedNotice(TimerState.RUNNING, cueVolumeRefused = false, pairLinkLost = true)?.text)
     }
 
     @Test fun `the pre-start rule can never produce the armed-race copy`() {

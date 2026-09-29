@@ -47,6 +47,7 @@ import com.racetimer.shared.PairEvent
 import com.racetimer.shared.PairStatus
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.SetupChoice
+import com.racetimer.shared.pairGunCorrectedLine
 import com.racetimer.shared.pairGunMovedLine
 import com.racetimer.shared.pairStaleControlLine
 import com.racetimer.shared.RestoreOutcome
@@ -247,6 +248,9 @@ class MainActivity : ComponentActivity() {
         when (event) {
             is PairEvent.GunMoved -> showSyncLabel(pairGunMovedLine(event.setRemainingMs, peerNoun = "Phone"))
             is PairEvent.StaleControl -> showTransientMessage(pairStaleControlLine(event.control, peerNoun = "Phone"))
+            // #222: the link came back and this watch's gun moved a few milliseconds to the phone's.
+            // News, not a condition, so Tier 1; nothing buzzed or beeped, and this is how it is said.
+            is PairEvent.GunCorrected -> showTransientMessage(pairGunCorrectedLine(event.shiftMs, peerNoun = "Phone"))
         }
     }
 
@@ -1246,6 +1250,9 @@ class MainActivity : ComponentActivity() {
         uiStartNotice = armedNotice(
             state = engine.currentState,
             cueVolumeRefused = timerService?.cueVolumeRefused == true,
+            // #222: the phone was in range for this race and is not now. The lowest line of the
+            // tier, under the prompts that ask for Sync and under the cue-volume warning.
+            pairLinkLost = PairRaces.get(this).linkLost,
         )
         // A race the engine is actually running outranks a saved one: it has already been answered.
         clearResumeOffer()

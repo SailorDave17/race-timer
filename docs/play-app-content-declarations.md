@@ -429,6 +429,27 @@ chose* before any race, which is the same kind of statement as a start's — so 
 declared *App interactions, collected*, a start screen's choice belongs in the same answer, and an
 End Race's elapsed time beside it. It is the same question, answered once, at Console time.
 
+## A dropped link and its return — re-checked for #222, 2026-09-29
+
+[#222](https://github.com/SailorDave17/race-timer/issues/222) says on screen when a race's link is
+lost, and when the two devices meet again mid-race, each tells the other which race it is running
+and where its gun stands. Like #220 and #221 it adds **no permission, no dependency and no
+component** — `docs/declared-surface.lock` is unchanged again — and it adds one message kind, the
+check. The format is [`pair-protocol.md`](pair-protocol.md).
+
+**What it carries that nothing did before: nothing but one bit.** The sequence id, the gun and the
+instant it was sent, the start's stamp and race id, and the latest Sync's stamp and random id are
+all fields #220 or #221 already send; the one addition is whether the sending device set that gun
+itself. What is new is the **occasion**: it is sent when the other device comes back within reach
+of a device running a race, and only then. Still no time of day crosses the link.
+
+| Console section | After #222 | Why |
+|---|---|---|
+| **Privacy policy URL** | Same URL, **revised content** | `docs/privacy-policy.md` revised in the same change: one row added to what is exchanged, the sentence saying when, and a gun matched on reconnect added to what is stored — in the existing race-snapshot keys. The effective date stays 29 September 2026 if it merges that day; otherwise move it to the merge day, and confirm the live page when #222 merges |
+| **Data safety** | **No data collected. No data shared** — unchanged | The #220 argument carries it by the same three mechanisms: to the user's own other device only; to and from a directly connected peer only (`PairLinkTest`'s "a check is neither sent to nor taken from a peer reachable only through the cloud", #222's mutation M12, 1 red as predicted); and a gun matched on reconnect kept only where a moved gun already was. The open question grows by nothing: a check says what a start already said |
+| **Foreground service permissions** | **Block unchanged; declaration text revised** | `docs/play-store-fgs-justification.md`: the long form gained the sentence saying when a check is sent; the Console block already names what it carries, so #222 adds nothing to the re-paste #220 and #221 owe |
+| Every other section | Unchanged | Nothing here touches ads, ratings, the advertising ID, target audience, health, finance, government, app access or data deletion |
+
 ## Content ratings — the questionnaire
 
 Answers go to IARC, and ratings are then issued per-territory automatically. Every substantive

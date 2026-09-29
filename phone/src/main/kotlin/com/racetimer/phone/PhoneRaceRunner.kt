@@ -379,6 +379,18 @@ class PhoneRaceRunner(
     }
 
     /**
+     * Move the countdown's gun to [gunMs] by a reconnect's correction (#222): [moveGun]'s re-anchor
+     * and re-armed cue, through `TimerEngine.correctGun`, which tells no listener.
+     *
+     * @return whether a countdown was moved. False past the gun or with no race.
+     */
+    fun correctGun(gunMs: Long): Boolean {
+        val moved = engine.correctGun(gunMs)
+        armCueDispatch()
+        return moved
+    }
+
+    /**
      * End the count-up at [elapsedMs], the watch's End Race (#221): the time the watch froze, not
      * this phone's reading when the message landed, so the committee reads one race time on both.
      * An End Race already taken here keeps the earlier of the two (`TimerEngine.endRaceAt`).

@@ -283,21 +283,35 @@ fun startNotice(
  * `MessageContrastTest` **derive** the backgrounds this line can be drawn on — by driving this
  * function — instead of restating them.
  *
- * [TimerState.RUNNING] and no other state. Before the gun there are cues left to be silent; after
- * it there are none, so a warning that outlived the gun would be a line about nothing sitting on
- * the screen a race committee reads its finish times off.
+ * The cue-volume warning is for [TimerState.RUNNING] and no other state. Before the gun there are
+ * cues left to be silent; after it there are none, so a warning that outlived the gun would be a line
+ * about nothing sitting on the screen a race committee reads its finish times off.
+ *
+ * ### The link to the phone, lost mid-race (#222)
+ *
+ * The second caveat that belongs only to a running race: the phone was in range for this race and
+ * is not now. It yields to the cue-volume warning, which is about whether the watch can be heard at
+ * all, and it speaks through the count-up as well as the countdown, since an End Race taken on
+ * either device is what the link carries after the gun. Never on a finished screen: there is nothing
+ * left for the two devices to agree about.
  *
  * @param cueVolumeRefused the **measured** outcome of this race's volume raise — `TimerService`
  *        tried, read the volume back, and was refused. Never a prediction.
+ * @param pairLinkLost `PairStarts.linkLost`: this race had the phone in range and has lost it.
  */
-fun armedNotice(state: TimerState, cueVolumeRefused: Boolean): StartNotice? =
-    if (state == TimerState.RUNNING && cueVolumeRefused) {
-        // No remedy button: the fix is a system control this app cannot open on the sailor's behalf,
-        // and rule 3 of `docs/message-surface.md` keeps anything tappable off a running race anyway.
+fun armedNotice(state: TimerState, cueVolumeRefused: Boolean, pairLinkLost: Boolean = false): StartNotice? = when {
+    // No remedy button: the fix is a system control this app cannot open on the sailor's behalf,
+    // and rule 3 of `docs/message-surface.md` keeps anything tappable off a running race anyway.
+    state == TimerState.RUNNING && cueVolumeRefused ->
         StartNotice(NoticeTier.WARNING, NOTICE_CUE_VOLUME_REFUSED, StartRemedy.NONE)
-    } else {
-        null
-    }
+    // Nothing to tap either: the remedy is walking back into range, and the race is counting anyway.
+    pairLinkLost && (state == TimerState.RUNNING || state == TimerState.COUNTING_UP) ->
+        StartNotice(NoticeTier.WARNING, NOTICE_PAIR_LINK_LOST, StartRemedy.NONE)
+    else -> null
+}
+
+/** The watch's words for [armedNotice]'s lost link: `pairLinkLostLine`'s, naming the phone (#222). */
+val NOTICE_PAIR_LINK_LOST: String = pairLinkLostLine(peerNoun = "Phone")
 
 // --- A cue lost mid-race (#161) ---------------------------------------------
 
