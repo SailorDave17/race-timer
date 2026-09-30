@@ -369,6 +369,12 @@ class PhoneTimerService : Service(), PairRaces.RaceService {
             ACTION_START -> {
                 // A fresh start owes no joined race's warning, whatever the last race was.
                 pairJoinNotice = null
+                // The post-gun linger of the race before, if one is pending, would take the
+                // foreground, the wake lock and the snapshot from *whatever* is running when it fires:
+                // a Start tapped on the "GO!" screen, a few seconds in (#327). join() cancels it for
+                // the same reason.
+                gunTeardownPending = false
+                handler.removeCallbacks(gunTeardownRunnable)
                 // True unless a saved race came back: the one kind of race the pair is not told
                 // about, because it cannot say when it was tapped (see PairRaceBook).
                 var fromTheTop = true
