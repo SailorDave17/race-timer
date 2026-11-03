@@ -40,3 +40,9 @@ include(":shared")
 include(":shared-android")
 include(":wear")
 include(":phone")
+
+// #294. A stand-in for the race-committee companion, for the companion link's device test. Not an
+// app this repo ships: it lives under harness/ beside the script that installs it, and no CI step
+// builds it. See harness/companion-link/stub/build.gradle.kts.
+include(":companion-stub")
+project(":companion-stub").projectDir = file("harness/companion-link/stub")

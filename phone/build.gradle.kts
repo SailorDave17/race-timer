@@ -56,10 +56,23 @@ android {
         // does, it takes 3 and docs/releases.md records who took what.
         versionCode = 2
         versionName = "1.1"
+
+        // #294. The companion link's device test, the module's first instrumented test. CI runs no
+        // emulator, so it is a local run (harness/companion-link/run.sh), never a gate step.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
+        // #294. The certificates the companion may be signed with BEYOND the field key, which
+        // CompanionPins compiles in for every build. A release build adds none, so it trusts the
+        // field build and nothing else. A debug build adds what `-PcompanionDebugCerts` names
+        // (comma-separated SHA-256 digests): a developer's debug-signed companion, or the harness's
+        // stand-in. The companion pins race-timer the same way, with `-PlinkDebugCerts` (ADR 004).
+        debug {
+            buildConfigField("String", "COMPANION_DEBUG_CERTS", "\"${companionDebugCerts()}\"")
+        }
         release {
+            buildConfigField("String", "COMPANION_DEBUG_CERTS", "\"\"")
             // R8 on, matching :wear. AC 5 of #211 puts :phone:bundleRelease in CI so R8 breakage
             // cannot hide — which only means anything if R8 actually runs. It is also what produces
             // the mapping.txt the shared archive task asserts on: without minification there is no
@@ -87,6 +100,8 @@ android {
 
     buildFeatures {
         compose = true
+        // #294: the companion's debug pins above are the module's only BuildConfig field.
+        buildConfig = true
     }
 
     composeOptions {
@@ -170,4 +185,22 @@ dependencies {
     // Supplies the empty activity `createComposeRule` launches into. debugImplementation, not
     // testImplementation: it contributes a manifest entry, which is a merge-time artefact.
     debugImplementation(libs.compose.ui.test.manifest)
+
+    // #294. The companion link's device test: the runner and JUnit 4, nothing else. It runs JUnit 4
+    // classes without `androidx.test.ext:junit`, whose `core` dependency has broken a test APK's
+    // manifest merge before (cairn `instrumented-tests-in-a-flutter-app`).
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.junit)
+}
+
+/**
+ * `-PcompanionDebugCerts`, checked here so a mistyped digest fails the build rather than becoming a
+ * pin that can never match a certificate and leaves the link silent on the device (#294).
+ */
+fun companionDebugCerts(): String {
+    val raw = (findProperty("companionDebugCerts") as String?).orEmpty()
+    val digests = raw.split(',').map { it.replace(":", "").trim().lowercase() }.filter { it.isNotEmpty() }
+    val bad = digests.filterNot { it.matches(Regex("[0-9a-f]{64}")) }
+    if (bad.isNotEmpty()) throw GradleException("companionDebugCerts: not SHA-256 digests: $bad")
+    return digests.joinToString(",")
 }

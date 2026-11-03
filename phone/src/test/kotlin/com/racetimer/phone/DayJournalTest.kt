@@ -288,6 +288,11 @@ class DayJournalTest {
             ?: error("Could not find the repo root from ${File("").absolutePath}")
         val sources = File(repoRoot, "phone/src/main/kotlin").walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
+            // #294 narrowed this as #205 narrowed ModuleBoundaryTest's guard: the companion link's
+            // outbox is app state that must be read back (what the companion has not taken outlives
+            // the process, by the owner's decision at #294's pickup), and it reads exactly one file,
+            // its own. Any other reader under :phone, the journal's above all, still fails here.
+            .filterNot { it.name == "CompanionOutbox.kt" }
             .toList()
         // A scan of nothing passes silently — locate the sources before believing the result.
         assertTrue("no phone sources were scanned", sources.size >= 7)

@@ -289,6 +289,9 @@ class PhoneTimerService : Service(), PairRaces.RaceService {
             // service lifetimes and the record has to span them. An unarmed build, and any test
             // that does not install the Application, both get `DayJournal.OFF`.
             journal = (application as? RaceTimerPhoneApplication)?.journal ?: DayJournal.OFF,
+            // The process's link to the companion (#294), on the same terms as the journal: any
+            // service built without the Application gets `CompanionLink.OFF`.
+            companionLink = (application as? RaceTimerPhoneApplication)?.companionLink ?: CompanionLink.OFF,
         )
         runner.engine.addListener(engineListener)
         pairRaces = PairRaces.get(this)

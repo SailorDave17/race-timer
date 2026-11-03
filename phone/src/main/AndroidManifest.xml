@@ -22,6 +22,15 @@
          two apps' permission sets identical - docs/privacy-policy.md's table says so. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- #294: the race-committee companion on the same phone (pro-companion ADR 004). Without this
+         the companion is invisible to this app from Android 11 on: its signer cannot be checked and
+         its link service cannot be bound. It is a query for ONE named package, not a permission and
+         not an exported component, and it grants that package nothing. CompanionPins is what decides
+         whether the companion found here is the one to trust. -->
+    <queries>
+        <package android:name="com.procompanion.app" />
+    </queries>
+
     <application
         android:name=".RaceTimerPhoneApplication"
         android:allowBackup="false"

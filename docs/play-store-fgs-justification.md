@@ -37,6 +37,11 @@ is there.
   the race each device is running and its gun, which the block's sentence already names — *the
   race's start … (which sequence, when the gun is …)* — so the block reads true as it stands and
   #222 adds nothing to the re-paste above. The long form gained the sentence saying when.
+- **Revised 2026-11-03 by #294, and not yet re-pasted.** The block's "only things it sends" sentence
+  gained the companion hand-off on the phone, and the long form a sentence saying the same. The
+  block is now 2,023 characters, counted as above; whether Console takes that many is not recorded
+  here and is to be read off the field at re-paste. The re-paste owed for #220 and #221 now covers
+  #294 too, before the next upload of a build carrying it.
 
 ```text
 Mad Cow Race Timer runs a sailboat race start sequence, a fixed countdown of commonly five minutes, on a Wear OS watch and on an Android phone. At exact, predetermined offsets it sounds tones and vibrations. The last one is the starting gun, and a boat that crosses the line before it is penalised.
@@ -45,7 +50,7 @@ The foreground service runs that countdown. It starts only when the user taps St
 
 Why it must start immediately and cannot be paused or restarted: the sequence is anchored to the race committee's flags, so a cue that fires late is a wrong race result. The screen is off for most of a start: the sailor is watching the committee boat and handling the boat, and the phone sits propped on the committee boat's console. Cues are scheduled against a monotonic clock to land within a fraction of a second of their offsets. A paused, deferred or restarted process cannot hold that, and a restart cannot bring back a gun that has already been missed.
 
-No standard type fits. The app plays short alert tones, not media: there is no media session or transport control. It transfers no data and has no INTERNET permission. The only things it sends are clock readings, the race's start, sync and end (which sequence, when the gun is, how long the race ran) and the start screen's choice of sequence, all to the user's own paired watch or phone, and the service waits on none of them. It uses no location, health or body-sensor data. shortService is capped far below a race start followed by a race clock that can run for an hour or more.
+No standard type fits. The app plays short alert tones, not media: there is no media session or transport control. It transfers no data and has no INTERNET permission. The only things it sends are clock readings, the race's start, sync and end (which sequence, when the gun is, how long the race ran) and the start screen's choice of sequence, all to the user's own paired watch or phone, and, on a phone, each start signal's time to the race committee's companion app on the same phone; the service waits on none of them. It uses no location, health or body-sensor data. shortService is capped far below a race start followed by a race clock that can run for an hour or more.
 
 The service posts an ongoing notification the whole time it runs, holds a partial wake lock only while a race is running, never starts at boot, and returns START_NOT_STICKY, so the system does not restart it on its own.
 ```
@@ -146,7 +151,10 @@ standard type for that, which is precisely the case `specialUse` exists to cover
   so the user can always see that a race is running and return to it.
 - It requests **no network access**. The only things the app sends anywhere are clock readings, a
   race's start, sync and end, and the start screen's choice of sequence, to the user's own paired
-  watch or phone, over the direct connection between them, and never to a server.
+  watch or phone, over the direct connection between them, and never to a server. Since #294 the
+  phone app also hands each start signal's time to the race committee's companion app on the same
+  phone, directly on the device, and only to that app signed by its developer's key; the service
+  waits on none of it.
   That removes the class of abuse that scrutiny of `specialUse` is designed to catch.
 
 ### Manifest subtype value

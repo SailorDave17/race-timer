@@ -55,7 +55,7 @@ warning.
 | Console section | Answer | Evidence |
 |---|---|---|
 | **Privacy policy URL** | `https://sailordave17.github.io/race-timer/privacy-policy` — **live**. *(Corrected 2026-08-17: this row said "Not yet live — publication is #73" for five days after #73 published it on 2026-08-12.)* | Source at `docs/privacy-policy.md`, built to the `gh-pages` branch by `.github/scripts/build-privacy-page.py`. **Fetched 2026-08-17** rather than inherited — it answered, and the maintainer block was correctly absent from the rendered page |
-| **Data safety** | **No data collected. No data shared.** | Long form below — this is the only row whose answer needs an argument, and since [#219](https://github.com/SailorDave17/race-timer/issues/219)'s link it needs a second one (*The pair link*, below) |
+| **Data safety** | **No data collected. No data shared** as filed; **shared is the owner's call at the next Console visit** since [#294](https://github.com/SailorDave17/race-timer/issues/294) | Long form below — this is the only row whose answer needs an argument, and since [#219](https://github.com/SailorDave17/race-timer/issues/219)'s link it needs a second one (*The pair link*, below). Since #294 the phone hands start signals to the companion app on the same device, which Play's page lists under *sharing* (*The companion link*, below) |
 | **Content ratings** (IARC questionnaire) | Every substantive question **no**; rates as low as the questionnaire allows | Long form below |
 | **Target audience and content** | **13-15, 16-17, and 18 and over.** Owner decision 2026-08-12 — see *Target audience* below | A product decision, not a code fact. **This row said "adults, no child age band" until it was filed**, and the app ships a **Scholastic (ICSA)** sequence, which is high-school sailing |
 | **Ads** | **No ads.** Neither app contains advertising | No ad SDK in the dependencies of **any** of the four modules; no `com.google.android.gms.permission.AD_ID` in **either** merged manifest. Re-read 2026-09-25 after #219 brought in Google Play services: none of the four `play-services-*` libraries it added is an ads library, and neither manifest gained `AD_ID` |
@@ -65,7 +65,7 @@ warning.
 | **Government apps** | No | Not published on behalf of, or in association with, a government entity |
 | **Financial features** | **None.** No in-app purchases, no subscriptions, no financial products | No billing or payments dependency in any of the four build files; no purchase flow in `wear/src` or `phone/src` |
 | **Health apps** | **No.** Neither app reads health or fitness data | No `BODY_SENSORS`, no `ACTIVITY_RECOGNITION`, no health permission in **either** merged manifest; no Health Services dependency. It is a sports app that measures **time**, not the athlete |
-| **Data deletion** | No account exists, so there is nothing held off-device to delete. Local data is removed by uninstalling the app or clearing its storage from the device's settings | No account or sign-in code in `wear/src` or `phone/src`; no `INTERNET` permission in either merged manifest. Since #219 the one thing either app sends is clock readings to the user's own paired device, held in memory and never stored, so it adds nothing to delete. *(Until 2026-09-25 this said "neither app transmits anything", which #219 made false)* |
+| **Data deletion** | No account exists, so there is nothing held off-device to delete. Local data is removed by uninstalling the app or clearing its storage from the device's settings | No account or sign-in code in `wear/src` or `phone/src`; no `INTERNET` permission in either merged manifest. Since #219 the apps send race timing to the user's own paired device, held in memory, and since #294 the phone also hands start signals to the companion app on the same phone, keeping any it has not taken in `companion_outbox.json` in its private storage. Both stay on the user's devices, and uninstalling or clearing storage removes the file, so neither adds anything to delete. *(Until 2026-09-25 this said "neither app transmits anything", which #219 made false; until 2026-11-03 it said what is sent is "never stored", which #294's outbox made false)* |
 | **Foreground service permissions** | `specialUse`, with the written justification | `docs/play-store-fgs-justification.md`. **Filed 2026-09-28 (#324)**: the Console takes a video link and a short text, not the whole argument. Both are recorded in that document's *What was declared* section, and the text there is the source to re-paste. **This is the only row with real rejection risk**, and the phone raises the stakes rather than changing the answer: **both** artifacts declare `FOREGROUND_SERVICE_SPECIAL_USE`, for the same reason (a race-start countdown is none of the enumerated FGS types), so one rejected argument rejects both. Both subtype strings are quoted in that document, and it now reads true of the phone as well as the wrist |
 | **App access** | **All functionality is available without any special access.** No login, no region lock, no unlocked-content gate; no reviewer credentials needed — true of **both** apps | No account/sign-in code in `wear/src` or `phone/src`; on the watch the only `startActivity` leaves for a **system settings screen**, never a login or a web page |
 
@@ -449,6 +449,62 @@ of a device running a race, and only then. Still no time of day crosses the link
 | **Data safety** | **No data collected. No data shared** — unchanged | The #220 argument carries it by the same three mechanisms: to the user's own other device only; to and from a directly connected peer only (`PairLinkTest`'s "a check is neither sent to nor taken from a peer reachable only through the cloud", #222's mutation M12, 1 red as predicted); and a gun matched on reconnect kept only where a moved gun already was. The open question grows by nothing: a check says what a start already said |
 | **Foreground service permissions** | **Block unchanged; declaration text revised** | `docs/play-store-fgs-justification.md`: the long form gained the sentence saying when a check is sent; the Console block already names what it carries, so #222 adds nothing to the re-paste #220 and #221 owe |
 | Every other section | Unchanged | Nothing here touches ads, ratings, the advertising ID, target audience, health, finance, government, app access or data deletion |
+
+## The companion link — re-checked for #294, 2026-11-03
+
+[#294](https://github.com/SailorDave17/race-timer/issues/294) has the phone app hand each start
+sequence it runs to the race committee's companion app on the same phone (`SailorDave17/pro-companion`,
+its ADR 004). It adds **no permission, no dependency and no exported component**, so
+`docs/declared-surface.lock` is unchanged. It adds a `<queries>` entry naming the companion's
+package, which the lock does not record. The format is [`companion-link.md`](companion-link.md).
+
+**What it hands over that nothing did before: times of day, to another app.** Every event carries
+`at_ms`, the wall-clock time the signal sounded, and a sequence-start carries the sequence's name.
+The pair link sends no time of day at all. The recipient is another app, not the user's own other
+device.
+
+### What Play's page says about it — read 2026-11-03
+
+The same page this document has reasoned from since 2026-08-12
+([answer 10787469](https://support.google.com/googleplay/android-developer/answer/10787469)) lists,
+under *Data sharing*, "On-device transfer to another app. Transferring user data from your app to
+another app directly on the device", and says developers "must disclose data sharing in your Data
+safety section declarations" even if "your app does not transmit the data off the user's device".
+So *nothing leaves the device* settles *collected*, and does **not** settle *shared*.
+
+Its exceptions, quoted from the same read: a service provider processing data on the developer's
+behalf; legal purposes; "Transferring user data to a third party based on a specific user-initiated
+action" where the user reasonably expects it; and fully anonymised data.
+
+### Every declaration, re-read
+
+| Console section | After #294 | Why |
+|---|---|---|
+| **Privacy policy URL** | Same URL, **revised content** | `docs/privacy-policy.md` revised in the same change: a new section for the hand-off, a stored-data row for the outbox file, and two sentences narrowed (its maintainer note lists them). Effective date 3 November 2026 if it merges that day; otherwise move it to the merge day, and confirm the live page when #294 merges |
+| **Data safety** | **No data collected.** Shared: **the owner's call at Console time**, argued below | The page above makes an on-device hand-off a sharing question, which no earlier change here raised |
+| **Foreground service permissions** | Unchanged | The link adds no foreground work: it binds and sends while the existing countdown service runs, and the declaration describes the countdown, which did not change |
+| Every other section | Unchanged | Nothing here touches ads, ratings, the advertising ID, target audience, health, finance, government, app access or data deletion |
+
+### Data safety: what carries "not shared", and what does not
+
+Strongest first:
+
+1. **The recipient is arguably not a third party.** The companion is the same developer's own app,
+   published by the same owner, and race-timer hands it data only when it is signed with that
+   developer's key (`CompanionPins`). Play's word is *third party*, and an app of one's own is the
+   plainest case of not being one. This is the argument to lead with, and it rests on a reading of a
+   word Play does not define on that page.
+2. **It is arguably not user data.** A sequence's name, its signals' times of day, and random ids:
+   no person, boat, fleet or device is named (`CompanionContractTest` holds the field set). The
+   nearest type is still *App activity → App interactions*, the same question #220 left open.
+3. **The hand-off follows the user's own act.** Nothing is handed over unless the user installed the
+   companion app, which exists to receive it. That is close to the *user-initiated action* exception,
+   but the transfer itself is automatic, so it is support rather than the argument.
+
+**The question to settle at Console time**, stated rather than answered by default: whether this is
+*App interactions, shared* (with the companion app, on the device). If the owner reads the companion
+as a third party, the answer gains one row and the policy already describes it. If not, the answer
+stays *no data shared*, on reason 1. This section is the evidence for either answer.
 
 ## Content ratings — the questionnaire
 

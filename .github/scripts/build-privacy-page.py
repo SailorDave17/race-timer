@@ -59,8 +59,9 @@ FRONT_MATTER = """\
 ---
 description: >-
   Privacy policy for Mad Cow Race Timer, a sailing start-sequence timer that runs standalone on
-  Wear OS watches and on Android phones. The app collects no personal data, has no network
-  access, and transmits nothing.
+  Wear OS watches and on Android phones. The app collects no personal data and requests no network
+  access. It sends only race timing to the user's own paired device and, on a phone, start signals
+  to the race committee's companion app on the same phone.
 ---
 
 """

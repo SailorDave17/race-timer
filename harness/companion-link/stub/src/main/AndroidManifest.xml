@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- #294's stand-in companion: the one exported service race-timer binds, under the production
+         name, and nothing else. No launcher activity, so it never shows in the app drawer. -->
+    <application
+        android:allowBackup="false"
+        android:label="Companion stub (race-timer test)">
+        <service
+            android:name=".LinkService"
+            android:exported="true" />
+    </application>
+
+</manifest>

@@ -39,9 +39,9 @@ import com.racetimer.shared.leadInBaseOf
  * and can never double-fire. What it must never be is the thing the cue path relies on, and the
  * unit test proves it is not by driving a whole race through the scheduler with no poll running.
  *
- * [cueSounder], [cueScheduler] and [cueBuzzer] default to no-ops so a test or preview can construct
- * this without an audio or haptic stack; production construction is [PhoneTimerService.onCreate],
- * which supplies the real three.
+ * [cueSounder], [cueScheduler], [cueBuzzer] and [companionLink] default to no-ops so a test or preview
+ * can construct this without an audio or haptic stack or a companion; production construction is
+ * [PhoneTimerService.onCreate], which supplies the real ones.
  */
 class PhoneRaceRunner(
     clock: MonotonicClock = SystemMonotonicClock,
@@ -49,6 +49,7 @@ class PhoneRaceRunner(
     private val cueScheduler: CueScheduler = CueScheduler.NONE,
     private val journal: DayJournal = DayJournal.OFF,
     private val cueBuzzer: CueBuzzer = CueBuzzer.STILL,
+    private val companionLink: CompanionLink = CompanionLink.OFF,
 ) {
 
     val engine = TimerEngine(clock)
@@ -94,6 +95,9 @@ class PhoneRaceRunner(
                 "gun" to if (cue.isGun) 1 else 0,
                 "label" to cue.signal.label,
             )
+            // Last, for the journal's reason: the companion hears of a cue after it has been asked
+            // to sound, never ahead of it. A timestamp and a post, and nothing for most cues (#294).
+            companionLink.cueFired(engine.loadedSequence ?: selected, cue)
         }
 
         override fun onGun() {}
@@ -197,6 +201,7 @@ class PhoneRaceRunner(
     fun endRaceAndSelect(sequence: RaceSequence) {
         applySelection(sequence)
         armCueDispatch()
+        companionLink.sequenceEnded()
     }
 
     /**
@@ -218,6 +223,9 @@ class PhoneRaceRunner(
         // parse compares what fired against what *this race* was going to fire, so a sequence that
         // changes later cannot rewrite the expectation a past race was judged on (#216 AC 1).
         journal.record("race_start", "seq" to selected.id, "schedule" to cueSchedule(selected))
+        // Ahead of the engine too, so the sequence's start is queued before its first signal fires
+        // inside start(). It costs that first cue one wall-clock read and one post (#294).
+        companionLink.sequenceStarted(selected)
         // Re-prepare at arm, the watch's twice-called pattern: the construction-time track can have
         // been torn down by an audio-stack hiccup, and rebuilding it here still lands ahead of the
         // first cue. In the ordinary case this costs one comparison (#114).
@@ -259,6 +267,9 @@ class PhoneRaceRunner(
             "schedule" to cueSchedule(sequence) { it.offsetMs <= owed },
             "joined" to 1,
         )
+        // A joined race is a sequence this phone runs, so the companion on this phone logs it from
+        // here, at the join: the companion's own sequence is what the PRO arms a fleet against.
+        companionLink.sequenceStarted(sequence)
         engine.tick()
         armCueDispatch()
         return outcome
@@ -285,6 +296,7 @@ class PhoneRaceRunner(
         // process death in the gap that follows.
         journal.record("race_end", "seq" to selected.id, "elapsedMs" to -engine.remainingMs)
         journal.flush()
+        companionLink.sequenceEnded()
     }
 
     /**
@@ -301,6 +313,9 @@ class PhoneRaceRunner(
         journal.record("race_stop", "seq" to selected.id)
         journal.flush()
         engine.stop()
+        // A stop before the gun has no kind in the contract (a postponement is the PRO's to tap on
+        // the companion), so the link is only told the sequence is over.
+        companionLink.sequenceEnded()
         // A lead-in is a per-race choice, never a sticky one (#104, #207). The armed variant sits
         // in [selected] only while its race is the engine's; the moment that race is over the
         // selection drops back to the base sequence, so the next plain Start runs a clean 3:00
@@ -336,6 +351,9 @@ class PhoneRaceRunner(
         cueSounder.prepare()
         cueSounder.warmUp(sequence.cues.map { it.signal })
         val outcome = engine.restore(sequence, snapshot)
+        // Not a new sequence: its start was logged before the process died, so the rest of its
+        // signals go under the sequence id the link kept on disk (#294).
+        if (outcome != com.racetimer.shared.RestoreOutcome.EXPIRED) companionLink.sequenceResumed()
         engine.tick()
         armCueDispatch()
         return outcome
@@ -407,6 +425,7 @@ class PhoneRaceRunner(
         if (wasCountingUp) {
             journal.record("race_end", "seq" to selected.id, "elapsedMs" to held, "peer" to 1)
             journal.flush()
+            companionLink.sequenceEnded()
         }
         return held
     }
@@ -469,6 +488,9 @@ class PhoneRaceRunner(
         engine.removeListener(cueListener)
         cueBuzzer.cancel()
         cueSounder.release()
+        // The link is the process's, not this runner's, so it is told the race is over rather than
+        // torn down: what it has not delivered stays queued for the next sequence (#294).
+        companionLink.sequenceEnded()
     }
 
     companion object {
