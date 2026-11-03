@@ -101,7 +101,9 @@ class RaceManagerVoicingAndDisplayTest {
      * only possible act is `copy(fullBrightness = false)`, which returns an equal object, so the
      * display effect's key cannot move whatever the rule does. The constrained and the
      * unconstrained rule agree on this fixture by construction. `CountUpBrightnessTest` is where
-     * #279 is held; this test's subject is still #206's, and that is all it certifies.
+     * #279 is held; this test's subject is still #206's, and that is all it certifies. The same is
+     * true of #284's releases (idle, the GO! screen, the summary), for the same reason —
+     * `UnboundedStatesBrightnessTest` holds those.
      */
     @Test
     fun `a whole race-manager race applies the officer's choice once and never re-decides`() {
@@ -139,9 +141,9 @@ class RaceManagerVoicingAndDisplayTest {
         assertEquals(
             "the display was re-decided during the race. On a choice that declines full " +
                 "brightness nothing may re-apply: the officer's screen-on answer is not a " +
-                "function of where the countdown is (#199, #225). A count-up may release the " +
-                "override since #279, but only where one was asked for and only on the " +
-                "officer's answer — neither holds here",
+                "function of where the countdown is (#199, #225). Since #279 and #284 a phase may " +
+                "release the override, but only where one was asked for — which is not the " +
+                "case here",
             listOf(DisplayChoice.INITIAL),
             applied,
         )

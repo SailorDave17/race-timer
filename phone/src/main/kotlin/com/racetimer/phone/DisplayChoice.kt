@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
+import com.racetimer.shared.TimerState
 
 /**
  * What the officer decided the console screen should do today (#225).
@@ -69,7 +70,9 @@ internal const val COUNT_UP_PROMPT_DWELL_MS = 15_000L
  *    session on a screen that never showed it. Since #281 a live race opens the timer screen, so
  *    the states this excludes are transient (the frames before the service binding lands) rather
  *    than a screen an officer can sit on — a narrower job than in #279, and still a real one.
- *  - [countingUp] — the unbounded state is the only one whose panel cost has no gun to justify it.
+ *  - [countingUp] — the one phase whose release is put to the officer. The other unbounded phases
+ *    are settled without a question (#284): nothing-timed releases outright, and the race-ended
+ *    summary follows this answer, so an officer meets one display question per race, not two.
  *  - [fullBrightnessChosen] — an officer who declined brightness has nothing to release, so asking
  *    would be noise on the one screen that must stay legible.
  *  - [countUpKeepsBrightness] `== null` — asked once. `null` is *not yet answered*; a `true` or a
@@ -89,34 +92,104 @@ fun countUpBrightnessPromptShows(
         countUpKeepsBrightness == null
 
 /**
- * The display properties that apply *right now*, given where the race is (#279).
+ * Where the race is, as far as the panel is concerned (#284).
  *
- * The officer's launch answer is the standing choice and this narrows it in exactly one place: an
- * unbounded count-up, once they have said full brightness may go there. Nothing else moves, and
- * screen-on is never touched — releasing brightness is what was asked about, and the two properties
- * stay independent all the way to the window (#199).
+ * Four answers the rule acts on, and a fifth for the frames in which nobody knows yet. It is the
+ * app's own projection of the engine rather than the engine's state, so [displayChoiceInEffect]
+ * stays a rule about the officer's choice with nothing about the race in it but this — and
+ * [panelPhaseOf] is the one place the projection is made.
+ */
+enum class PanelPhase {
+    /**
+     * A countdown, or the gun's own linger: it ends on its own, and it is what the officer asked
+     * for the panel *for*. The choice is honoured exactly.
+     */
+    TIMED,
+
+    /** The unbounded count-up after a race-manager gun, governed by the question at the gun (#279). */
+    COUNTING_UP,
+
+    /** That count-up's frozen final time, held until Done — governed by the same answer (#284). */
+    RACE_ENDED,
+
+    /**
+     * Nothing is being timed: the picker, the pre-start screen, and the GO! screen once its linger
+     * is over. Nothing ends on its own here, and nothing on screen is worth the panel (#284).
+     */
+    NOTHING_TIMED,
+
+    /**
+     * The service binding has not landed, so where the race is cannot be read. Honoured exactly,
+     * because a countdown returned to from the background passes through here for a frame or two —
+     * releasing would flash it dim on the way back, and it is the countdown the choice was for.
+     */
+    NOT_YET_KNOWN,
+}
+
+/**
+ * Project the engine's [state] onto the panel's phase (#284), or [PanelPhase.NOT_YET_KNOWN] when
+ * [state] is null because the binding has not landed.
  *
- * The three values of [countUpKeepsBrightness] are three different states and only one of them
- * dims. `null` is *not yet answered* — the question may be on screen this second — and it keeps the
- * officer's brightness, because a question that dimmed the panel while it was still being asked
- * would have answered itself. `true` is a deliberate keep. Only `false` releases.
+ * [gunLingerOver] matters only for `FINISHED`: the GO! screen stays bright for the gun's linger,
+ * the moment the whole sequence led up to, and only then counts as nothing timed. The phone holds
+ * that screen until the officer taps Start or Back, so without a bound it would burn the panel for
+ * as long as nobody looks.
  *
- * **A pure function of booleans, on purpose.** It is the whole rule, it is exhaustively testable
- * off the JVM, and it takes `countingUp` rather than an engine state so that where the race is
- * stays a question the app answers once, at the edge, rather than a dependency this rule carries.
- * The shared, state-driven table the watch applies is a different instrument's answer and stays
+ * Exhaustive with no `else`, so a new engine state fails the build here until someone decides what
+ * the panel does in it. `PAUSED` is honoured as a countdown, **decided rather than forgotten**: no
+ * control on the phone pauses, so it is unreachable, and a story that wires one decides whether a
+ * paused countdown is something the officer is reading.
+ */
+fun panelPhaseOf(state: TimerState?, gunLingerOver: Boolean): PanelPhase = when (state) {
+    null -> PanelPhase.NOT_YET_KNOWN
+    TimerState.RUNNING,
+    TimerState.PAUSED -> PanelPhase.TIMED
+    TimerState.FINISHED -> if (gunLingerOver) PanelPhase.NOTHING_TIMED else PanelPhase.TIMED
+    TimerState.COUNTING_UP -> PanelPhase.COUNTING_UP
+    TimerState.RACE_ENDED -> PanelPhase.RACE_ENDED
+    TimerState.IDLE -> PanelPhase.NOTHING_TIMED
+}
+
+/**
+ * The display properties that apply *right now*, given where the race is (#279, #284).
+ *
+ * The officer's launch answer is the standing choice, and full brightness is what it narrows —
+ * screen-on is never touched, so the two properties stay independent all the way to the window
+ * (#199). The choice is read as *the panel for the race*: honoured wherever something is being
+ * timed, and released where nothing is or where the officer has said the race's unbounded tail may
+ * go without it.
+ *
+ *  - [PanelPhase.TIMED] and [PanelPhase.NOT_YET_KNOWN] honour it.
+ *  - [PanelPhase.NOTHING_TIMED] releases it, with no question: there is no clock on screen to read.
+ *  - [PanelPhase.COUNTING_UP] releases only on `false`. `null` is *not yet answered* — the question
+ *    may be on screen this second — and a question that dimmed the panel while it was still being
+ *    asked would have answered itself (#279).
+ *  - [PanelPhase.RACE_ENDED] keeps it only on `true`. The summary is the count-up's own tail, so it
+ *    follows the answer given at that count-up's gun rather than asking a second question — and
+ *    **silence releases here**, including a count-up ended before the dwell answered for it. The
+ *    question is gone from the screen by then, so `null` can no longer mean *still being asked*,
+ *    and keeping on it would leave the one unbounded hole in the rule.
+ *
+ * Nothing here remembers a previous phase, so leaving a phase leaves its narrowing behind with it.
+ *
+ * **A pure function, on purpose.** It is the whole rule and it is exhaustively testable off the
+ * JVM. The shared, state-driven table the watch applies is a different instrument's answer and stays
  * the watch's — `PhoneDisplay.kt` carries why the two form factors diverge.
  */
 fun displayChoiceInEffect(
     chosen: DisplayChoice,
-    countingUp: Boolean,
+    phase: PanelPhase,
     countUpKeepsBrightness: Boolean?,
-): DisplayChoice =
-    if (countingUp && countUpKeepsBrightness == false) {
-        chosen.copy(fullBrightness = false)
-    } else {
-        chosen
+): DisplayChoice {
+    val releases = when (phase) {
+        PanelPhase.TIMED,
+        PanelPhase.NOT_YET_KNOWN -> false
+        PanelPhase.NOTHING_TIMED -> true
+        PanelPhase.COUNTING_UP -> countUpKeepsBrightness == false
+        PanelPhase.RACE_ENDED -> countUpKeepsBrightness != true
     }
+    return if (releases) chosen.copy(fullBrightness = false) else chosen
+}
 
 /**
  * Holds the choice for the life of the process, and no longer (#225).

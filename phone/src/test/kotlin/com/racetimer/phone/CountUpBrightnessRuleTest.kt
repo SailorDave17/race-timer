@@ -1,52 +1,57 @@
 package com.racetimer.phone
 
+import com.racetimer.shared.TimerState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The whole count-up brightness rule, exhaustively (#279 AC 4).
+ * The whole display rule, exhaustively (#279 AC 4, #284 ACs 1–5).
  *
- * `displayChoiceInEffect` is a pure function of three inputs with 2 x 2 x 2 x 3 = 24 combinations,
+ * `displayChoiceInEffect` is a pure function of three inputs with 2 x 2 x 5 x 3 = 60 combinations,
  * so the table below is not a sample — it is the function. That is the argument for the rule being
  * a free function at all: the behaviour the officer sees is a Compose test with a clock in it, and
  * the *rule* underneath it costs nothing to state completely, on the JVM, with no Robolectric and
- * no frame pump.
+ * no frame pump. `panelPhaseOf`, which feeds it, is tabled the same way below.
  *
- * Two properties are asserted here that no screen test could isolate:
+ * Three properties are asserted here that no screen test could isolate:
  *
- *  - **screen-on is never touched.** #199 made the two window properties independent and #279 moves
- *    exactly one of them, so every row carries both values and the keep-screen-on column is a copy
- *    of its input in all 24.
- *  - **`null` keeps.** Unanswered is a third state, not a synonym for "dim" — the question is on
- *    screen at that moment, and a rule that dimmed while still asking would have answered itself.
- *    Writing the predicate as `!= true` instead of `== false` changes the *output* of exactly
- *    **two** of the 24 rows — *measured*, not counted by eye. Eight rows have an unanswered
- *    officer, but the released branch only shows where `fullBrightness` is true as well, and on the
- *    other six `copy(fullBrightness = false)` is identity. The first draft of this line said eight,
- *    which would have had the next mutation pass predict eight, measure two, and have to decide
- *    whether the test had decayed or the harness lied.
+ *  - **screen-on is never touched.** #199 made the two window properties independent and both
+ *    #279 and #284 move exactly one of them, so every row carries both values and the keep-screen-on
+ *    column is a copy of its input in all 60.
+ *  - **`null` means two different things in two phases.** In a count-up it keeps — the question is
+ *    on screen at that moment, and a rule that dimmed while still asking would have answered itself.
+ *    In the race-ended summary it releases — the question has left the screen, and keeping on it
+ *    would leave an unbounded hole (#284). Only rows with `fullBrightness` true can show either,
+ *    because on the others `copy(fullBrightness = false)` is identity.
+ *  - **nothing depends on a previous phase**, which is AC 5: a narrowing cannot outlive the phase
+ *    that caused it when the rule has no memory to carry it in. The table is that claim, row by row.
  */
 class CountUpBrightnessRuleTest {
 
     @Test
-    fun `only a released count-up drops brightness, and it drops nothing else`() {
+    fun `brightness is released where nothing is timed or the race's tail was let go, and nowhere else`() {
         val actual = mutableListOf<String>()
         val expected = mutableListOf<String>()
 
         for (keepScreenOn in listOf(false, true)) {
             for (fullBrightness in listOf(false, true)) {
-                for (countingUp in listOf(false, true)) {
+                for (phase in PanelPhase.values()) {
                     for (answer in listOf(null, true, false)) {
                         val chosen = DisplayChoice(keepScreenOn, fullBrightness)
-                        val inEffect = displayChoiceInEffect(chosen, countingUp, answer)
+                        val inEffect = displayChoiceInEffect(chosen, phase, answer)
 
                         // Written out rather than derived from the function under test: an expected
                         // value computed by re-calling the subject is the shape that passes whatever
                         // the subject does (cairn `a-mutation-cannot-see-what-no-test-reaches`).
-                        val released = countingUp && answer == false
+                        val released = when (phase.name) {
+                            "NOTHING_TIMED" -> true
+                            "COUNTING_UP" -> answer == false
+                            "RACE_ENDED" -> answer != true
+                            else -> false
+                        }
                         val case = "keepScreenOn=$keepScreenOn fullBrightness=$fullBrightness " +
-                            "countingUp=$countingUp answer=$answer"
+                            "phase=$phase answer=$answer"
                         expected += "$case -> keepScreenOn=$keepScreenOn " +
                             "fullBrightness=${fullBrightness && !released}"
                         actual += "$case -> keepScreenOn=${inEffect.keepScreenOn} " +
@@ -57,38 +62,100 @@ class CountUpBrightnessRuleTest {
         }
 
         // The count is asserted first: a loop that stopped iterating would agree with itself
-        // perfectly and prove nothing (cairn `an-absent-result-reads-as-a-clean-one`).
-        assertEquals("every combination of the rule's three inputs", 24, actual.size)
+        // perfectly and prove nothing (cairn `an-absent-result-reads-as-a-clean-one`). It also
+        // pins the phase count at five, so a sixth phase has to be decided here, not inherited.
+        assertEquals("every combination of the rule's three inputs", 60, actual.size)
         assertEquals(expected, actual)
     }
 
     @Test
-    fun `the only case that changes anything is a released count-up over chosen brightness`() {
+    fun `each phase does what was decided for it, on a choice that asked for the panel`() {
         // The positive statement of the same rule, so the table above cannot pass by returning its
-        // input in all 24 rows. Exactly two of the 24 differ from what was chosen, and they differ
-        // in one field.
+        // input in all 60 rows — and one line per decision, so a reader deleting a branch has the
+        // sentence that says what breaks.
         val chosen = DisplayChoice(keepScreenOn = true, fullBrightness = true)
+        val released = DisplayChoice(keepScreenOn = true, fullBrightness = false)
 
         assertEquals(
+            "a countdown, or the gun's linger, gets what the officer chose whatever the count-up answer",
+            chosen,
+            displayChoiceInEffect(chosen, PanelPhase.TIMED, countUpKeepsBrightness = false),
+        )
+        assertEquals(
+            "before the binding lands the race is unknown, and a countdown returned to from the " +
+                "background must not flash dim on the way back",
+            chosen,
+            displayChoiceInEffect(chosen, PanelPhase.NOT_YET_KNOWN, countUpKeepsBrightness = false),
+        )
+        assertEquals(
+            "nothing timed releases brightness without asking, even after a Keep bright (#284)",
+            released,
+            displayChoiceInEffect(chosen, PanelPhase.NOTHING_TIMED, countUpKeepsBrightness = true),
+        )
+        assertEquals(
             "a released count-up drops brightness and keeps screen-on",
-            DisplayChoice(keepScreenOn = true, fullBrightness = false),
-            displayChoiceInEffect(chosen, countingUp = true, countUpKeepsBrightness = false),
+            released,
+            displayChoiceInEffect(chosen, PanelPhase.COUNTING_UP, countUpKeepsBrightness = false),
         )
         assertEquals(
             "an unanswered count-up keeps what the officer chose — the question is still on screen",
             chosen,
-            displayChoiceInEffect(chosen, countingUp = true, countUpKeepsBrightness = null),
+            displayChoiceInEffect(chosen, PanelPhase.COUNTING_UP, countUpKeepsBrightness = null),
         )
         assertEquals(
             "a kept count-up keeps what the officer chose",
             chosen,
-            displayChoiceInEffect(chosen, countingUp = true, countUpKeepsBrightness = true),
+            displayChoiceInEffect(chosen, PanelPhase.COUNTING_UP, countUpKeepsBrightness = true),
         )
         assertEquals(
-            "the countdown is untouched by the answer — it has a gun to justify the cost",
+            "a kept count-up's final time stays bright — it follows the gun's answer (#284)",
             chosen,
-            displayChoiceInEffect(chosen, countingUp = false, countUpKeepsBrightness = false),
+            displayChoiceInEffect(chosen, PanelPhase.RACE_ENDED, countUpKeepsBrightness = true),
         )
+        assertEquals(
+            "a dimmed count-up's final time stays dimmed (#284)",
+            released,
+            displayChoiceInEffect(chosen, PanelPhase.RACE_ENDED, countUpKeepsBrightness = false),
+        )
+        assertEquals(
+            "a count-up ended before anyone answered leaves a final time that releases — silence " +
+                "dims, and the question is no longer on screen to be answered (#284)",
+            released,
+            displayChoiceInEffect(chosen, PanelPhase.RACE_ENDED, countUpKeepsBrightness = null),
+        )
+    }
+
+    @Test
+    fun `every engine state maps to the phase decided for it`() {
+        // 7 x 2 = 14 rows: six engine states and the unbound null, each with the linger over and
+        // not. Written out by name, so the expected column is a statement rather than a re-run of
+        // the `when` under test.
+        val expectedByState = mapOf(
+            null to listOf("NOT_YET_KNOWN", "NOT_YET_KNOWN"),
+            TimerState.IDLE to listOf("NOTHING_TIMED", "NOTHING_TIMED"),
+            TimerState.RUNNING to listOf("TIMED", "TIMED"),
+            TimerState.PAUSED to listOf("TIMED", "TIMED"),
+            TimerState.FINISHED to listOf("TIMED", "NOTHING_TIMED"),
+            TimerState.COUNTING_UP to listOf("COUNTING_UP", "COUNTING_UP"),
+            TimerState.RACE_ENDED to listOf("RACE_ENDED", "RACE_ENDED"),
+        )
+        assertEquals(
+            "every engine state is in the expected table — a new one must be decided here",
+            TimerState.values().toSet() + setOf<TimerState?>(null),
+            expectedByState.keys,
+        )
+
+        val actual = mutableListOf<String>()
+        val expected = mutableListOf<String>()
+        for ((state, phases) in expectedByState) {
+            for ((index, lingerOver) in listOf(false, true).withIndex()) {
+                val case = "state=$state gunLingerOver=$lingerOver"
+                expected += "$case -> ${phases[index]}"
+                actual += "$case -> ${panelPhaseOf(state, lingerOver).name}"
+            }
+        }
+        assertEquals("every combination of the projection's two inputs", 14, actual.size)
+        assertEquals(expected, actual)
     }
 
     @Test

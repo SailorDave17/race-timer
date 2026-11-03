@@ -121,6 +121,11 @@ class DisplayChoiceSurfaceTest {
 
         // Positive, and it is the end-to-end wiring proof: a switch tapped on the surface reaches
         // #199's mechanism and lands on the window an officer is looking at.
+        //
+        // It lands on the picker here only because this class binds no service: with no runner the
+        // race is *not yet known*, which honours the choice (#284). With a binding, the picker is
+        // nothing timed and releases it — `PreStartScreenHoldTest` binds one and reads this
+        // override off a countdown instead.
         assertEquals(
             "full brightness reached the window",
             WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL,

@@ -31,8 +31,8 @@ import org.robolectric.android.controller.ServiceController
  * launch (#300 AC 5).
  *
  * #300 keeps the watch's pre-start screen awake, because that is the screen a start is waited on.
- * The phone already behaves as asked — the officer's launch choice governs its window in every state
- * (#225, #199) — but nothing pinned it on this screen. Both directions are pinned here, because the
+ * The phone already behaves as asked — the officer's screen-on choice governs its window in every
+ * state (#225, #199; #284 narrows brightness only) — but nothing pinned it on this screen. Both directions are pinned here, because the
  * owner rejected forcing the screen on regardless (2026-09-25): that would reverse #225's model, in
  * which the officer owns the phone's display. An officer who declined screen-on gets a pre-start
  * screen that sleeps.
@@ -125,12 +125,22 @@ class PreStartScreenHoldTest {
         compose.waitForIdle()
         openPreStartScreen()
 
+        assertEquals("a declined screen-on stays declined on the pre-start screen", false, holdsScreenOn)
+
+        // The control is read off a countdown, not off this screen: since #284 the pre-start screen
+        // is nothing timed and releases brightness, which on a real window is the fresh value again.
+        // The engine is started on the service's runner directly — Robolectric does not deliver the
+        // Start intent to `onStartCommand` — and the timer screen's poll carries it into the window.
+        service.runner.start()
+        compose.mainClock.advanceTimeBy(500L)
+        compose.waitForIdle()
+        assertEquals(TimerState.RUNNING, service.runner.engine.currentState)
         assertEquals(
             "control — the officer's answer reached this window",
             WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL,
             brightness,
             0f,
         )
-        assertEquals("a declined screen-on stays declined on the pre-start screen", false, holdsScreenOn)
+        assertEquals("and screen-on is still the officer's no", false, holdsScreenOn)
     }
 }
