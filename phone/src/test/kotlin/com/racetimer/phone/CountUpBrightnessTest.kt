@@ -54,6 +54,13 @@ class CountUpBrightnessTest {
 
     private val raceManager = BuiltInSequences.scholasticRaceManager
 
+    /**
+     * What the panel has been handed by the time the question is up (#284): the picker is nothing
+     * timed, so the launch choice lands released, and the countdown then gets the brightness the
+     * officer asked for. Every history below starts here.
+     */
+    private val toTheGun = listOf(dimmed, bright)
+
     /** How far either side of the dwell the boundary test observes — see its own comment. */
     private val MARGIN_MS = 3_000L
 
@@ -66,9 +73,10 @@ class CountUpBrightnessTest {
      */
     private fun runToTheGun() {
         app.launch(fullBrightness = true, applyDisplay = { applied += it })
-        assertEquals("the officer's launch choice, applied once", listOf(bright), applied)
+        assertEquals("the picker releases the launch choice — nothing is timed there", listOf(dimmed), applied)
 
         app.startRace(raceManager)
+        assertEquals("the countdown gets the brightness the officer chose", toTheGun, applied)
         app.runPastTheGun(raceManager)
         assertEquals(TimerState.COUNTING_UP, app.runner.engine.currentState)
     }
@@ -95,7 +103,7 @@ class CountUpBrightnessTest {
 
         // Asking is not answering. The panel is still doing what the officer asked for while the
         // question is on screen — a prompt that dimmed on appearing would have answered itself.
-        assertEquals("the question alone changed the display", listOf(bright), applied)
+        assertEquals("the question alone changed the display", toTheGun, applied)
     }
 
     @Test
@@ -105,7 +113,7 @@ class CountUpBrightnessTest {
 
         assertEquals(
             "an unanswered count-up releases the brightness override and nothing else",
-            listOf(bright, dimmed),
+            toTheGun + dimmed,
             applied,
         )
         // The question is spent: it answered itself, so it is no longer on screen.
@@ -141,12 +149,12 @@ class CountUpBrightnessTest {
             stepMs = 1_000L,
         )
         compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertIsDisplayed()
-        assertEquals("short of the dwell, the question still stands", listOf(bright), applied)
+        assertEquals("short of the dwell, the question still stands", toTheGun, applied)
 
         app.advance(2 * MARGIN_MS, stepMs = 1_000L)
         assertEquals(
             "and past it, it has answered itself",
-            listOf(bright, dimmed),
+            toTheGun + dimmed,
             applied,
         )
     }
@@ -158,13 +166,13 @@ class CountUpBrightnessTest {
         compose.waitForIdle()
 
         compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertDoesNotExist()
-        assertEquals("keeping it bright re-applies nothing", listOf(bright), applied)
+        assertEquals("keeping it bright re-applies nothing", toTheGun, applied)
 
         // The assertion that needed the clock: the dwell was armed when the question appeared, and
         // an answer that failed to cancel it would dim the panel once the dwell elapsed.
         // Without this advance the two builds are indistinguishable.
         advancePastTheDwell()
-        assertEquals("the answer survived the dwell", listOf(bright), applied)
+        assertEquals("the answer survived the dwell", toTheGun, applied)
         assertEquals(TimerState.COUNTING_UP, app.runner.engine.currentState)
     }
 
@@ -177,7 +185,7 @@ class CountUpBrightnessTest {
         // No advance before this one on purpose: tapping Dim must not wait out the dwell, so the
         // assertion is taken at a moment when the automatic path demonstrably has not fired —
         // the boundary test above proves it needs the whole dwell to.
-        assertEquals("Dim releases the override on the tap", listOf(bright, dimmed), applied)
+        assertEquals("Dim releases the override on the tap", toTheGun + dimmed, applied)
         compose.onNodeWithTag(TAG_DIM_COUNT_UP).assertDoesNotExist()
     }
 
@@ -186,29 +194,33 @@ class CountUpBrightnessTest {
         runToTheGun()
         compose.onNodeWithTag(TAG_DIM_COUNT_UP).performClick()
         compose.waitForIdle()
-        assertEquals(listOf(bright, dimmed), applied)
+        assertEquals(toTheGun + dimmed, applied)
 
-        // End Race leaves the count-up, and the officer's choice comes straight back: the frozen
-        // final time is read across a boat in the same sun the countdown was.
+        // End Race leaves the count-up, and the final time follows the gun's answer (#284): the
+        // officer said the race's unbounded tail could go dim, and the summary is that tail. Until
+        // #284 the choice came straight back here, which put an unbounded summary at full
+        // brightness on a phone nobody was reading.
         compose.onNodeWithText("End Race").performClick()
         compose.waitForIdle()
         assertEquals(TimerState.RACE_ENDED, app.runner.engine.currentState)
         assertEquals(
-            "leaving the count-up restores what the officer chose",
-            listOf(bright, dimmed, bright),
+            "a dimmed count-up's final time was handed brightness back",
+            toTheGun + dimmed,
             applied,
         )
 
-        // And through the next race's countdown, which is the state with a gun to justify the cost
-        // — this is the whole difference between the shape chosen and revising the launch answer.
+        // Done is nothing timed, so nothing moves; the next race's countdown is the state with a gun
+        // to justify the cost, and gets it back — this is the whole difference between the shape
+        // chosen and revising the launch answer.
         compose.onNodeWithText("Done").performClick()
         compose.waitForIdle()
+        assertEquals("the picker re-decided the display", toTheGun + dimmed, applied)
         compose.onNodeWithText("Start").performClick()
         app.advance(3_000L, stepMs = 1_000L)
         assertEquals(TimerState.RUNNING, app.runner.engine.currentState)
         assertEquals(
-            "the countdown is bright and was not re-decided",
-            listOf(bright, dimmed, bright),
+            "the countdown is bright again, and nothing narrowed it on the way",
+            toTheGun + dimmed + bright,
             applied,
         )
     }
@@ -232,7 +244,7 @@ class CountUpBrightnessTest {
         compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertDoesNotExist()
         assertEquals(
             "the standing answer applied to the second count-up",
-            listOf(bright, dimmed, bright, dimmed),
+            toTheGun + dimmed + bright + dimmed,
             applied,
         )
     }
@@ -262,15 +274,17 @@ class CountUpBrightnessTest {
 
         // The officer has not answered. Before #281 this is where the question was lost: the
         // recreated activity ran the launch flow from the top and the count-up was nowhere.
+        val beforeRecreation = applied.size
         app.recreateActivity()
 
         // Rejoined on the timer screen, with the question still standing — the ask is consumed by
-        // an answer, never by having been shown, and a recreation is not an answer.
+        // an answer, never by having been shown, and a recreation is not an answer. Counted from the
+        // recreation, because since #284 the launch's picker put a release in the history first.
         compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertIsDisplayed()
         assertEquals(
             "the recreation spent the question and dropped the panel the officer asked for",
             emptyList<DisplayChoice>(),
-            applied.filter { it == dimmed },
+            applied.drop(beforeRecreation).filter { it == dimmed },
         )
 
         // And the rebuilt composition carries its own dwell: silence still dims, from the new one.
@@ -295,10 +309,24 @@ class CountUpBrightnessTest {
         compose.waitForIdle()
         assertEquals(TimerState.RACE_ENDED, app.runner.engine.currentState)
 
+        // The summary releases on the spot (#284): nobody answered, the question is gone from the
+        // screen, and silence dims — keeping on an unanswered summary was the one unbounded hole.
+        // Releasing the *panel* is not answering the *question*, and the two are asserted apart.
+        assertEquals("an unanswered summary kept the panel", toTheGun + dimmed, applied)
+        assertEquals(
+            "releasing the summary spent the question",
+            null,
+            app.displayChoice.countUpKeepsBrightness,
+        )
+
         // And the dwell must not fire behind the summary either — the same claim as the test above,
         // reached by the other route off the timer screen's count-up branch.
         advancePastTheDwell()
-        assertEquals("the ended race's dwell answered anyway", listOf(bright), applied)
+        assertEquals(
+            "the ended race's dwell answered anyway",
+            null,
+            app.displayChoice.countUpKeepsBrightness,
+        )
 
         compose.onNodeWithText("Done").performClick()
         compose.waitForIdle()
@@ -307,7 +335,11 @@ class CountUpBrightnessTest {
         assertEquals(TimerState.COUNTING_UP, app.runner.engine.currentState)
 
         compose.onNodeWithTag(TAG_KEEP_BRIGHT).assertIsDisplayed()
-        assertEquals("the second gun re-offers an unspent question", listOf(bright), applied)
+        assertEquals(
+            "the second gun re-offers an unspent question, at the brightness the officer chose",
+            toTheGun + dimmed + bright,
+            applied,
+        )
     }
 
     @Test

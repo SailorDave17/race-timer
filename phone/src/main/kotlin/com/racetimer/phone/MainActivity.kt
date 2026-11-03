@@ -616,6 +616,25 @@ internal fun RaceTimerApp(
     // `ModuleBoundaryTest` to be all that path can see.
     val countingUp = state == TimerState.COUNTING_UP
 
+    // #284. The GO! screen is bright for the gun's linger and then counts as nothing timed — the
+    // phone holds it until the officer taps Start or Back, so it needs a bound the engine does not
+    // give it. Keyed on being
+    // FINISHED, so leaving the state resets it and the next gun gets its whole linger. The service's
+    // own constant, so the panel and the foreground service agree on what the gun's moment is.
+    val finished = state == TimerState.FINISHED
+    var gunLingerOver by remember { mutableStateOf(false) }
+    LaunchedEffect(finished) {
+        gunLingerOver = false
+        if (finished) {
+            delay(PhoneTimerService.GUN_LINGER_MS)
+            gunLingerOver = true
+        }
+    }
+
+    // A null runner is the binding not having landed, and `state` reads IDLE then by default — so
+    // the phase is told the race is unknown rather than idle. See `PanelPhase.NOT_YET_KNOWN`.
+    val panelPhase = panelPhaseOf(state = state.takeIf { runner != null }, gunLingerOver = gunLingerOver)
+
     // The one moment worth interrupting an officer for (#279). The whole rule, and the argument for
     // each of its five clauses, is `countUpBrightnessPromptShows` — a pure function since #281,
     // which is where it is proven.
@@ -654,11 +673,11 @@ internal fun RaceTimerApp(
 
     val displayInEffect = displayChoiceInEffect(
         chosen = displayChoice.choice,
-        countingUp = countingUp,
+        phase = panelPhase,
         countUpKeepsBrightness = displayChoice.countUpKeepsBrightness,
     )
 
-    // Keyed on what is *in effect* rather than on what was chosen, so the count-up rule above
+    // Keyed on what is *in effect* rather than on what was chosen, so the phase rule above
     // applies through the same one call site — the seam #225 left open for exactly this ("a later
     // surface that lets the officer change their mind mid-day applies without anyone remembering to
     // add a call here"). Nothing is applied before the launch surface is answered: until then the

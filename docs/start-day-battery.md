@@ -125,7 +125,7 @@ inert unless armed.
 |---|---|---|
 | `session` | process start | Names the phone, the build and the journal's own version — the artefact under test |
 | `battery` | every `ACTION_BATTERY_CHANGED` | Level, scale, **charge counter in µAh**, status, temperature |
-| `display` | the effective display properties change | Screen-on and brightness **as applied to the window** — including the narrowing a count-up answer causes |
+| `display` | the effective display properties change | Screen-on and brightness **as applied to the window** — including the narrowing a count-up answer causes, and since [#284](https://github.com/SailorDave17/race-timer/issues/284) the release wherever nothing is timed (picker, pre-start, GO! after its linger) and on a dimmed race's final time |
 | `race_load` / `race_start` / `race_end` / `race_stop` | each, as it happens | The sequence id, and at start the **whole expected cue schedule** |
 | `cue` | every cue the engine fires | Its label, its intended offset, and how late it actually landed |
 

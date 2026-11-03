@@ -78,18 +78,49 @@ class DisplayChoiceRoutingTest {
         assertEquals(listOf(DisplayChoice(keepScreenOn = true, fullBrightness = false)), applied)
     }
 
+    /**
+     * Pick a sequence and start it, so a brightness choice has a timed state to show in.
+     *
+     * Since #284 the picker and the pre-start screen are *nothing timed* and release brightness, so
+     * an officer who chose it first meets it at Start. The two brightness cases below therefore
+     * assert the whole history — released on the picker, then exactly what was chosen — which is
+     * still positive evidence in every value: both entries carry the screen-on answer, and the
+     * second carries the brightness one.
+     */
+    private fun startARace() {
+        compose.onNodeWithText(BuiltInSequences.usSailing.name).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Start").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Stop").assertIsDisplayed()
+    }
+
     @Test
     fun `brightness alone hands the mechanism exactly that`() {
         // The combination that proves neither is read off the other: direct sun, free thumb, and an
         // officer content to tap the screen awake.
         answer(keepScreenOn = false, fullBrightness = true)
-        assertEquals(listOf(DisplayChoice(keepScreenOn = false, fullBrightness = true)), applied)
+        startARace()
+        assertEquals(
+            listOf(
+                DisplayChoice(keepScreenOn = false, fullBrightness = false),
+                DisplayChoice(keepScreenOn = false, fullBrightness = true),
+            ),
+            applied,
+        )
     }
 
     @Test
     fun `both chosen hands the mechanism both`() {
         answer(keepScreenOn = true, fullBrightness = true)
-        assertEquals(listOf(DisplayChoice(keepScreenOn = true, fullBrightness = true)), applied)
+        startARace()
+        assertEquals(
+            listOf(
+                DisplayChoice(keepScreenOn = true, fullBrightness = false),
+                DisplayChoice(keepScreenOn = true, fullBrightness = true),
+            ),
+            applied,
+        )
     }
 
     @Test
