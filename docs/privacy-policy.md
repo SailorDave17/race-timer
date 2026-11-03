@@ -1,6 +1,6 @@
 # Privacy Policy — Mad Cow Race Timer
 
-**Effective date:** 29 September 2026
+**Effective date:** 3 November 2026
 **Applies to:** Mad Cow Race Timer (`io.github.sailordave17.racetimer`) — both the **Wear OS watch
 app** and the **Android phone app**, which ship under one Play listing. Referred to together below
 as *Race Timer*, and distinguished as *the watch app* and *the phone app* wherever they differ.
@@ -14,9 +14,15 @@ settings, held in the app's private storage on the device you are using.
 If you run it on a Wear OS watch and an Android phone that are paired with each other, the two apps
 exchange clock readings, tell each other when a race is started, synced or ended, and share what
 their start screens are set to, over the direct connection between your two devices, so that both
-run the same race to the same gun. That is the only thing either app sends anywhere, and it goes only
-to your own other device. It is described in full under *Clock readings and race controls exchanged
-with your paired device*.
+run the same race to the same gun. It goes only to your own other device, and it is described in full
+under *Clock readings and race controls exchanged with your paired device*.
+
+If the race committee's companion app is installed on the same phone, the phone app also tells it
+when each start sequence begins and when each of its signals sounds, so the companion can log the
+start without anyone tapping it in. That hand-off stays on the phone, from one app to the other. It
+is described in full under *Start signals handed to the companion app on the same phone*.
+
+Those two are the only things either app sends anywhere.
 
 ## Information we collect
 
@@ -29,7 +35,8 @@ sign-in.
 Neither the watch app nor the phone app requests the `INTERNET` permission, and neither sends
 anything to the developer or to any server. The one exchange between the two apps is described
 under *Clock readings and race controls exchanged with your paired device*, and it passes only between
-your own devices.
+your own devices. The one hand-off to another app, the companion app on the same phone, is described
+under *Start signals handed to the companion app on the same phone*.
 
 ## Information stored on your device
 
@@ -38,7 +45,8 @@ closed or the device restarting mid-sequence, and so that your choices are still
 you open it.
 
 Each app keeps its own file in its own private storage, and they are not shared between devices:
-`race_timer_state` on the watch, `phone_race_state` on the phone. The **Stored on** column says
+`race_timer_state` on the watch, `phone_race_state` on the phone. On a phone with the companion app
+installed, the phone app also keeps `companion_outbox.json`, the last row below. The **Stored on** column says
 which app keeps each value — the phone app does not adjust or restore a device volume, so it stores
 nothing for that.
 
@@ -52,11 +60,12 @@ nothing for that.
 | The lead-in time a race was last armed with | So the same lead-in is offered next time, rather than being re-entered every race | Watch and phone |
 | Which audio stream a running race raised the volume on | So the app knows which stream to put back when the race ends | Watch only |
 | That stream's volume before the race raised it | So your original volume is restored rather than left turned up | Watch only |
+| Start signals the companion app has not yet taken, as described under *Start signals handed to the companion app on the same phone*, and a random number naming the sequence now running | So a signal the companion could not take at the time is handed to it later rather than lost. Each is removed once the companion takes it, and all of them are removed at the first race started after the companion app is uninstalled | Phone only, and only with the companion app installed |
 
 This is timing state and your own settings. It contains nothing about you, and nothing that
-identifies you or your device — the values above are clock readings, a sequence identifier, a
-number of seconds, an audio stream index and a volume level. Neither app has any text input, so
-there is nothing you could type into either one.
+identifies you or your device — the values above are clock readings and times of day, a sequence
+identifier and name, random numbers, a number of seconds, an audio stream index and a volume level.
+Neither app has any text input, so there is nothing you could type into either one.
 
 This data is removed when you uninstall the app, or when you clear the app's storage through the
 device's system settings.
@@ -127,6 +136,39 @@ This is everything that is exchanged:
 - **One device on its own exchanges nothing.** A phone with no paired watch running Race Timer, or a
   watch whose phone does not run it, sends nothing at all.
 
+## Start signals handed to the companion app on the same phone
+
+A race committee may also run a companion app on its phone, which logs the day's starts and finishes
+for the race officer. When that app is installed on the same phone as Race Timer's phone app, the
+phone app tells it about each start sequence it runs, so the start is logged without anyone tapping
+it in. The watch app never does this.
+
+The phone app hands these to exactly one app: the one installed under the companion's package name
+**and** signed with the companion developer's own key. It checks both before it hands over
+anything, so another app that took the companion's name is given nothing.
+
+This is everything that is handed over:
+
+| What | When |
+|---|---|
+| That a start sequence began: the time of day it began, its name (for example *US Sailing 5-4-1-Go*), and a random number identifying it | When you start a sequence on the phone, or when the phone joins a race started on your watch |
+| A signal: the time of day it sounded, its name (for example *warning* or *one_minute*), how many seconds it was before the start, and the random number of the sequence it belongs to | When each signal from one minute before the start upward sounds |
+| The start: the time of day it sounded, and the random number of its sequence | When the start sounds |
+| With each of the above, the version of the format and a random number identifying that one item | Always, so the companion can recognise an item it is given twice |
+
+- **It stays on the phone.** Race Timer hands it to the other app directly on the device. Race Timer
+  sends none of it over any network, and never to the developer.
+- **The companion app may do more with it.** What the companion app keeps, and whether it sends
+  anything to a race committee's records, is described by the companion app, not by this policy.
+- **It is stored only until the companion takes it.** Anything the companion cannot take at the
+  time is kept on the phone and handed over later, as the last row of *Information stored on your
+  device* says.
+- **Nothing in it identifies you.** It says which sequence was run and when its signals sounded,
+  and nothing more. It carries no fleet, class, boat or person.
+- **No companion, no hand-off.** On a phone without the companion app, or with an app under its name
+  that is not signed with the companion developer's key, nothing is handed over and nothing is
+  stored for it.
+
 ## Permissions and why they are used
 
 | Permission | Why Race Timer needs it | Requested by |
@@ -139,12 +181,16 @@ This is everything that is exchanged:
 Neither app requests location, microphone, camera, contacts, storage, body sensors, or any health
 or fitness permission. Adding the phone app introduced **no permission the watch app did not
 already request** — the two apps request exactly the same set — and linking the two apps added no
-permission to either.
+permission to either. Nor did the hand-off to the companion app: the phone app asks Android to let
+it see that one named app, which is not a permission and grants the companion nothing.
 
 ## Sharing
 
-Race Timer does not share data with anyone, because it does not collect any. The clock readings and
-race controls described above pass only between your own two devices.
+Race Timer collects no data, and shares nothing with the developer, with advertisers, or with any
+analytics or other online service. The clock readings and
+race controls described above pass only between your own two devices. The start signals described
+above are handed only to the race committee's companion app on the same phone, which the phone app
+checks is signed by that app's own developer before it hands over anything.
 
 The apps contain one third-party library: Google Play services' Wearable library, with the parts of
 Google Play services it depends on. It provides the Data Layer channel between a paired watch and
@@ -160,7 +206,8 @@ no data at all, it collects no data from children.
 
 The data described above is held in the app's private, sandboxed storage, which the Android
 operating system isolates from other apps on the device. The only data either app sends is the
-clock readings and race controls exchanged between your own two devices, described above; the device
+clock readings and race controls exchanged between your own two devices, and the start signals the
+phone app hands to the companion app on the same phone, both described above; the device
 backup described above is encrypted by Android before it leaves the watch.
 
 ## Changes to this policy
@@ -316,6 +363,43 @@ MAINTAINER NOTES — remove this block before publishing.
        lost" asserts no check was sent, and "a race stopped here is not rejoined when the devices
        meet" that a device running nothing names no race (mutation M9, 1 red as predicted).
    No manifest and no dependency moved, so docs/declared-surface.lock is unchanged again.
+
+   REVISED 2026-11-03 for the companion link (#294), which moves the effective date to 3 November
+   2026; if it merges on a later day, move the date to the merge day. The first data the app hands
+   to ANOTHER APP, and the first time of day it hands anywhere. Re-argued, and two claims NARROWED:
+   - The Summary's "That is the only thing either app sends anywhere" became "Those two are the only
+     things", after a paragraph naming the hand-off. As written it was about to be false.
+   - Sharing's "does not share data with anyone, because it does not collect any" was REMOVED and
+     replaced by what is true: no developer, advertiser or online service, the paired device, and
+     the companion. Play's own page lists "On-device transfer to another app" under Data sharing
+     (read 2026-11-03, docs/play-app-content-declarations.md has the quotes), so "shares with no
+     one" could not be argued from "collects nothing" any more.
+   - NEW section, Start signals handed to the companion app on the same phone. Its table is
+     CompanionEvent.toJson in phone/.../CompanionContract.kt, field for field: v, id, kind, at_ms
+     (a WALL-CLOCK time, unlike every pair-link field), sequence, sequence_name, signal,
+     seconds_to_start. "From one minute before the start upward" is COMPANION_SIGNAL_FLOOR_MS.
+     The claims that could drift, and what pins each:
+       only to the companion's package AND its key: CompanionPins (field key compiled in, debug
+         pins by -PcompanionDebugCerts only), checked before every bind and again on connect.
+         On a device: CompanionLinkDeviceTest#imposterIsSentNothing (harness/companion-link).
+       nothing without it, nothing stored for it: CompanionLinkTest "with no companion installed
+         nothing is bound, nothing is sent and nothing is written"; on a device,
+         #absentCompanionChangesNothing.
+       no fleet, class, boat or person: CompanionContractTest "each kind carries exactly its
+         contract fields, and no fleet, class or race id".
+       the watch never does this: nothing under wear/ references the link (it is :phone code).
+         Read, not tested.
+   - STORED-DATA table gained one row and a file: companion_outbox.json in the phone app's
+     filesDir (CompanionOutbox.FILE_NAME), written only while a trusted companion is installed and
+     deleted at the first start without one (CompanionLinkEmitter.forget). allowBackup is false on
+     the phone, so it is in no backup.
+   - Permissions: no permission moved. The manifest gained a <queries> element naming one package,
+     which docs/declared-surface.lock does NOT record (it lists permissions, components, features
+     and dependencies), so the lock was silent on this change and this note is the record of it.
+   - THE PUBLISHED PAGE'S DESCRIPTION is not in this file: it is FRONT_MATTER in
+     .github/scripts/build-privacy-page.py, and it said "has no network access, and transmits
+     nothing", false since #219, which revised this file and never opened the generator. Revised in
+     the same change (found by #294's review). Re-check that string whenever this Summary moves.
 
 2. Every factual claim here was checked against the tree on 2026-08-01 and RE-CHECKED on 2026-08-09,
    after PRs #113, #116 and #132 had merged. All still true:

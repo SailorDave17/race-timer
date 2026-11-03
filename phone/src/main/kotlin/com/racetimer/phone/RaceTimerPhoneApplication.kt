@@ -47,6 +47,16 @@ class RaceTimerPhoneApplication : Application(), ViewModelStoreOwner {
      */
     val journal: DayJournal by lazy { DayJournal.forProcess(this) }
 
+    /**
+     * The companion link (#294): each sequence, sent to the race-committee companion on this phone
+     * when one is installed and trusted, and nothing at all when not.
+     *
+     * The process's for the journal's reason. What the companion has not yet taken outlives the race
+     * and the service that ran it, and is resent at the next sequence's start, so the link's lifetime
+     * is the process and its outbox's is the install.
+     */
+    val companionLink: CompanionLink by lazy { CompanionLinkEmitter.forProcess(this) }
+
     override fun onCreate() {
         super.onCreate()
 
