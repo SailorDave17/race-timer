@@ -1,6 +1,8 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    // #193. The Compose compiler, at the catalog's Kotlin version. It replaces `composeOptions`.
+    alias(libs.plugins.kotlin.compose)
     // #211. Release signing, the #156 keystore guard and the #184 archive task moved to
     // buildSrc/src/main/kotlin/racetimer.release-artifacts.gradle.kts so :phone inherits them
     // instead of forking a second copy. Nothing about this module's release behaviour changed.
@@ -41,10 +43,6 @@ android {
 
     buildFeatures {
         compose = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
     }
 
     compileOptions {

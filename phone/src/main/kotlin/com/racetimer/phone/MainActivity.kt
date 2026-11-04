@@ -13,6 +13,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.NonSkippableComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -432,8 +433,19 @@ class MainActivity : ComponentActivity() {
  * the next Start will run. A `refresh()` keyed on it sat here first and was *measured* redundant in
  * #221's mutation pass (deleted, 0 red against a predicted 1: `PairNewsOnScreenTest` stayed green),
  * so it is not kept. Removing the parameter itself is what that test catches.
+ *
+ * **That only works because this composable is never skipped, and since #193 that is declared
+ * rather than assumed.** Under Kotlin 1.9 it held by accident: [runner] and the view model are
+ * unstable, and a composable with an unstable parameter could not skip. Kotlin 2.x's Compose compiler
+ * turns strong skipping on, which compares unstable parameters by instance, and [runner] is the same
+ * instance before and after the watch's setup. With the unused [selectionVersion] the only argument
+ * that moved, this composable skipped. *Measured* on #193: `PairNewsOnScreenTest` went red on
+ * exactly this case, and went green again with strong skipping disabled and, separately, with
+ * [NonSkippableComposable] here. Take the annotation off only when the selection becomes Compose
+ * state, which is also when [selectionVersion] can go.
  */
 @Composable
+@NonSkippableComposable
 internal fun RaceTimerApp(
     applyDisplay: (DisplayChoice) -> Unit,
     runner: PhoneRaceRunner? = remember { PhoneRaceRunner() },
