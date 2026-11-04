@@ -1,12 +1,18 @@
 [versions]
 # 8.6 is the floor for `compileSdk = 35`, which #69 needs before the 2026-08-31 Wear OS
-# target-API deadline. Kotlin stays at 1.9.22 so `composeOptions.kotlinCompilerExtensionVersion`
-# (1.5.8, pinned to exactly this Kotlin) keeps working — see the note on `kotlin` below.
+# target-API deadline.
 agp = "8.13.2"
-# Held deliberately. Kotlin 2.x replaces `composeOptions` with the
-# `org.jetbrains.kotlin.plugin.compose` Gradle plugin and switches on K2, which is a real upgrade
-# but a separate one. Stacking it on a deadline-driven AGP bump mixes two failure modes.
-kotlin = "1.9.22"
+# #193. Kotlin 2.2 is the first step of epic #191: Gradle 9.0's minimum KGP is 2.0.0 and AGP 9.0's
+# is 2.2.10, so Kotlin moves before the wrapper or the build is stranded between two floors. It
+# moved on its own, on AGP 8.13 and Gradle 8.13, so a Compose breakage has one possible cause.
+#
+# From 2.0 the Compose compiler ships with Kotlin, at Kotlin's version, as the
+# `org.jetbrains.kotlin.plugin.compose` Gradle plugin below. That is why `composeOptions` and its
+# `kotlinCompilerExtensionVersion` are gone from :wear and :phone rather than bumped: there is no
+# separate compiler version left to pin. The plugin's defaults are taken as shipped, strong
+# skipping included (owner decision at #193 pickup). It broke exactly one composable, which had
+# relied on never being skipped and now says so: see `RaceTimerApp` in :phone's MainActivity.
+kotlin = "2.2.21"
 coreKtx = "1.12.0"
 composeBom = "2024.02.00"
 wearCompose = "1.3.0"
@@ -86,3 +92,4 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

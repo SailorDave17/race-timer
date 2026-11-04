@@ -14,6 +14,8 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    // #193. The Compose compiler, at the catalog's Kotlin version. It replaces `composeOptions`.
+    alias(libs.plugins.kotlin.compose)
     // #211. Release signing, the #156 keystore guard and the #184 archive task, shared with :wear.
     id("racetimer.release-artifacts")
 }
@@ -102,11 +104,6 @@ android {
         compose = true
         // #294: the companion's debug pins above are the module's only BuildConfig field.
         buildConfig = true
-    }
-
-    composeOptions {
-        // Pinned to exactly the Kotlin version in the catalog; see the note on `kotlin` there.
-        kotlinCompilerExtensionVersion = "1.5.8"
     }
 
     testOptions {
