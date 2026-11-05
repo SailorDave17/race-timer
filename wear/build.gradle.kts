@@ -1,5 +1,11 @@
 plugins {
     alias(libs.plugins.android.application)
+    // #194. Kept on purpose while AGP is 8.13, because on 8.13 nothing else compiles this module's
+    // Kotlin. `android.builtInKotlin=true` is declared there and read by nothing: the build
+    // configures with this plugin still applied, a combination AGP 9 refuses outright. And the
+    // `com.android.experimental.built-in-kotlin` plugin AGP 8.13 refers to is not shipped. Removing
+    // this line is #195's, in the change that takes AGP 9, whose built-in Kotlin replaces it.
+    // :phone, :shared-android and the harness modules keep it for the same reason.
     alias(libs.plugins.kotlin.android)
     // #193. The Compose compiler, at the catalog's Kotlin version. It replaces `composeOptions`.
     alias(libs.plugins.kotlin.compose)
@@ -50,10 +56,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
 
-    kotlinOptions {
-        jvmTarget = "1.8"
-    }
-
     // #192. `bundleRelease` runs `lintVitalRelease`, so lint gates the release build even though
     // this repo deliberately has no lint step of its own (2026-08-02). AGP 8.13's lint fails that
     // task with 70 instances of exactly one check.
@@ -82,6 +84,16 @@ android {
             // empty package, and `R.drawable.ic_stat_race_timer` would not resolve.
             isIncludeAndroidResources = true
         }
+    }
+}
+
+// #194. The Kotlin target, on the `kotlin` extension rather than as `kotlinOptions` inside
+// `android { }`. That block is registered by the org.jetbrains.kotlin.android plugin itself, so it
+// goes when AGP 9's built-in Kotlin replaces that plugin (#195), and Kotlin 2.2 already warns that it
+// is deprecated. Both read this form. Still 1.8, matching `compileOptions` above.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
     }
 }
 
