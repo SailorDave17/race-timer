@@ -17,9 +17,14 @@ android {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
+}
 
-    kotlinOptions {
-        jvmTarget = "1.8"
+// #194. The Kotlin target on the `kotlin` extension, the form AGP 9's built-in Kotlin also reads.
+// This build reads the product's catalog in place, so it moves with the product's modules. Why not
+// `kotlinOptions` in `android { }`: wear/build.gradle.kts at the repo root.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
     }
 }
 
