@@ -112,7 +112,7 @@ an instruction as a signal.
 
 ### Haptics-first watch UI
 
-- Big high-contrast MM:SS readout, driven to maximum panel brightness while a race is on screen — released above ~3000 lux so automatic brightness can reach the panel's sunlight range, which the forced maximum cannot (#12; `OVERRIDE_RELEASE_LUX` in ScreenPolicy.kt)
+- Big high-contrast MM:SS readout, driven to maximum panel brightness while a race is on screen — released above 3800 lux so automatic brightness can reach the panel's sunlight range, which the forced maximum cannot (#12; the thresholds span the crossovers measured on both test watches, #100; `OVERRIDE_RELEASE_LUX` in ScreenPolicy.kt)
 - Colour-state background: navy → amber (last minute) → red flash (final 10 s) → green (gun)
 - Distinct haptic patterns per signal, per the voice table above
 - Large **Sync** / **Stop** buttons, **End Race** in race-manager count-up; one swipe to the picker

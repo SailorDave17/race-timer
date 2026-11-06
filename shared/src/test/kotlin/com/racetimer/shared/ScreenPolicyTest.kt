@@ -162,6 +162,69 @@ class ScreenPolicyTest {
         assertTrue("at the engage threshold", ambientPermitsOverride(OVERRIDE_ENGAGE_LUX, currentlyPermitted = false))
     }
 
+    // --- The thresholds against the measured curves (#100 AC 3) ---------------
+
+    /** A watch's automatic lux-to-nits mapping around the crossover, interpolated linearly in nits. */
+    private class Panel(val name: String, private val points: List<Pair<Float, Float>>) {
+        fun autoNitsAt(lux: Float): Float {
+            val (upperLux, upperNits) = points.first { it.first >= lux }
+            val (lowerLux, lowerNits) = points.last { it.first <= lux }
+            if (upperLux == lowerLux) return lowerNits
+            return lowerNits + (upperNits - lowerNits) * (lux - lowerLux) / (upperLux - lowerLux)
+        }
+    }
+
+    /**
+     * Both test watches, measured 2026-11-06.
+     *
+     * SM-R925U: the points of its `dumpsys display` `mConfig=BrightnessConfiguration{…}`, read the
+     * day it was factory-reset. Torch samples that day (843 lux → 168 nits, 1553 → 272) and the
+     * 2026-08-02 events (2672 → 447) land on this table within about 2 nits.
+     *
+     * SM-L715U: its configured points stop at 2953 lux → 590.6 nits. Above that, every torch sample
+     * read exactly lux ÷ 5 (3026 → 605.3, 4813 → 962.6, 5016 → 1003.2, 10,286 → 2058.5), and so do its
+     * configured points from 1709 lux up. These are points on that law.
+     */
+    private val panels = listOf(
+        Panel("SM-R925U", listOf(2_000f to 340f, 3_000f to 500f, 4_000f to 650f, 5_000f to 800f, 6_000f to 1_000f)),
+        Panel("SM-L715U", listOf(2_000f to 400f, 3_000f to 600f, 4_000f to 800f, 5_000f to 1_000f, 6_000f to 1_200f)),
+    )
+
+    /** What the override pins both panels at: `mMaxBrightnessForNonHbmLux`, 599.9998 and 600.0. */
+    private val overrideNits = 600f
+
+    @Test fun `the band spans the crossover of both measured watches`() {
+        // Releasing below a watch's crossover hands its panel to a strategy dimmer than the override,
+        // and re-engaging above it pins the panel lower than automatic would go. The first pair,
+        // 3000/2000, released the SM-R925U at 500 nits. The second, 4000/3300, re-engaged the SM-L715U
+        // at 660.
+        for (panel in panels) {
+            val atRelease = panel.autoNitsAt(OVERRIDE_RELEASE_LUX)
+            val atEngage = panel.autoNitsAt(OVERRIDE_ENGAGE_LUX)
+            assertTrue(
+                "${panel.name}: released at $OVERRIDE_RELEASE_LUX lux, automatic ($atRelease nits) must beat the override",
+                atRelease > overrideNits,
+            )
+            assertTrue(
+                "${panel.name}: re-engaged at $OVERRIDE_ENGAGE_LUX lux, automatic ($atEngage nits) must not beat the override",
+                atEngage <= overrideNits,
+            )
+        }
+    }
+
+    @Test fun `neither watch loses a quarter of its brightness inside the band`() {
+        // Spanning alone would allow 2000/6000. Inside the band a panel is either released below its
+        // crossover, worst at the engage threshold, or forced above it, worst at the release
+        // threshold. The owner turned down 4000/3300 on #100 for costing the SM-L715U exactly a
+        // quarter (600 forced against 800), so the bound is strict.
+        for (panel in panels) {
+            val releasedShortfall = 1f - panel.autoNitsAt(OVERRIDE_ENGAGE_LUX) / overrideNits
+            val forcedShortfall = 1f - overrideNits / panel.autoNitsAt(OVERRIDE_RELEASE_LUX)
+            assertTrue("${panel.name}: released at worst $releasedShortfall below the override", releasedShortfall < 0.25f)
+            assertTrue("${panel.name}: forced at worst $forcedShortfall below automatic", forcedShortfall < 0.25f)
+        }
+    }
+
     @Test fun `the ambient gate cannot brighten a state the race says is dark`() {
         // The applied value is the conjunction of the two gates, so permissive ambient must never
         // resurrect a state forcesMaxBrightness excludes. Asserts the composition MainActivity does.
