@@ -44,8 +44,25 @@ later release tells whether that has happened.
 
 **It has happened once** (checked 2026-09-28 against `cf2c0fc`, the build uploaded as `1.1`).
 [#277](https://github.com/SailorDave17/race-timer/issues/277) darkened the last-minute amber from
-`#A0660A` to `#553000` in `shared/`, which both apps draw from. `04-last-minute-amber.png` still
-shows `#A0660A` (pixel read from the file), and so does the Wear set's `04`. The other change since
+`#A0660A` to `#553000` in `shared/`, which both apps draw from. **Re-captured 2026-11-06 by
+[#298](https://github.com/SailorDave17/race-timer/issues/298)**: `04-last-minute-amber.png` and
+`15-last-minute-amber-landscape.png` now come from that build and read `#553000`:
+
+| | |
+|---|---|
+| Commit | `cf2c0fc`, the `v1.1` tag: the build uploaded as versionCode 2 and sent for review on 2026-11-06 |
+| Build | `:phone:assembleRelease`, R8-processed, signed with the upload key (`918a8257…fe2dc8f6`, read with `apksigner`) |
+| `versionName` / `versionCode` | `1.1` / `2` |
+| Device | the same AVD, `RaceTimer_Phone_1080x1920`, API 36 |
+| Captured | 2026-11-06: `04` at 0:55 portrait, `15` at 0:52 landscape (the shot it replaces read 0:54) |
+
+The installed APK's `sha256sum` matched the local build before the captures. The AVD held an
+older install signed with a different key (the FGS video's debug-key build), so it was uninstalled
+first; the AVD carries no data worth keeping. Notifications were granted this time, so the status
+bar shows the app's ongoing-notification icon, which the 2026-09-05 set does not. A `v1.1`
+final-ten frame was compared with `05` the same day and matches it in layout.
+
+The rest of this paragraph predates the re-capture and still holds. The other change since
 `a9aceff` that touches this screen is #219's pair row. A release build draws it only when a watch
 is paired (out of range, measuring or linked), and with no watch it draws nothing, so these
 no-watch captures are still accurate for it. A **debug** build also draws it with no watch
