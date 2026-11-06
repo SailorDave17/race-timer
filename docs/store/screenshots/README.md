@@ -39,6 +39,26 @@ but the literal bytes Play receives were never on this watch — Play rebuilds t
 and Play requires at least one screenshot depicting the *current* version. The commit above is how a
 later release tells whether that has happened.
 
+### Re-captured since: `04` ([#298](https://github.com/SailorDave17/race-timer/issues/298))
+
+[#277](https://github.com/SailorDave17/race-timer/issues/277) darkened the last-minute background
+from `#A0660A` to `#553000`, so `04-last-minute-amber.png` was re-captured from the build now on
+Play. Its background reads `#553000`.
+
+| | |
+|---|---|
+| Commit | `cf2c0fc`, the `v1.1` tag: the build uploaded as versionCode 3 and sent for review on 2026-11-06 |
+| Build | `:wear:assembleRelease`, R8-processed, signed with the upload key (`918a8257…fe2dc8f6`, read with `apksigner`) |
+| `versionName` / `versionCode` | `1.1` / `3` |
+| Device | the same `SM-R925U` (factory-reset 2026-11-06), 450 × 450 |
+| Captured | 2026-11-06, Scholastic (ICSA) at 0:55, matching the shot it replaces |
+
+The installed APK's `sha256sum` matched the local build before the capture.
+
+**The other seven no longer match `v1.1` either.** [#303](https://github.com/SailorDave17/race-timer/issues/303)
+added the time of day at the top rim of the timer screen before `v1.1`, so the new `04` carries a
+clock line that `02`–`07` (captured from `1.0`) do not. Only the amber was in #298's scope.
+
 ## How they were captured
 
 `adb exec-out screencap -p` — a framebuffer read. That method is why the no-device-frame,
@@ -52,10 +72,12 @@ whether "no transparency" means "no alpha channel", rather than winning it.
 
 Two capture notes worth keeping, both of which cost a re-run:
 
-- **The final-ten red state flashes** (`TimerScreen`'s `flashAlpha`, 1.0 → 0.3 over 400 ms). A
-  screenshot taken at an arbitrary moment catches the numerals mid-fade and reads as a rendering
-  fault rather than as the design. `05-final-ten-red.png` was chosen by measuring the recovered alpha
-  across a burst and taking the highest — it is at 0.98.
+- **The final-ten red state flashed when this set was captured** (`TimerScreen`'s `flashAlpha`, 1.0 →
+  0.3 over 400 ms), so `05-final-ten-red.png` was chosen by measuring the recovered alpha across a
+  burst and taking the highest — it is at 0.98. **That stopped being true at #12 (PR #278)**, which
+  moved the flash onto the background: the digits now hold full white, and `flashAlpha` is gone from
+  the `v1.1` source. A final-ten capture no longer needs a burst to find a peak frame. Compared on
+  2026-11-06 (#298): a `v1.1` final-ten frame matches `05` apart from #303's clock line.
 - **`screencap` on this watch returns the unmasked square framebuffer**, drawing content into corners
   the round display does not physically have. For Play that is exactly right, since the rules demand
   the full square frame with no masking — but it means these files are *not* the instrument for
