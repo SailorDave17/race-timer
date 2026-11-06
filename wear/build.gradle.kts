@@ -1,12 +1,10 @@
 plugins {
     alias(libs.plugins.android.application)
-    // #194. Kept on purpose while AGP is 8.13, because on 8.13 nothing else compiles this module's
-    // Kotlin. `android.builtInKotlin=true` is declared there and read by nothing: the build
-    // configures with this plugin still applied, a combination AGP 9 refuses outright. And the
-    // `com.android.experimental.built-in-kotlin` plugin AGP 8.13 refers to is not shipped. Removing
-    // this line is #195's, in the change that takes AGP 9, whose built-in Kotlin replaces it.
-    // :phone, :shared-android and the harness modules keep it for the same reason.
-    alias(libs.plugins.kotlin.android)
+    // #195. No org.jetbrains.kotlin.android: AGP 9's built-in Kotlin compiles this module's Kotlin.
+    // AGP 9 accepts that plugin only while both of its opt-outs are set (`android.builtInKotlin` and
+    // `android.newDsl`, each turned off), and AGP 10 removes the opt-outs, so it went in the same
+    // change as AGP 9. :phone, :shared-android and the harness modules dropped it too. Do not re-add
+    // it: with the new DSL on, it fails with a ClassCastException that does not name the cause.
     // #193. The Compose compiler, at the catalog's Kotlin version. It replaces `composeOptions`.
     alias(libs.plugins.kotlin.compose)
     // #211. Release signing, the #156 keystore guard and the #184 archive task moved to
@@ -88,9 +86,9 @@ android {
 }
 
 // #194. The Kotlin target, on the `kotlin` extension rather than as `kotlinOptions` inside
-// `android { }`. That block is registered by the org.jetbrains.kotlin.android plugin itself, so it
-// goes when AGP 9's built-in Kotlin replaces that plugin (#195), and Kotlin 2.2 already warns that it
-// is deprecated. Both read this form. Still 1.8, matching `compileOptions` above.
+// `android { }`. That block was registered by the org.jetbrains.kotlin.android plugin, which AGP 9's
+// built-in Kotlin replaced (#195), so it went with the plugin. Built-in Kotlin reads this form
+// unchanged. Still 1.8, matching `compileOptions` above.
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)

@@ -327,7 +327,7 @@ journal is armed with `adb shell setprop log.tag.RaceDayJournal DEBUG` and read 
 
 | Layer | Technology |
 |-------|-----------|
-| Language | Kotlin 2.2.21 (K2, Compose compiler plugin) |
+| Language | Kotlin 2.2.21 (K2, AGP's built-in Kotlin, Compose compiler plugin) |
 | Build | Gradle 9.6.1 / AGP 9.5.1 |
 | Watch UI | Jetpack Compose for Wear OS 1.3 |
 | Navigation | Wear Compose Navigation |
