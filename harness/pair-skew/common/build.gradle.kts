@@ -2,7 +2,8 @@
 // watch apps are shells around it; only their manifests differ.
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
+    // #195: no org.jetbrains.kotlin.android. AGP 9's built-in Kotlin compiles this module; why the
+    // plugin cannot stay is in wear/build.gradle.kts at the repo root.
 }
 
 android {

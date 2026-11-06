@@ -22,7 +22,8 @@
 // surfaces instead. The instrument for this code is a race run on a wrist -- AC 6 of #200.
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
+    // #195: no org.jetbrains.kotlin.android. AGP 9's built-in Kotlin compiles this module; why the
+    // plugin cannot stay is in wear/build.gradle.kts.
 }
 
 android {
@@ -46,7 +47,7 @@ android {
 }
 
 // #194. The Kotlin target on the `kotlin` extension, the form AGP 9's built-in Kotlin also reads.
-// Why not `kotlinOptions` in `android { }`, and why kotlin.android stays for now: wear/build.gradle.kts.
+// Why not `kotlinOptions` in `android { }`: wear/build.gradle.kts.
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)

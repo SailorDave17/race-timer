@@ -1,7 +1,8 @@
 [versions]
-# 8.6 is the floor for `compileSdk = 35`, which #69 needs before the 2026-08-31 Wear OS
-# target-API deadline.
-agp = "8.13.2"
+# #195, the last step of epic #191: AGP 9.5.1, on Gradle 9.6.1 (9.5's minimum is 9.6.0). Kotlin stays
+# at 2.2.21 below: AGP 9.5.1's own runtime dependency is KGP 2.2.10. Read the next Gradle floor from
+# developer.android.com/build/releases/about-agp, not from here. It moves with every AGP minor.
+agp = "9.5.1"
 # #193. Kotlin 2.2 is the first step of epic #191: Gradle 9.0's minimum KGP is 2.0.0 and AGP 9.0's
 # is 2.2.10, so Kotlin moves before the wrapper or the build is stranded between two floors. It
 # moved on its own, on AGP 8.13 and Gradle 8.13, so a Compose breakage has one possible cause.
@@ -90,6 +91,5 @@ compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-mani
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
