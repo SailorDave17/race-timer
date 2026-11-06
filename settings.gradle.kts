@@ -23,8 +23,13 @@ pluginManagement {
 // JVM 8, which is rarely installed nowadays). Without a resolver, a clean build on a machine with
 // only a modern JDK fails outright with "No matching toolchains found".
 // Version is hardcoded: the version catalog is not available to settings.gradle.kts.
+//
+// #195. 1.0.0 moved with the Gradle 9 wrapper, in the same change. Earlier versions reference
+// `JvmVendorSpec.IBM_SEMERU`, which Gradle 9.0 removed, and because this plugin is applied here,
+// that failure comes before anything that looks like a build. `:shared`'s JVM 8 toolchain has no
+// other route onto a machine that lacks one.
 plugins {
-    id("org.gradle.toolchains.foojay-resolver-convention") version "0.8.0"
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
 dependencyResolutionManagement {
