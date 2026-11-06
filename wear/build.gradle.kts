@@ -3,8 +3,8 @@ plugins {
     // #195. No org.jetbrains.kotlin.android: AGP 9's built-in Kotlin compiles this module's Kotlin.
     // AGP 9 accepts that plugin only while both of its opt-outs are set (`android.builtInKotlin` and
     // `android.newDsl`, each turned off), and AGP 10 removes the opt-outs, so it went in the same
-    // change as AGP 9. :phone, :shared-android and the harness modules dropped it too. Do not re-add
-    // it: with the new DSL on, it fails with a ClassCastException that does not name the cause.
+    // change as AGP 9. :phone, :shared-android and the harness modules dropped it too. Re-added,
+    // AGP 9 refuses it by name: "no longer required for Kotlin support since AGP 9.0".
     // #193. The Compose compiler, at the catalog's Kotlin version. It replaces `composeOptions`.
     alias(libs.plugins.kotlin.compose)
     // #211. Release signing, the #156 keystore guard and the #184 archive task moved to
