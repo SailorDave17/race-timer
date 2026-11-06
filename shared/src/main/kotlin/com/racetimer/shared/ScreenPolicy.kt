@@ -117,9 +117,33 @@ fun forcesMaxBrightness(state: TimerState): Boolean = when (state) {
  * The counter-intuitive half of #65, and the reason this file gained a second input. A window
  * brightness override does not merely outvote the automatic strategy — it switches it off
  * (`lux=-1.0`, `rcmdBrt=NaN`, `hbmMode=off` in `dumpsys display`) and pins the panel at the top of
- * its *normal* range. On the SM-R925U that is **600 nits**, while the automatic strategy driven from
- * the light sensor reaches the high-brightness range and was measured at **1000 nits at 7033 lux**.
- * The crossover is around 3000 lux.
+ * its *normal* range: **600 nits** on both watches measured (`mMaxBrightnessForNonHbmLux`), while
+ * the automatic strategy driven from the light sensor reaches the high-brightness range.
+ *
+ * **Derived from the watches' own curves, not assumed (#100 AC 3).** Measured 2026-11-06 from
+ * `dumpsys display` (the automatic strategy's `mConfig=BrightnessConfiguration{…}`) and from
+ * `BrightnessEvent` samples taken under a torch:
+ *
+ * | | SM-R925U | SM-L715U |
+ * |---|---|---|
+ * | automatic at 2000 / 3000 / 4000 lux | 340 / 500 / 650 nits | 400 / 600 / 800 nits |
+ * | high end | 1000 nits, flat from 6000 lux | lux ÷ 5, 2058 nits at 10,286 lux |
+ * | **crossover with the override** | **≈3,670 lux** | **3,000 lux** |
+ *
+ * The two crossovers are 670 lux apart, so no one band can sit tight on both. This one spans them:
+ * re-engaged at or below 3000 ([OVERRIDE_ENGAGE_LUX]), at or under both crossovers, and released at
+ * or above 3800, past both. Inside the band neither watch runs more than about a fifth below the
+ * better of the two choices: the SM-R925U at worst 500 nits released against 600 forced (17 %), the
+ * SM-L715U at worst 600 forced against 760 automatic (21 %). The flips are 100 nits up on the
+ * SM-R925U at engage, and 160 up on the SM-L715U at release.
+ *
+ * Both earlier pairs failed one watch by more. 3000/2000, shipped first, sat below the SM-R925U's
+ * crossover: once released, that panel ran 340–600 nits between 2000 and ~3,670 lux, up to 43 %
+ * dimmer than the override. 4000/3300 straddled the SM-R925U tightly and left the SM-L715U forced to
+ * 600 where automatic gives up to 800 (25 %). Owner decision on #100: span both.
+ *
+ * A third watch maps lux to nits its own way, and no app API reads the mapping at run time, so its
+ * crossover can fall outside this band.
  *
  * Direct sunlight is 10,000–100,000 lux. So above the crossover, forcing "maximum" brightness makes
  * the screen **dimmer than doing nothing**, in precisely the conditions the override was written
@@ -133,7 +157,7 @@ fun forcesMaxBrightness(state: TimerState): Boolean = when (state) {
  * Below the crossover the override remains a large win — up to **8.6×** at indoor levels (49 nits
  * automatic against 600 forced at 11 lux) — so this releases rather than abandons it.
  */
-const val OVERRIDE_RELEASE_LUX = 3_000f
+const val OVERRIDE_RELEASE_LUX = 3_800f
 
 /**
  * Illuminance at or below which the override is **re-engaged**, in lux.
@@ -142,8 +166,12 @@ const val OVERRIDE_RELEASE_LUX = 3_000f
  * for any sailor standing near it, and each flip is a visible brightness step on a screen someone
  * is trying to read a clock off. The band between the two is held by whichever way the gate last
  * went, which is what [ambientPermitsOverride] takes its `currentlyPermitted` argument for.
+ *
+ * At or under both measured crossovers (see [OVERRIDE_RELEASE_LUX]). Here automatic gives 500 nits
+ * on the SM-R925U and 600 on the SM-L715U, so re-engaging the 600-nit override is never a step down
+ * on either. The first value, 2000 lux, made the SM-R925U jump 260 nits.
  */
-const val OVERRIDE_ENGAGE_LUX = 2_000f
+const val OVERRIDE_ENGAGE_LUX = 3_000f
 
 /**
  * Does the ambient light permit forcing the panel, given the last answer?

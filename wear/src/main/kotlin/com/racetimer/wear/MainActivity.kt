@@ -363,9 +363,9 @@ class MainActivity : ComponentActivity() {
 
     // --- The ambient half of the brightness rule (#12) --------------------------
     //
-    // #65 forces the panel to "maximum" during the sequence. Measured on this watch, that override
+    // #65 forces the panel to "maximum" during the sequence. Measured on both watches, that override
     // switches the automatic strategy off entirely and pins 600 nits, while automatic reaches
-    // 1000 nits in bright light — so above roughly 3000 lux the override is a *downgrade*, in the
+    // 1000-5000 nits in bright light — so above 3,000-3,700 lux the override is a *downgrade*, in the
     // exact conditions it exists for. There is no API to ask for the panel's sunlight range; the
     // only way to reach it is to stop suppressing the strategy that can. See `ambientPermitsOverride`.
 
