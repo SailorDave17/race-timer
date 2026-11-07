@@ -79,9 +79,9 @@ const val BANNER_HEIGHT_BUDGET_FRACTION = 0.19f
  * edge of `0.09` that #233 re-measured and found had moved down.)
  *
  * *This sentence ended "and it still holds the longest shipped notice in two lines" until #231.*
- * True when #13 wrote it and false from #96, whose 49-character notice renders on **three** —
+ * True when #13 wrote it and false from #96, whose 49-character notice rendered on **three** —
  * which is the whole of what #231 found. [MessageSurface.STATUS_LINE] is where that is now
- * computed rather than asserted in a comment.
+ * computed rather than asserted in a comment, and since #301 two lines is the budget again.
  */
 const val STATUS_LINE_MAX_WIDTH_FRACTION = 0.55f
 
@@ -100,17 +100,27 @@ const val STATUS_LINE_MAX_WIDTH_FRACTION = 0.55f
 //
 // The plate is drawn in `TimerScreen`'s vertically centred `Column`. #231 reasoned from that
 // centring that a third line would lift the top edge onto a narrower chord, and that holds only
-// while the column has room to spare. It has less than any notice that ships needs: 68 px
-// pre-start, 56 px running. Past that point the column stops centring. It is pinned at its own top
-// padding, the label and the plate hold their place, and the overflow comes out of the last child,
-// the button row. That is why Start and Sync shrink in the table (#301). So the top edge rises with
-// line count until the column fills, then stops, and from there the plate grows downwards.
+// while the column has room to spare. When #233 measured it, the column had less than any notice
+// that shipped needed: 68 px pre-start, 56 px running. Past that point the column stops centring.
+// It is pinned at its own top padding, the label and the plate hold their place, and the overflow
+// comes out of the last child, the button row. That is why Start and Sync shrink in the table. So
+// the top edge rises with line count until the column fills, then stops, and from there the plate
+// grows downwards.
 //
-// For every notice that ships, then, the top edge alone decides whether the plate clears the bezel.
+// For a plate that fills the column, then, the top edge alone decides whether it clears the bezel.
 // The shape #231 removed as vacuous, a plate growing downwards from a fixed top that passes for any
 // height, is the real geometry, not a mistake in the test. The ceiling is what makes the geometry
 // assertion able to fail: had the column kept centring, the three-line plate's top would sit at
 // 24 px and the bezel would cut its corners. `BannerLayoutTest` asserts both.
+//
+// **#301 stopped the squeeze, and it took two changes, because neither was enough alone.** A Tier 3
+// line now takes the place of the empty slot below the readout that holds room for the "Synced"
+// label ([SYNC_LABEL_SLOT_DP]), which gives the column 34 px back. And the Do Not Disturb notice was
+// reworded onto two lines, which saves another 34 px. The slot alone left the three-line plate 20 px
+// over, which still shrinks Sync and Stop. Shorter copy alone left 20 px over as well. With both, the
+// two-line plate fits with 14 px to spare running and 26 px pre-start, so the column centres again
+// and no button shrinks. A third line still overflows, which is why `BannerLayoutTest` holds every
+// shipped notice to zero overflow on the screen it draws on.
 //
 // Everything here is in px of the 450 px reference screen. The column's padding, its label and
 // its buttons are specified in dp and do not scale with the display the way a width cap does, so
@@ -150,6 +160,31 @@ const val STATUS_LINE_PLATE_INSET_FRACTION = 4f / REFERENCE_SCREEN_PX
 const val STATUS_LINE_SPACER_FRACTION = 4.25f / REFERENCE_SCREEN_PX
 
 /**
+ * The height `TimerScreen` keeps clear below the readout for the "Synced → X:XX" label, in dp.
+ *
+ * With no label up, a `Spacer` this tall holds its place, so tapping Sync does not move the
+ * buttons. Since #301 that empty slot gives way to a Tier 3 line, and the model below counts the
+ * height it frees. It is defined here and drawn from here rather than typed into the screen,
+ * because a model that subtracts a copy of a value two files away is the defect #231 found.
+ *
+ * **What this costs, chosen deliberately** (owner decision, 2026-11-06). Tapping Sync while a Tier 3
+ * line is up puts the label back into a column that no longer holds room for it. For the 2 s the
+ * label shows, the column overflows again. *Measured on an SM-R925U*: Sync goes from 136 to 119 px
+ * tall, 56 dp, the same height as Stop, and Stop does not change. That is above the 48 dp touch
+ * target, the tap has already landed, and the alternative was a button row 38 dp tall for the
+ * whole race.
+ */
+const val SYNC_LABEL_SLOT_DP = 16f
+
+/**
+ * [SYNC_LABEL_SLOT_DP] as a fraction of screen height, on the reference screen.
+ *
+ * Converted, like [STATUS_LINE_SPACER_FRACTION], rather than measured: 16 dp at the 340 dpi that
+ * `wm density` reports is 34 px.
+ */
+const val SYNC_LABEL_SLOT_FRACTION = SYNC_LABEL_SLOT_DP * 340f / 160f / REFERENCE_SCREEN_PX
+
+/**
  * The two screens a Tier 3 plate is drawn on, and the two measurements that place it on each.
  *
  * They differ because the column differs. Pre-start the label carries the sequence picker's `▾`,
@@ -184,13 +219,13 @@ fun statusLineHeightFraction(lines: Int): Float {
  * Where the top edge of a Tier 3 plate of [lines] lines sits on [screen], as a fraction of screen
  * height.
  *
- * While the plate and its spacer fit the column's spare room, the column stays centred and the
- * room left over is shared above and below it, so a taller plate sits higher. Once they do not
- * fit, the column is full and the top edge stops at [StatusLineScreen.fullColumnTopFraction]. The
- * `coerceAtLeast` is that ceiling, and it is the whole reason a three-line plate clears the bezel.
+ * While the plate fits the column's spare room, the column stays centred and the room left over is
+ * shared above and below it, so a taller plate sits higher. Once it does not fit, the column is
+ * full and the top edge stops at [StatusLineScreen.fullColumnTopFraction]. The `coerceAtLeast` is
+ * that ceiling, and it is the whole reason a three-line plate clears the bezel.
  */
 fun statusLineTopFraction(lines: Int, screen: StatusLineScreen): Float {
-    val leftOver = (screen.spareFraction - statusLineCostFraction(lines)).coerceAtLeast(0f)
+    val leftOver = (screen.spareFraction - statusLineNetCostFraction(lines)).coerceAtLeast(0f)
     return screen.fullColumnTopFraction + leftOver / 2f
 }
 
@@ -198,18 +233,29 @@ fun statusLineTopFraction(lines: Int, screen: StatusLineScreen): Float {
  * How much height a Tier 3 plate of [lines] lines takes from the button row on [screen], as a
  * fraction of screen height. Zero while the plate fits the column's spare room.
  *
- * Not a budget anything enforces yet; #301 is where that decision lives. It is here because it is
- * the model checking itself. [StatusLineScreen.spareFraction] comes from where the label sits and
- * [STATUS_LINE_SPACER_FRACTION] from the source, while the squeeze was read off the buttons, so a
- * model that predicts the squeeze the watch drew has been checked against something it was not
- * built from.
+ * The figure #301 is judged by, and it is zero for every notice that ships. `BannerLayoutTest`
+ * asserts that per notice, on the screen each one draws on, so a longer notice is caught by the
+ * suite rather than by a sailor's thumb. It is also the model checking itself:
+ * [StatusLineScreen.spareFraction] comes from where the label sits and [STATUS_LINE_SPACER_FRACTION]
+ * from the source, while the squeeze #233 measured was read off the buttons. So a model that
+ * predicts the squeeze the watch drew has been checked against something it was not built from.
  */
 fun statusLineOverflowFraction(lines: Int, screen: StatusLineScreen): Float =
-    (statusLineCostFraction(lines) - screen.spareFraction).coerceAtLeast(0f)
+    (statusLineNetCostFraction(lines) - screen.spareFraction).coerceAtLeast(0f)
 
-/** The column height a plate of [lines] lines costs: the plate, and the spacer above it. */
-private fun statusLineCostFraction(lines: Int): Float =
+/**
+ * The column height a plate of [lines] lines adds, the plate and the spacer above it, counted
+ * before the sync-label slot is given back.
+ *
+ * This is the whole cost on the column #233 measured, which still held the slot under a plate, and
+ * it is the form `BannerLayoutTest` uses to check the model against that measurement.
+ */
+internal fun statusLineCostFraction(lines: Int): Float =
     STATUS_LINE_SPACER_FRACTION + statusLineHeightFraction(lines)
+
+/** What a plate of [lines] lines adds once it has taken the sync-label slot's place (#301). */
+private fun statusLineNetCostFraction(lines: Int): Float =
+    statusLineCostFraction(lines) - SYNC_LABEL_SLOT_FRACTION
 
 /**
  * True when a banner of [widthFraction] × [heightFraction], starting [topFraction] down, fits
@@ -365,6 +411,13 @@ enum class MessageSurface(
      * no readout. [statusLineTopFraction] and [statusLineHeightFraction] are the geometric half of
      * that, measured by #233, and `BannerLayoutTest` proves every line count up to this one against
      * the circle.
+     *
+     * **It is a ceiling on fouling the bezel, not on shrinking the buttons.** Since #301 two lines
+     * fit the column on both screens and a third overflows it, by 8 px pre-start and 20 px running,
+     * which comes out of Start or Sync and Stop. So no warning that ships may use the third line,
+     * and `BannerLayoutTest` asserts that notice by notice rather than here. The budget stays at
+     * three because the phone's re-sync lines (#220, #221, #222) are held to it and still need
+     * three, on a site drawn without this surface's cap. That site is a separate story.
      */
     STATUS_LINE(STATUS_LINE_MAX_WIDTH_FRACTION, STATUS_LINE_TEXT_SP, maxLines = 3),
 

@@ -161,9 +161,10 @@ KDoc; the original measurement and zero-point test are on
 
 - **Before the race: come out of Do Not Disturb if you want the tones.** Under DND the race is
   haptic-only — every cue buzzes (#187), no cue sounds — and the watch now says so during the race:
-  [#96](https://github.com/SailorDave17/race-timer/issues/96) shipped the Tier 3 line *"Do Not
-  Disturb — cues silent, wrist still buzzing"*, built on the refusal the app already observes rather
-  than a prediction of audibility.
+  [#96](https://github.com/SailorDave17/race-timer/issues/96) shipped the Tier 3 line, built on the
+  refusal the app already observes rather than a prediction of audibility. It reads *"Do Not Disturb
+  — cues on wrist only"* since [#301](https://github.com/SailorDave17/race-timer/issues/301) put it on
+  two lines, so it no longer shrinks Sync and Stop.
 - **During the race: fall back to the screen.** The countdown display cannot drift — it is recomputed
   from the monotonic anchor on every tick, never integrated — so a sailor who missed a signal has an
   exact number in front of them the moment they look. **This is the reason the verdict holds**: losing
@@ -243,7 +244,7 @@ The question this table exists to answer: **is this a designed limitation or a g
 | Watch is more than 10 s **ahead** of the sequence | Read as a late tap on the minute below, and floored | **Designed limitation** — the tap carries no way to tell the two cases apart, and only one of them happens ([#150](https://github.com/SailorDave17/race-timer/issues/150)) |
 | Cue fires while the CPU is suspended | Fires **late**, not dropped — `tick()` drains every overdue cue in order | **Designed limitation** — `docs/timing-accuracy.md` |
 | Haptics under Do Not Disturb | Every cue delivered as `USAGE_TOUCH` (#187) — resting on DND policy permitting the feedback class | **Supported, fragile** — re-checked per [`dnd-haptics-recheck.md`](dnd-haptics-recheck.md) ([#186](https://github.com/SailorDave17/race-timer/issues/186)) |
-| Audio refused under Do Not Disturb | Tones stay silent; a Tier 3 line — *"Do Not Disturb — cues silent, wrist still buzzing"* — says so during the race (#96) | **Supported, degraded** — the wrist carries every cue |
+| Audio refused under Do Not Disturb | Tones stay silent; a Tier 3 line — *"Do Not Disturb — cues on wrist only"* — says so during the race (#96, reworded by #301) | **Supported, degraded** — the wrist carries every cue |
 | Foreground service blocked / permission denied | Unhandled — `handleStart` assumes it works | **Gap** — [#13](https://github.com/SailorDave17/race-timer/issues/13), Tier 2 unbuilt |
 | Display renders upside down | Countdown unreadable | **Gap** — [#139](https://github.com/SailorDave17/race-timer/issues/139) / [#147](https://github.com/SailorDave17/race-timer/issues/147) |
 | Snapshot lost to an `apply()` race | Cannot happen: `persistSnapshot()` commits synchronously | **Supported** — measured at 0 ms, was 20–205 ms ([#151](https://github.com/SailorDave17/race-timer/issues/151)) |
@@ -271,7 +272,7 @@ from what shipped, not recovered from what was decided.
 | App killed after the gun | **Out of scope, by design** | Nothing left to run. Discarding it is correct, and the sailor is told |
 | Haptic missed — ordinary | **Out of scope** | Undetectable from inside the app; the screen is the fallback and it cannot drift |
 | Haptic missed — under DND | **In scope — done** | Different from the above: the app *caused* it by not declaring attributes. #187 declares `USAGE_TOUCH` and the wrist now carries every cue under DND; the residual dependency on DND policy is [#186](https://github.com/SailorDave17/race-timer/issues/186) |
-| Cues silent — DND | **In scope — done** | The refusal was already observed; #96 shipped the warning built on it (*"Do Not Disturb — cues silent, wrist still buzzing"*, Tier 3, running only) |
+| Cues silent — DND | **In scope — done** | The refusal was already observed; #96 shipped the warning built on it (*"Do Not Disturb — cues on wrist only"* since #301, Tier 3, running only) |
 | Lost sequence position | **Recoverable in-MVP — done** | Sync is the re-anchor gesture #24 hypothesised, and it shipped |
 | Lost position by more than 30 s | **In scope — done, and decided the other way** | The proposal here was *out of scope: beyond half a minute the sailor should stop and restart against the committee*. [#150](https://github.com/SailorDave17/race-timer/issues/150) decided against it: a watch running behind is now corrected up to 59 s by flooring, because the tap itself is the evidence. What survives of the proposal is the **ahead** direction, where past 10 s there is nothing an unaided tap can do |
 | Display unreadable | **In scope, not done** | Not enumerated by #24. Tracked as #139 / #147 |
