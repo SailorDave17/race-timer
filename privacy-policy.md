@@ -8,7 +8,7 @@ description: >-
 
 # Privacy Policy — Mad Cow Race Timer
 
-**Effective date:** 3 November 2026
+**Effective date:** 7 November 2026
 **Applies to:** Mad Cow Race Timer (`io.github.sailordave17.racetimer`) — both the **Wear OS watch
 app** and the **Android phone app**, which ship under one Play listing. Referred to together below
 as *Race Timer*, and distinguished as *the watch app* and *the phone app* wherever they differ.
@@ -20,7 +20,7 @@ user accounts, and it does not request network access. What it stores is timing 
 settings, held in the app's private storage on the device you are using.
 
 If you run it on a Wear OS watch and an Android phone that are paired with each other, the two apps
-exchange clock readings, tell each other when a race is started, synced or ended, and share what
+exchange clock readings, tell each other when a race is started, synced, stopped or ended, and share what
 their start screens are set to, over the direct connection between your two devices, so that both
 run the same race to the same gun. It goes only to your own other device, and it is described in full
 under *Clock readings and race controls exchanged with your paired device*.
@@ -104,11 +104,11 @@ screen and from the moment a race is started until its gun, and answers the othe
 whenever it is running. Comparing the answers is how the two devices agree on when the gun is, to
 within a fraction of a second.
 
-When you start, sync or end a race on either device, it tells the other one, so that both run the
-same race to the same gun and end it at the same time. When the two devices come back within reach
-of each other during a race, each tells the other which race it is running, so that a start or an
-end one of them missed while they were apart is caught up and the two guns are brought back
-together. And when you choose a start sequence, a custom length or a lead-in alert on either
+When you start, sync, stop or end a race on either device, it tells the other one, so that both run
+the same race to the same gun, stop it together and end it at the same time. When the two devices
+come back within reach of each other during a race, each tells the other which race it is running,
+so that a start, a stop or an end one of them missed while they were apart is caught up and the two
+guns are brought back together. And when you choose a start sequence, a custom length or a lead-in alert on either
 device's start screen, the other one's start screen follows.
 
 This is everything that is exchanged:
@@ -119,11 +119,12 @@ This is everything that is exchanged:
 | A random number pairing each question with its answer | So that an answer is matched to the question it belongs to, and a stale one is ignored |
 | When a race is started: which start sequence it runs (for example *US Sailing 5-4-1-Go*, or a custom length) | So the other device runs the same race |
 | When a race is started: when its gun is, and when Start was tapped, as readings of the devices' clocks | To place the gun on the other device's clock, and to decide which start counts when both devices are started at nearly the same moment |
-| When a race is started: a random number identifying that race | So a race sent twice is recognised as the same race, and so a later sync or end is applied only to the race it belongs to |
+| When a race is started: a random number identifying that race | So a race sent twice is recognised as the same race, and so a later sync, stop or end is applied only to the race it belongs to |
 | When a race is synced: the race's new gun, and when Sync was tapped, as readings of the devices' clocks, with a random number | To move the other device's gun to the same moment, and to decide which sync counts when both devices are synced at nearly the same moment |
 | When a race is ended: how long it ran, in milliseconds | So both devices show the same final race time |
+| When a race is stopped while it is running: the random number identifying that race, and nothing else | So the other device stops the same race, and no other |
 | When a start screen is set: which start sequence it will run and which lead-in alert it offers, when that choice was made as a reading of the devices' clocks, and a random number | So the other device's start screen shows the same choice, and to decide which choice counts when the two differ |
-| When the two devices come back within reach during a race: its start sequence, its gun, and when its Start and its latest Sync were tapped, as readings of the devices' clocks, with their random numbers, and whether that gun was set on the device sending it | So a start or an end one device missed while they were apart is caught up, and so the two guns can be compared and brought back together |
+| When the two devices come back within reach during a race: its start sequence, its gun, and when its Start and its latest Sync were tapped, as readings of the devices' clocks, with their random numbers, and whether that gun was set on the device sending it | So a start, a stop or an end one device missed while they were apart is caught up, and so the two guns can be compared and brought back together |
 
 - **It goes only to your other device.** It is never sent to the developer or to anyone else.
 - **It travels only over the direct connection between your watch and your phone.** The apps use the
@@ -139,8 +140,9 @@ This is everything that is exchanged:
   other device is saved on this one exactly as a choice you made here is: the start sequence you last
   chose and the lead-in time, in the same table.
 - **Nothing in it identifies you.** A clock reading says how long a device has been switched on; a
-  race start, sync or end says which sequence you ran, when, and for how long; a start screen's
-  choice says which sequence and lead-in you picked; and nothing more.
+  race start, sync or end says which sequence you ran, when, and for how long; a stop says only which
+  race was stopped; a start screen's choice says which sequence and lead-in you picked; and nothing
+  more.
 - **One device on its own exchanges nothing.** A phone with no paired watch running Race Timer, or a
   watch whose phone does not run it, sends nothing at all.
 
