@@ -19,6 +19,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # #306. publish-privacy-policy.yml builds docs/privacy-policy.md into the public page on a push
+      # to develop, and until these two steps nothing else ran .github/scripts/build-privacy-page.py.
+      # So a PR that broke the script was found by the run meant to publish, after the merge. A PR
+      # that deleted or weakened one of its refusals was found by nothing at all: the publish run
+      # exits 0 and pushes the page. That workflow's served-page check runs after gh-pages is pushed,
+      # so it reports a leak rather than preventing one.
+      #
+      # The self-test holds a known-answer case for every refusal a document can trigger, each matched
+      # on that refusal's own message. The leftover-terminator check is a deliberate spare for the premature-terminator
+      # check, so deleting the latter still refuses, and an exit-code assertion would stay green
+      # (#266, run R9). The build then runs the real document through the publish run's own command,
+      # into a scratch directory, so a policy edit that would refuse at publish refuses here, on the
+      # PR.
+      #
+      # First, ahead of the JDKs: pure Python, needing nothing set up, and a strip that would leak the
+      # maintainer block should not wait behind R8. `python3 -V` for the reason the declared-surface
+      # step gives below: the runner's interpreter is the binding one.
+      - name: Self-test the privacy-page build
+        run: |
+          python3 -V
+          python3 .github/scripts/build-privacy-page.py --selftest
+
+      - name: Build the privacy page
+        run: python3 .github/scripts/build-privacy-page.py "$RUNNER_TEMP/privacy-site"
+
       # Three JDKs are genuinely needed, and each belongs to a different module (#275):
       #   8  — :shared declares jvmToolchain(8) on purpose; its bytecode target is the contract.
       #   17 — AGP's floor, and what runs Gradle itself. Listed LAST so it becomes JAVA_HOME.
