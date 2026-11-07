@@ -140,6 +140,10 @@ an instruction as a signal.
 - **The time of day on the watch** — Wear OS's curved clock at the top rim, above the sequence name,
   in every timer state. It gives way while a warning line or a blocking notice is on screen
   ([`docs/message-surface.md`](docs/message-surface.md), #303)
+- **The time of day on the phone** — at the head of the timer screen's column, sized from the screen
+  for the committee boat rather than for the hand, in every timer state and by the phone's 12/24-hour
+  setting. It gives way whenever the column has no room for it, so it never shrinks a control
+  ([`docs/message-surface.md`](docs/message-surface.md), #304)
 - **Screen policy is a table, not a habit** — keep-awake and max-brightness are two pure functions of
   timer state in `shared/ScreenPolicy.kt`, and they deliberately disagree on exactly one state so a
   test can assert the divergence

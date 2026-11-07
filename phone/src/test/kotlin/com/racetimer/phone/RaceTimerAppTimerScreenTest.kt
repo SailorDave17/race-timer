@@ -1,9 +1,14 @@
 package com.racetimer.phone
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import com.racetimer.phone.ui.TAG_TIME_OF_DAY
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -47,6 +52,27 @@ class RaceTimerAppTimerScreenTest {
         // would satisfy a readout assertion on the idle screen just as well.
         compose.onNodeWithText("Stop").performClick()
         compose.onNodeWithText("Start").assertExists()
+    }
+
+    @Test
+    fun `the whole app puts the time of day on the timer screen, before and after Start`() {
+        // #304 AC 1 through the app rather than the screen: the clock is the app's to feed, and a
+        // screen test that hands it a string cannot see the app forgetting to. The exact minute is
+        // the wall clock's, so the shape is what is asserted; TimeOfDayTextTest owns the format.
+        app.launch()
+        app.startRace()
+        assertTimeOfDayShown()
+        app.advance(61_000L)
+        assertTimeOfDayShown()
+        compose.onNodeWithText("Stop").performClick()
+        assertTimeOfDayShown()
+    }
+
+    private fun assertTimeOfDayShown() {
+        val node = compose.onNodeWithTag(TAG_TIME_OF_DAY, useUnmergedTree = true)
+        node.assertIsDisplayed()
+        val text = node.fetchSemanticsNode().config[SemanticsProperties.Text].single().text
+        assertTrue("the clock reads \"$text\", not h:mm or HH:mm", Regex("""\d{1,2}:\d{2}""").matches(text))
     }
 
     @Test

@@ -30,6 +30,8 @@ import com.racetimer.phone.ui.PhoneReadout
 import com.racetimer.phone.ui.PhoneTheme
 import com.racetimer.phone.ui.SequencePickerScreen
 import com.racetimer.phone.ui.TimerScreen
+import com.racetimer.phone.ui.timeOfDayText
+import androidx.compose.ui.platform.LocalContext
 import android.os.SystemClock
 import com.racetimer.android.PairRaces
 import com.racetimer.android.WearablePairLink
@@ -508,6 +510,11 @@ internal fun RaceTimerApp(
     // the race rather than for this screen, and this only reads it.
     var pairLinkLost by remember { mutableStateOf(false) }
 
+    // The time of day at the top of the timer screen (#304), the phone's wall clock and its own
+    // 12/24-hour setting. Seeded here so the clock is up on the timer screen's first frame.
+    val context = LocalContext.current
+    var timeOfDay by remember { mutableStateOf(timeOfDayText(context)) }
+
     // The sequence a selection chose while a race was still running, held until the officer says
     // whether to end that race (#281 AC 4). Null whenever there is nothing to confirm — and it is
     // the *pending* selection rather than a bare flag, because the question names the sequence and
@@ -606,6 +613,18 @@ internal fun RaceTimerApp(
             if (state != TimerState.RUNNING && state != TimerState.FINISHED) restoreNotice = null
             pairNotice = readPairNotice?.invoke()
             pairLinkLost = readPairLinkLost?.invoke() == true
+            delay(UI_REFRESH_MS)
+        }
+    }
+
+    // The clock's own pass (#304), at the display loop's interval and apart from it, because that
+    // loop needs a runner and the clock does not. The interval is the point: an officer starting a
+    // first warning on a clock time watches the minute turn over, so the clock has to turn with the
+    // wall clock rather than up to a second behind it. The text is a `String` state, so a pass that
+    // writes the same minute recomposes nothing.
+    LaunchedEffect(onTimerScreen) {
+        while (onTimerScreen) {
+            timeOfDay = timeOfDayText(context)
             delay(UI_REFRESH_MS)
         }
     }
@@ -862,6 +881,7 @@ internal fun RaceTimerApp(
             pairChoice = pairChoice,
             onSyncToPhone = onSyncToPhone,
             onSyncToWatch = onSyncToWatch,
+            timeOfDay = timeOfDay,
             onResume = {
                 offerConsumed = true
                 startRace()

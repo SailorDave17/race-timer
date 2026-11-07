@@ -330,10 +330,19 @@ class MessageContrastTest {
         contrastRatio(compositeOver(clockArgb, bg), bg)
 
     @Test fun `the time of day is legible on every background it can render on`() {
-        // Drawn straight onto the background, with no scrim, so rule 1 holds it to every background
-        // it can meet. `showsTimeOfDay` takes no state, so that is every state, and the rendered set
-        // brings in the final-ten flash trough.
-        for (bg in renderedBackgroundsWhen { true }) {
+        // Both clocks, the watch's rim (#303) and the head of the phone's column (#304), draw this
+        // one constant straight onto the background with no scrim, so rule 1 holds it to every
+        // background either can meet. Both are up in every state, so that is every state. The
+        // phone has no flash, so the trough is wider than its own reach: the sequence name's
+        // reasoning below, erring the safe way with one set for both screens.
+        val reachable = renderedBackgroundsWhen { true }
+        assertTrue(
+            "the positive control: every state colour and the flash trough must be in the set",
+            reachable.containsAll(
+                listOf(BG_NORMAL_ARGB, BG_ONE_MINUTE_ARGB, BG_FINAL_TEN_ARGB, BG_FINAL_TEN_FLASH_ARGB, BG_FINISHED_ARGB),
+            ),
+        )
+        for (bg in reachable) {
             val ratio = timeOfDayContrast(TIME_OF_DAY_TEXT_ARGB, bg)
             assertTrue(
                 "time of day on background ${bg.toString(16)} is %.2f : 1, below the %.1f : 1 bar"
