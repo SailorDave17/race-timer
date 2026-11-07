@@ -11,7 +11,35 @@ package com.racetimer.shared
 //
 // Its colour is `TIME_OF_DAY_TEXT_ARGB` in `MessageContrast.kt`, beside the backgrounds it is drawn
 // straight onto, because rule 1 of `docs/message-surface.md` holds it to all of them.
+//
+// The phone's timer screen gained the same clock in #304, at the top of its column and sized from
+// the screen. It shares the colour and [formatTimeOfDay] below. It does not share
+// [showsTimeOfDay]: the phone's clock gives way to whatever leaves it no room, which is a question
+// about the layout rather than about which message is up, so the phone's `TimerScreen` answers it.
 // ---------------------------------------------------------------------------
+
+/**
+ * The time of day as both clocks write it (#303, #304): hours and minutes, no seconds, no AM/PM.
+ *
+ * `HH:mm` when [is24Hour], `h:mm` otherwise. That is what Wear OS's `TimeText` draws by default
+ * (`TimeTextDefaults.timeFormat()`), so the phone writing it the same way keeps the two devices
+ * saying one thing. Seconds were rejected on #304, for logging clock times too. No AM/PM because a
+ * race day runs in daylight, and the marker would widen the line for nothing.
+ *
+ * @param hourOfDay 0–23, as `Calendar.HOUR_OF_DAY` reads it.
+ * @param is24Hour the device's 12/24-hour setting.
+ */
+fun formatTimeOfDay(hourOfDay: Int, minute: Int, is24Hour: Boolean): String {
+    require(hourOfDay in 0..23) { "hourOfDay must be 0-23, was $hourOfDay" }
+    require(minute in 0..59) { "minute must be 0-59, was $minute" }
+    return if (is24Hour) {
+        "%02d:%02d".format(hourOfDay, minute)
+    } else {
+        // 12-hour clocks have no 0: midnight and noon both read 12.
+        val twelve = if (hourOfDay % 12 == 0) 12 else hourOfDay % 12
+        "%d:%02d".format(twelve, minute)
+    }
+}
 
 /**
  * Whether the time of day shows at the top rim of the watch timer screen (#303).

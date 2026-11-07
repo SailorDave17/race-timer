@@ -19,15 +19,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.racetimer.shared.PAIR_STATUS_TEXT_ARGB
 import com.racetimer.shared.PHONE_NOTICE_TEXT_ARGB
 import com.racetimer.shared.SEQUENCE_NAME_TEXT_ARGB
+import com.racetimer.shared.TIME_OF_DAY_TEXT_ARGB
 import com.racetimer.shared.TimerState
 import kotlin.math.min
 
@@ -40,6 +44,9 @@ const val TAG_DIM_COUNT_UP = "count-up-dim"
 
 /** Test tag for the pair's status row (#219). */
 const val TAG_PAIR_STATUS = "pair-status"
+
+/** Test tag for the time of day at the top of the column (#304). */
+const val TAG_TIME_OF_DAY = "time-of-day"
 
 /** Test tags for the choice between the phone's start and the watch's (#220). */
 const val TAG_SYNC_TO_PHONE = "pair-sync-to-phone"
@@ -66,6 +73,17 @@ private const val READOUT_HEIGHT_FRACTION = 0.44f
  * assert. That is #215, on the water, with the owner's eyes.
  */
 private const val GLYPH_WIDTH_FRACTION = 0.68f
+
+/**
+ * The time of day's type size, as a fraction of the screen's shorter side (#304, owner decision).
+ *
+ * 1/11 is about 35 sp on the owner's SM-S918U and 29 sp at Android's 320 dp floor. That is roughly
+ * two and a half times the status bar's clock, which the officer could not read from across the
+ * committee boat, and about a fifth of the readout, so the clock stays visibly secondary to the
+ * countdown. 1/8 was rejected as too close to the readout's scale, and it would give way more
+ * often in landscape. 1/14 was rejected as barely larger than the status bar's.
+ */
+private const val TIME_OF_DAY_SHORTER_SIDE_FRACTION = 1f / 11f
 
 /**
  * The console clock: the whole screen is the countdown.
@@ -135,6 +153,15 @@ private const val GLYPH_WIDTH_FRACTION = 0.68f
  *                      an urgent thumb is reaching for.
  * @param onSyncToPhone Tapped to run both devices on the phone's start.
  * @param onSyncToWatch Tapped to run both devices on the watch's start.
+ * @param timeOfDay     The time of day as the clock writes it (`formatTimeOfDay` in `shared/`), or
+ *                      null for no clock (#304). It heads the column, above the sequence name, so it
+ *                      is never next to the readout: a second large number beside "0:58" is the
+ *                      misread #303 rejected the under-readout slot for. In every timer state. It
+ *                      **gives way whenever the rest of the column leaves no room for it**, which
+ *                      in landscape is any time a notice line and the count-up prompt or the pair
+ *                      choice are up together. It returns when a line clears, so it never squeezes a
+ *                      control and never moves the readout's size (owner decision on #304, following
+ *                      the watch's clock giving way to its message lines in #303).
  */
 @Composable
 fun TimerScreen(
@@ -159,6 +186,7 @@ fun TimerScreen(
     pairChoice: String? = null,
     onSyncToPhone: () -> Unit = {},
     onSyncToWatch: () -> Unit = {},
+    timeOfDay: String? = null,
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -172,14 +200,34 @@ fun TimerScreen(
         // that size on a phone whose owner has turned the system font up — otherwise the accessible
         // setting is what clips the clock.
         val readoutSize = with(LocalDensity.current) { min(byWidth, byHeight).dp.toSp() }
+        // The same conversion, for the same reason: fitted to the screen, so a raised system font
+        // must not be what grows it into the room the controls need (#304).
+        val timeOfDaySize = with(LocalDensity.current) {
+            (min(maxWidth.value, maxHeight.value) * TIME_OF_DAY_SHORTER_SIDE_FRACTION).dp.toSp()
+        }
 
-        Column(
+        HeadGivesWayColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceEvenly,
         ) {
+            if (timeOfDay != null) {
+                // The head the column drops when it is full. Drawn straight onto the state
+                // background, so its colour is the constant MessageContrastTest holds to every
+                // background, the watch's clock included.
+                Text(
+                    text = timeOfDay,
+                    color = Color(TIME_OF_DAY_TEXT_ARGB),
+                    fontSize = timeOfDaySize,
+                    maxLines = 1,
+                    softWrap = false,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .layoutId(HEAD_SLOT)
+                        .testTag(TAG_TIME_OF_DAY),
+                )
+            }
+
             Text(
                 text = sequenceName,
                 color = Color(SEQUENCE_NAME_TEXT_ARGB),
@@ -350,6 +398,68 @@ fun TimerScreen(
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.testTag(TAG_PAIR_STATUS),
+                )
+            }
+        }
+    }
+}
+
+/** The `layoutId` that marks the child [HeadGivesWayColumn] may drop: the time of day (#304). */
+internal const val HEAD_SLOT = "head"
+
+/**
+ * The timer screen's column: centred, spaced evenly, and dropping its head when it is full (#304).
+ *
+ * **Without a head it is the `Column` it replaced, to the pixel.** It measures each child in order
+ * against the height still left, as `Column` does, so a full column still takes its overflow out of
+ * its last child (cairn: `a-centred-column-past-full-pins-and-squeezes-its-last-child`). It places
+ * them with `Arrangement.SpaceEvenly` and `Alignment.CenterHorizontally`, the two objects the old
+ * `Column` was given, so every position rounds the same way. `HeadGivesWayColumnTest` holds it
+ * equal to a `Column` built from the same children, below capacity and past it.
+ *
+ * **The head is the child marked `layoutId(HEAD_SLOT)`, and it is kept only while everything fits.**
+ * Before measuring anything, the column asks each child its intrinsic height at the full width and
+ * keeps the head only if the total fits. A head that did not fit would have been measured first
+ * and left the shortfall to the last child, which is End Race, or Sync and Stop. So the head goes
+ * rather than a control shrinking. It is the question *does it fit* rather than *which message is
+ * up* because the answer depends on the phone and its orientation. On the SM-S918U in landscape the
+ * column is exactly full with a notice line and the count-up prompt up, while in portrait it has
+ * room to spare under all of it.
+ *
+ * A dropped head is composed but never measured or placed, so nothing draws it and it has no
+ * bounds. It returns on the first layout pass with room for it.
+ */
+@Composable
+internal fun HeadGivesWayColumn(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val width = constraints.maxWidth
+        val height = constraints.maxHeight
+        val head = measurables.firstOrNull { it.layoutId == HEAD_SLOT }
+        val rest = measurables.filter { it !== head }
+
+        val keepHead = head != null &&
+            head.maxIntrinsicHeight(width) + rest.sumOf { it.maxIntrinsicHeight(width) } <= height
+        val laidOut = if (keepHead) listOf(head!!) + rest else rest
+
+        // Column's measuring, for children with no weight: in order, each against what is left.
+        var left = height
+        val placeables = laidOut.map { measurable ->
+            measurable.measure(Constraints(maxWidth = width, maxHeight = left.coerceAtLeast(0)))
+                .also { left -= it.height }
+        }
+
+        val sizes = IntArray(placeables.size) { placeables[it].height }
+        val tops = IntArray(placeables.size)
+        with(Arrangement.SpaceEvenly) { arrange(totalSize = height, sizes = sizes, outPositions = tops) }
+
+        layout(width, height) {
+            placeables.forEachIndexed { i, placeable ->
+                placeable.place(
+                    x = Alignment.CenterHorizontally.align(placeable.width, width, layoutDirection),
+                    y = tops[i],
                 )
             }
         }

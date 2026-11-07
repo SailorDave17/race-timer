@@ -149,6 +149,10 @@ const val COUNTDOWN_DIGIT_ARGB = 0xFFFFFFFFL
  * It is on screen in every timer state, so it meets every background, the final-ten flash trough
  * included. `MessageContrastTest` asserts it against all of them, **after compositing its alpha**:
  * [contrastRatio] ignores alpha, so a translucent value measured straight would pass as opaque.
+ *
+ * The phone's clock at the head of its timer column (#304) draws this same constant, also with no
+ * scrim and also in every state, so the one guard covers both screens. A literal colour on the
+ * phone's clock is the regression that guard cannot see, as for the labels below.
  */
 const val TIME_OF_DAY_TEXT_ARGB = 0xFFFFFFFFL
 

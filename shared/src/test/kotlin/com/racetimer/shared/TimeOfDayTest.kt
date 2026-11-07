@@ -83,4 +83,37 @@ class TimeOfDayTest {
         assertFalse(showsTimeOfDay(showResyncPrompt = false, discardWarningUp = false, startNotice = notice))
         assertTrue(showsTimeOfDay(showResyncPrompt = false, discardWarningUp = false, startNotice = null))
     }
+
+    // --- How both clocks write the time (#304) ----------------------------------------------------
+
+    @Test fun `24-hour reads HH colon mm, zero-padded`() {
+        assertEquals("13:05", formatTimeOfDay(13, 5, is24Hour = true))
+        assertEquals("09:30", formatTimeOfDay(9, 30, is24Hour = true))
+        assertEquals("00:00", formatTimeOfDay(0, 0, is24Hour = true))
+        assertEquals("23:59", formatTimeOfDay(23, 59, is24Hour = true))
+    }
+
+    @Test fun `12-hour reads h colon mm, with no AM or PM`() {
+        assertEquals("1:05", formatTimeOfDay(13, 5, is24Hour = false))
+        assertEquals("9:30", formatTimeOfDay(9, 30, is24Hour = false))
+        assertEquals("11:59", formatTimeOfDay(23, 59, is24Hour = false))
+    }
+
+    @Test fun `12-hour midnight and noon both read 12, never 0`() {
+        // The edge a modulo gets wrong: 0 % 12 and 12 % 12 are both 0.
+        assertEquals("12:00", formatTimeOfDay(0, 0, is24Hour = false))
+        assertEquals("12:30", formatTimeOfDay(12, 30, is24Hour = false))
+    }
+
+    @Test fun `the setting is what changes the text`() {
+        // The positive control for the two tests above: one instant, two settings, two strings.
+        // Without it, a formatter that ignored the flag would pass whichever of them it happened to
+        // match.
+        assertTrue(formatTimeOfDay(15, 45, is24Hour = true) != formatTimeOfDay(15, 45, is24Hour = false))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `an hour out of range is refused rather than printed`() {
+        formatTimeOfDay(24, 0, is24Hour = true)
+    }
 }

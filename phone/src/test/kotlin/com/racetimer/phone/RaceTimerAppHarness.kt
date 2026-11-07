@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performScrollTo
 import com.racetimer.phone.ui.PhoneReadout
 import com.racetimer.phone.ui.TAG_CONTINUE
 import com.racetimer.phone.ui.TAG_FULL_BRIGHTNESS
+import com.racetimer.phone.ui.TAG_TIME_OF_DAY
 import com.racetimer.shared.BuiltInSequences
 import com.racetimer.shared.JOIN_LATE_CUE_GRACE_MS
 import com.racetimer.shared.MonotonicClock
@@ -232,10 +233,18 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
      * looks like a clock, and the alternative is a tag on production code that exists only for this.
      * The `single` is load-bearing: two matches would mean the screen gained a second clock-shaped
      * line and the assertion below had quietly started reading the wrong one.
+     *
+     * #304 is that second line, and the `single` caught it: the time of day ("9:03") and the
+     * countdown both match the shape, so 13 tests went red at once rather than reading the clock.
+     * The time of day is left out **by its tag**, not by loosening the shape or dropping the
+     * `single`, so a third clock-shaped line would still be caught here.
      */
     fun readout(): String {
         val texts = compose
-            .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text))
+            .onAllNodes(
+                SemanticsMatcher.keyIsDefined(SemanticsProperties.Text) and
+                    !SemanticsMatcher.expectValue(SemanticsProperties.TestTag, TAG_TIME_OF_DAY),
+            )
             .fetchSemanticsNodes()
             .flatMap { node -> node.config[SemanticsProperties.Text].map { it.text } }
         val clockShaped = texts.filter { it.matches(READOUT_SHAPE) || it == PhoneReadout.GUN_LABEL }

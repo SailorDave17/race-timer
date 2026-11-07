@@ -406,6 +406,36 @@ moves. The running screen on the smallest watch is the one place the two meet: t
 row makes that column taller. It is recorded here rather than fixed, because fitting the running
 screen at the smallest size is #312's (owner decision on #303).
 
+### The phone's clock, at the head of its column (#304)
+
+The phone's timer screen shows the same time of day, written the same way. The status bar's clock
+was the only one on that screen, sized for the person holding the phone rather than for the
+committee boat.
+
+| | |
+|---|---|
+| Surface | The first item of the timer screen's column, above the sequence name. That is the top of the screen and never next to the readout, because a second large number beside "0:58" is the misread #303 rejected the under-readout slot for |
+| Format | `formatTimeOfDay` in `shared/TimeOfDay.kt`, which the watch's `TimeText` agrees with: `HH:mm`, or `h:mm` with no AM/PM, by the phone's own 12/24-hour setting. Read on every pass, so a change in Settings reaches it without a relaunch |
+| Type | 1/11 of the screen's shorter side, converted through the density like the readout, so a raised system font cannot grow it. About 35 sp on the SM-S918U and 29 sp at Android's 320 dp floor (owner decision on #304) |
+| Colour | `TIME_OF_DAY_TEXT_ARGB`, the watch's constant. `MessageContrastTest` holds it to every background either screen can render |
+| States | Every timer state. It turns over within one 50 ms display pass of the wall clock, because an officer starting a first warning on a clock time watches the minute change |
+| Gives way to | **Whatever leaves it no room.** The column keeps the clock only while everything else fits at full size, so it is never the reason a control shrinks or the readout changes size. In landscape that means notice + count-up prompt, or notice + pair choice. In portrait it has stayed up in every case measured. The rule is `HeadGivesWayColumn` in the phone's `TimerScreen.kt`: a question about the layout, not about which message is up, because the answer depends on the phone and its orientation |
+
+*Measured under Robolectric's native graphics* (`TimerScreenTimeOfDayTest`), readout at four
+characters, the tallest it gets:
+
+| Screen | Lines up | Clock |
+|---|---|---|
+| 320 × 470 dp, portrait (Android's minimum phone) | notice + count-up prompt | up, nothing squeezed |
+| 470 × 320 dp, landscape | none | up, nothing squeezed |
+| the same | one notice line | up, nothing squeezed |
+| the same | notice + count-up prompt, or notice + pair choice | gives way; every node exactly where it is without it |
+| 824 × 384 dp, landscape (SM-S918U) | notice + count-up prompt | gives way, and returns once the prompt is answered |
+
+**The landscape column was already past full before the clock existed.** At 470 × 320 dp with two
+lines up, End Race, or Sync and Stop, are squeezed to 10 dp with no label. At 640 × 360 End Race is
+29 dp. That is #355's. The clock giving way there adds nothing to it.
+
 ## Rules any new message must follow
 
 1. **Scrim or nothing.** Text drawn directly on the background is only safe if it has been checked
@@ -586,9 +616,11 @@ call; what has not been demonstrated is the tail-write site setting the notice.
 ---
 
 Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144, #277,
-#303, #301.
+#303, #301, #304, #355.
 Owner: SailorDave17.
-Last reviewed: 2026-11-06 (#301: a Tier 3 line now takes the sync-label slot's place and the Do Not
+Last reviewed: 2026-11-06 (#304: the phone's timer screen gained the time of day at the head of its
+column, giving way when the column has no room, and the landscape squeeze it measured on the way is
+#355. Before that, the same day, #301: a Tier 3 line now takes the sync-label slot's place and the Do Not
 Disturb notice is two lines, so no notice shrinks Sync, Stop or Start; measured before and after on
 both watches. Before that, 2026-09-29: #222 added the lost link's Tier 3 line, the first that speaks through a
 count-up, which `MessageContrastTest` now drives there; the reconnect's flag on the re-sync prompt;
