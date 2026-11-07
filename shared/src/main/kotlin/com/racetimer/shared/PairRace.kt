@@ -177,6 +177,9 @@ data class PeerSync(val key: RaceKey, val raceId: Long, val gun: JoinGun, val se
 /** The nearby peer ended race [raceId] [elapsedMs] past its gun (#221). */
 data class PeerEnd(val raceId: Long, val elapsedMs: Long)
 
+/** The nearby peer stopped race [raceId] while it was running there (#328). */
+data class PeerStop(val raceId: Long)
+
 /** What a device does with the peer's Sync, decided by [PairRaceBook.decideSync]. */
 sealed interface SyncVerdict {
 
@@ -383,6 +386,9 @@ interface PairAnnouncer {
     /** Send that race [raceId] was ended [elapsedMs] past its gun (#221). */
     fun announceEnd(raceId: Long, elapsedMs: Long)
 
+    /** Send that race [raceId] was stopped here while it was running (#328). */
+    fun announceStop(raceId: Long)
+
     /** Send this device's pre-start setup under [key] (#221). */
     fun announceSetup(key: RaceKey, choice: SetupChoice)
 
@@ -430,6 +436,13 @@ interface PairRaceHost {
     fun endRaceAt(elapsedMs: Long): Long?
 
     /**
+     * Stop the race running here, the peer's Stop (#328), with everything a local Stop does: no
+     * further cue, the race no longer saved, the device back at its pre-start screen. False when no
+     * race is running here — counting down or counting up — which makes the Stop stale.
+     */
+    fun stopRace(): Boolean
+
+    /**
      * Move the running countdown's gun to [gun], a reconnect's correction within D6's bound (#222):
      * the cues re-aimed, the wake lock re-sized (#126), the race persisted — and nothing a Sync is
      * felt or heard by, since nobody tapped anything. False when there is no countdown to move.
@@ -445,7 +458,7 @@ interface PairRaceHost {
 }
 
 /** Why a control from the peer was not applied here: which control it was (#221 AC 3). */
-enum class PairControl { SYNC, END_RACE }
+enum class PairControl { SYNC, END_RACE, STOP }
 
 /** Something the peer did to this device that the officer is owed a word about (#221). */
 sealed interface PairEvent {
@@ -469,6 +482,12 @@ sealed interface PairEvent {
      * bends a running race silently — however little it bends it.
      */
     data class GunCorrected(val shiftMs: Long) : PairEvent
+
+    /**
+     * The peer's Stop stopped the race running here (#328). Said, because a countdown that vanishes
+     * with no word reads as a fault — the owner's rule at #328's pickup.
+     */
+    data object Stopped : PairEvent
 }
 
 /** A race to join: which, what it runs, and how late a cue may be and still sound ([JOIN_LATE_CUE_GRACE_MS]). */
@@ -500,16 +519,17 @@ data class PairContest(val followed: PairRace, val other: PairRace) {
  * **The race's controls mirror too (#221).** A Sync taken on either device moves both guns: it
  * travels as the gun it produced, translated as a start's is, and two Syncs that cross settle on the
  * later ([PairRaceBook.decideSync]). An End Race taken on either device ends the race on both at the
- * one elapsed time, the earlier of two that cross. A control names its race, and one for a race this
- * device is not running is dropped and said ([PairEvent.StaleControl]) — never applied to another.
+ * one elapsed time, the earlier of two that cross. A Stop taken on either device while its race runs
+ * stops the race on both (#328). A control names its race, and one for a race this device is not
+ * running is dropped and said ([PairEvent.StaleControl]) — never applied to another.
  *
  * **A dropped link is information, never a dead clock (#222).** Nothing a device counts reads the
  * link after its start, so a drop changes nothing about either count, by construction; what it does
  * change is what the officer is told. A race that had the peer in range and lost it is [linkLost]
  * for as long as the two are apart. When they meet again each sends the race it is running
  * ([onPeerNearby]), and the owner's rule at #222's pickup decides what the other does with it: a
- * start it never heard of is taken by #220's rule, as if it had just arrived; an End Race it missed
- * is sent back; and the same race's gun is judged by D6 ([judgeGunCheck]) — corrected within
+ * start it never heard of is taken by #220's rule, as if it had just arrived; an End Race or a Stop
+ * it missed is sent back; and the same race's gun is judged by D6 ([judgeGunCheck]) — corrected within
  * [PAIR_RECONNECT_BOUND_MS] and said, and beyond it never moved, only flagged for a Sync.
  *
  * @param console whether this device is the console: the phone. Its clock is the one every start is
@@ -558,11 +578,18 @@ class PairStarts(
     /** The race this device ended, and the elapsed time it froze at: sent back to a peer that missed it. */
     private var endedAt: Pair<Long, Long>? = null
 
+    /**
+     * The race this device stopped while it was running — by its own Stop or the peer's (#328): sent
+     * again to a peer that missed it, and how a Stop crossing this device's own is known for a copy.
+     */
+    private var stoppedRaceId: Long? = null
+
     /** This device just started a race from the top: tell the peer, and measure until its gun. */
     fun startedHere(sequenceId: String, gunMs: Long) {
         val race = book.startedHere(sequenceId, gunMs, consoleNowMs(clock, console, link))
         setContest(null)
         endedAt = null
+        stoppedRaceId = null
         linkedThisRace = nearby
         refreshLink()
         link.holdUntil(gunMs)
@@ -605,8 +632,10 @@ class PairStarts(
      * - **The race running here:** its gun is judged by D6 ([judgeGunCheck]).
      * - **The race this device ended:** the peer missed the End Race, and it is sent back, so the
      *   peer freezes at the time frozen here (#221's earlier-end rule does the rest).
-     * - **The race this device stopped:** nothing. Stop is not mirrored until #328, and a stopped
-     *   race is never rejoined.
+     * - **The race this device stopped:** the peer missed the Stop, and it is sent back, so the peer
+     *   stops too (#328). A stopped race is never rejoined.
+     * - **The race this device finished otherwise** — run to its gun, or a summary already put
+     *   away — nothing: there is no control of the officer's to send.
      * - **Any other race:** it is a start this device never heard of, and #220's rule takes it as
      *   one — joined from idle, and a running race switched or kept by which was tapped last.
      */
@@ -621,10 +650,14 @@ class PairStarts(
                 log("peer check for a race ended here: sending the end again, race=${mine.key.raceId}")
                 link.announceEnd(ended.first, ended.second)
             }
+            stoppedRaceId == mine.key.raceId -> {
+                log("peer check for a race stopped here: sending the stop again, race=${mine.key.raceId}")
+                link.announceStop(mine.key.raceId)
+            }
             // [PairRaceBook.decide] would refuse a rejoin too, as a race it knows under that key, so
-            // "a race stopped here is not rejoined" passes without this branch. What only this
-            // branch holds is the End Race above, which must not go that way.
-            else -> log("peer check for a race stopped here: nothing to do, race=${mine.key.raceId}")
+            // "a race over here is not rejoined" passes without this branch. What only this branch
+            // holds is the End Race and the Stop above, which must not go that way.
+            else -> log("peer check for a race over here: nothing to do, race=${mine.key.raceId}")
         }
     }
 
@@ -697,6 +730,40 @@ class PairStarts(
         endedAt = race.key.raceId to elapsedMs
         link.endHold()
         link.announceEnd(race.key.raceId, elapsedMs)
+    }
+
+    /**
+     * The officer tapped Stop here (#328), and the race is about to stop: called **before** the
+     * engine stops, so this can ask whether a race is running. One that is — counting down or
+     * counting up — is sent to the peer, so a general recall does not leave the other device counting
+     * to a gun nobody is starting to.
+     *
+     * A Stop that puts away a race already over — the watch's Done on a summary, the phone's Stop on
+     * "GO!" — is local, so one device never takes a frozen time off a screen the committee is still
+     * reading (the owner's rule at #328's pickup). A race restored after a process death has no key
+     * and is not announced.
+     */
+    fun stoppingHere() {
+        if (!host.raceRunning()) return
+        val race = book.current ?: return
+        stoppedRaceId = race.key.raceId
+        link.endHold()
+        link.announceStop(race.key.raceId)
+    }
+
+    /**
+     * The peer's Stop arrived (#328). Stops the race it names while that race is running here, and
+     * says so. A Stop of the race this device has already stopped is the other half of two that
+     * crossed, and changes nothing. Anything else — a race over here, or not this device's — is
+     * stale and said, never applied to whatever is running (#221 AC 3's rule).
+     */
+    fun onPeerStop(stop: PeerStop) {
+        val race = book.current
+        if (race == null || race.key.raceId != stop.raceId) return stale(PairControl.STOP, "not the race here, race=${stop.raceId}")
+        if (stoppedRaceId == stop.raceId) return log("peer stop of a race already stopped here: race=${stop.raceId}")
+        if (!host.stopRace()) return stale(PairControl.STOP, "no race running here, race=${stop.raceId}")
+        stoppedRaceId = stop.raceId
+        onEvent(PairEvent.Stopped)
     }
 
     /**
@@ -795,6 +862,7 @@ class PairStarts(
         }
         book.joined(race)
         endedAt = null
+        stoppedRaceId = null
         linkedThisRace = nearby
         refreshLink()
         link.holdUntil(race.gun.gunMs)
@@ -853,7 +921,15 @@ internal fun consoleNowMs(clock: MonotonicClock, console: Boolean, link: PairAnn
 fun pairStaleControlLine(control: PairControl, peerNoun: String): String = when (control) {
     PairControl.SYNC -> "$peerNoun synced a race not running here"
     PairControl.END_RACE -> "$peerNoun ended a race not running here"
+    PairControl.STOP -> "$peerNoun stopped a race not running here"
 }
+
+/**
+ * The line the officer is owed when the peer's Stop stopped the race here (#328): a Tier 1 banner on
+ * the watch and a transient line on the phone, as the stale-control lines are. It is news about the
+ * pair, said on a pre-start screen that has nothing else to explain why the countdown went.
+ */
+fun pairStoppedLine(peerNoun: String): String = "$peerNoun stopped the race"
 
 /**
  * The standing line a race owes the officer while the link it had is lost (#222 AC 1): the Tier 3

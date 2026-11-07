@@ -129,7 +129,8 @@ sealed interface PairStatus {
  * **A race's controls and the pre-start setup cross it too (#221).** A Sync travels as the gun it
  * produced, placed on this clock exactly as a start's is ([PeerSync]); an End Race as the elapsed
  * time it froze ([PeerEnd]); and the setup a pre-start screen shows as the sequence and the
- * lead-in alert ([PeerSetup]). Every one of them obeys the nearby-only rule at both ends, and
+ * lead-in alert ([PeerSetup]). A Stop (#328) carries nothing but the race it stopped ([PeerStop]).
+ * Every one of them obeys the nearby-only rule at both ends, and
  * [onPeerNearby] says when a peer becomes reachable directly, which is when the setups of two
  * devices are compared.
  *
@@ -152,6 +153,7 @@ sealed interface PairStatus {
  * @param onPeerNearby the peer has just become reachable directly: found, or back in Bluetooth range.
  * @param onPeerCheck  the race the nearby peer is running and its gun as it stands, sent when the
  *                     link came back (#222), the gun already on this device's clock.
+ * @param onPeerStop   a Stop the nearby peer took of a race it was running (#328).
  */
 class PairLink(
     private val clock: MonotonicClock,
@@ -166,6 +168,7 @@ class PairLink(
     private val onPeerSetup: (PeerSetup) -> Unit = {},
     private val onPeerNearby: () -> Unit = {},
     private val onPeerCheck: (PeerCheck) -> Unit = {},
+    private val onPeerStop: (PeerStop) -> Unit = {},
 ) : PairAnnouncer {
 
     private class Pending(val peerId: String, val sentMs: Long)
@@ -304,6 +307,11 @@ class PairLink(
     /** Tell the nearby peer race [raceId] was ended [elapsedMs] past its gun (#221). */
     override fun announceEnd(raceId: Long, elapsedMs: Long) {
         if (sendToNearbyPeer("end") { PairMessage.End(raceId, elapsedMs) }) log("end sent race=$raceId")
+    }
+
+    /** Tell the nearby peer race [raceId] was stopped here while it was running (#328). */
+    override fun announceStop(raceId: Long) {
+        if (sendToNearbyPeer("stop") { PairMessage.Stop(raceId) }) log("stop sent race=$raceId")
     }
 
     /**
@@ -454,6 +462,10 @@ class PairLink(
             is PairMessage.End -> fromNearbyPeer(fromId, "end") {
                 log("end from peer race=${message.raceId}")
                 onPeerEnd(PeerEnd(message.raceId, message.elapsedMs))
+            }
+            is PairMessage.Stop -> fromNearbyPeer(fromId, "stop") {
+                log("stop from peer race=${message.raceId}")
+                onPeerStop(PeerStop(message.raceId))
             }
             is PairMessage.Setup -> fromNearbyPeer(fromId, "setup") {
                 log("setup from peer seq=${message.sequenceId} alert=${message.boxAlertSeconds}")
@@ -688,7 +700,7 @@ class PairLink(
  * Every field is a number except the last of a [Start], a [Setup] or a [Check], which is a sequence
  * id: the one string the persisted race already carries, and which `BuiltInSequences.resolve`
  * rebuilds lead-in and Custom durations from. The version tag did not move when [Start] was added
- * (#220), nor when [Sync], [End] and [Setup] were (#221), nor for [Check] (#222). An app from before
+ * (#220), nor when [Sync], [End] and [Setup] were (#221), nor for [Check] (#222) or [Stop] (#328). An app from before
  * any of them reads the new kind as one it does not know and drops the line, which is the
  * no-link-rather-than-a-wrong-one rule above applied to one message rather than to the whole link.
  */
@@ -760,6 +772,14 @@ internal sealed interface PairMessage {
         }
 
         override fun encode() = wire("end", raceId, elapsedMs)
+    }
+
+    /**
+     * Race [raceId] was stopped on the sender while it was running (#328). Nothing else crosses: a
+     * Stop has no result to carry, so there is nothing two devices could read differently.
+     */
+    data class Stop(val raceId: Long) : PairMessage {
+        override fun encode() = wire("stop", raceId)
     }
 
     /**
@@ -846,6 +866,7 @@ internal sealed interface PairMessage {
                 "sample" -> if (fields.size == 4) Sample(fields[0], fields[1], fields[2], fields[3]) else null
                 "sync" -> if (fields.size == 5) Sync(fields[0], fields[1], fields[2], fields[3], fields[4]) else null
                 "end" -> if (fields.size == 2 && fields[1] >= 0L) End(fields[0], fields[1]) else null
+                "stop" -> if (fields.size == 1) Stop(fields[0]) else null
                 else -> null
             }
         }

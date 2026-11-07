@@ -29,10 +29,10 @@ import java.util.concurrent.CopyOnWriteArrayList
  * - **The link** is [WearablePairLink]. What the peer sends arrives on its thread and is posted here;
  *   what this device does goes back the other way through its announce calls.
  * - **The race** is the app's service. It [attach]es itself as a [RaceService] when it is created,
- *   and tells this object when it [startedHere], [restored], [syncedHere], [endedHere] or [ended] a
- *   race. A peer's Sync or End Race is carried out by that service directly, on the main thread, so
- *   it runs with everything a local Sync or End Race runs with — and a control for a device with no
- *   service is a control for a device with no race, which makes it stale.
+ *   and tells this object when it [startedHere], [restored], [syncedHere], [endedHere], [stoppingHere]
+ *   or [ended] a race. A peer's Sync, End Race or Stop is carried out by that service directly, on the
+ *   main thread, so it runs with everything the local control runs with — and a control for a device
+ *   with no service is a control for a device with no race, which makes it stale.
  * - **A join** is handed to the [Launcher] the Application [install]ed, which turns it into a service
  *   intent. The app's own `onStartCommand` does the joining, through the same path a Start takes, so
  *   a joined race is armed, persisted and held awake exactly as a tapped one is.
@@ -95,6 +95,12 @@ class PairRaces private constructor(private val app: Context, private val link: 
          */
         fun endRaceAt(elapsedMs: Long): Long?
 
+        /**
+         * The peer's Stop (#328): stop the race running here with everything a local Stop does — no
+         * further cue, the saved race cleared, the foreground left. False with no race running here.
+         */
+        fun stopRace(): Boolean
+
         /** Put the peer's setup on whatever this service holds of the pre-start screen. */
         fun applySetup(choice: SetupChoice) {}
 
@@ -152,6 +158,8 @@ class PairRaces private constructor(private val app: Context, private val link: 
 
             override fun endRaceAt(elapsedMs: Long): Long? = service?.endRaceAt(elapsedMs)
 
+            override fun stopRace(): Boolean = service?.stopRace() == true
+
             override fun correctGun(gun: JoinGun): Boolean = service?.correctGun(gun) == true
 
             override fun gunsApart(apartMs: Long): Boolean = service?.gunsApart(apartMs) == true
@@ -176,6 +184,7 @@ class PairRaces private constructor(private val app: Context, private val link: 
             }
         }
         link.onPeerCheck = { check -> main.post { starts.onPeerCheck(check) } }
+        link.onPeerStop = { stop -> main.post { starts.onPeerStop(stop) } }
         // #222. Process-long, like this object: whether a race has lost its link is the race's, not
         // any screen's, so it is kept current whatever is on view. Delivered on the main thread.
         link.addStatusListener { status -> starts.onLinkStatus(status) }
@@ -213,6 +222,12 @@ class PairRaces private constructor(private val app: Context, private val link: 
 
     /** An End Race taken here froze the race [elapsedMs] past its gun: the peer ends too (#221). */
     fun endedHere(elapsedMs: Long) = starts.endedHere(elapsedMs)
+
+    /**
+     * Stop was tapped here and is about to stop the race (#328): called before the engine stops. A
+     * race counting down or up is stopped on the peer too; one already over stays local.
+     */
+    fun stoppingHere() = starts.stoppingHere()
 
     /** The officer changed the pre-start setup here: the peer's screen follows (#221). */
     fun picked(choice: SetupChoice) = setup.pickedHere(choice)

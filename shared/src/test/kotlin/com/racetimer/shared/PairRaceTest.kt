@@ -138,6 +138,7 @@ class PairRaceTest {
                 starts.onPeerNearby()
             },
             onPeerCheck = { starts.onPeerCheck(it) },
+            onPeerStop = { starts.onPeerStop(it) },
         )
         val setup = PairSetup(book, link, this, device, console, initial = opensOn)
         val starts = PairStarts(book, link, this, device, console, onContest = { contests += it }, setup = setup, onEvent = { events += it })
@@ -193,10 +194,27 @@ class PairRaceTest {
             setup.pickedHere(screen)
         }
 
-        fun stop() {
+        /**
+         * The officer taps Stop (#328), in the order both apps' `ACTION_STOP` takes: the pair is told
+         * first, while it can still see whether a race is running, then the race stops, then the pair
+         * hears the race is over. Whatever is on screen, the pair is told: the rule is its own.
+         */
+        fun tapStop() {
+            starts.stoppingHere()
             engine.stop()
             cancelCue?.invoke()
             starts.ended()
+        }
+
+        /**
+         * [tapStop] with its message lost in transit. How a test reaches one device running a race the
+         * other has left, which since #328 a Stop heard by the peer no longer produces.
+         */
+        fun stopUnheard() {
+            val prior = dropNext
+            dropNext = { from, text -> (from == device.id && text.startsWith("rtpair1 stop")) || prior(from, text) }
+            tapStop()
+            dropNext = prior
         }
 
         fun gun(): Long = engine.snapshot()?.gunElapsedMs ?: throw AssertionError("${device.id} is running nothing")
@@ -220,6 +238,19 @@ class PairRaceTest {
         }
 
         override fun endRaceAt(elapsedMs: Long): Long? = engine.endRaceAt(elapsedMs)?.also { cancelCue?.invoke() }
+
+        /** Every Stop the pair asked of this device (#328), taken or not. */
+        val stopsAsked = mutableListOf<TimerState>()
+
+        override fun stopRace(): Boolean {
+            stopsAsked += engine.currentState
+            if (!raceRunning()) return false
+            engine.stop()
+            cancelCue?.invoke()
+            // The apps' teardown tells the pair the race is over from inside the Stop, as here.
+            starts.ended()
+            return true
+        }
 
         override fun correctGun(gun: JoinGun): Boolean {
             corrections += gun
@@ -534,7 +565,7 @@ class PairRaceTest {
         phoneNode.tapStart(BuiltInSequences.usSailing)
         world.advance(20_000L)
         assertNull("the positive control: the watch joined with no rounds", watchNode.joins.single().race.gun.errorBoundMs)
-        watchNode.stop()
+        watchNode.stopUnheard()
         world.advance(3_000L)
 
         watchNode.tapStart(BuiltInSequences.club)
@@ -623,7 +654,7 @@ class PairRaceTest {
         linkUp()
         phoneNode.tapStart(BuiltInSequences.usSailing)
         world.advance(20_000L)
-        watchNode.stop()
+        watchNode.stopUnheard()
         world.advance(3_000L)
 
         watchNode.tapStart(BuiltInSequences.club)
@@ -641,7 +672,7 @@ class PairRaceTest {
         linkUp()
         watchNode.tapStart(BuiltInSequences.usSailing)
         world.advance(20_000L)
-        watchNode.stop()
+        watchNode.stopUnheard()
         world.advance(3_000L)
         watchNode.tapStart(BuiltInSequences.club)
         world.advance(1_000L)
@@ -656,7 +687,7 @@ class PairRaceTest {
         linkUp()
         phoneNode.tapStart(BuiltInSequences.usSailing)
         world.advance(20_000L)
-        phoneNode.stop()
+        phoneNode.stopUnheard()
         phoneNode.tapStart(BuiltInSequences.club)
         world.advance(1_000L)
 
@@ -1025,6 +1056,173 @@ class PairRaceTest {
 
     private fun endsSentBy(device: Device) = sent.count { it.first == device.id && it.second.startsWith("rtpair1 end") }
 
+    // --- #328: Stop on either device stops both -----------------------------------------------------
+
+    private fun stopsSentBy(device: Device) = sent.count { it.first == device.id && it.second.startsWith("rtpair1 stop") }
+
+    /**
+     * Every cue each device sounds from now until [forMs] has passed, phone's then watch's: what a
+     * stopped race must not do.
+     */
+    private fun cuesOver(forMs: Long): Pair<List<Long>, List<Long>> {
+        val phoneBefore = phoneNode.cuesAt.size
+        val watchBefore = watchNode.cuesAt.size
+        world.advance(forMs)
+        return phoneNode.cuesAt.drop(phoneBefore).map { it.first } to watchNode.cuesAt.drop(watchBefore).map { it.first }
+    }
+
+    private val noCues = emptyList<Long>() to emptyList<Long>()
+
+    @Test
+    fun `Stop on the phone stops the watch's race, and neither sounds another cue`() {
+        raceUnderWay(intoMs = 20_000L)
+        assertEquals("the positive control: the watch is counting down", TimerState.RUNNING, watchNode.engine.currentState)
+
+        phoneNode.tapStop()
+        world.advance(1_000L)
+
+        assertEquals(TimerState.IDLE, phoneNode.engine.currentState)
+        assertEquals("the watch is back at its pre-start screen", TimerState.IDLE, watchNode.engine.currentState)
+        assertEquals("and is told why", listOf(PairEvent.Stopped), watchNode.events)
+        assertEquals("neither sounds another cue, through where the gun was", noCues, cuesOver(BuiltInSequences.usSailing.totalMs))
+        assertNull("no gun fires on either", watchNode.gunAt ?: phoneNode.gunAt)
+    }
+
+    @Test
+    fun `Stop on the watch stops the phone's race the same way, here in its count-up`() {
+        raceUnderWay(intoMs = raceManager.totalMs + 45_000L, sequence = raceManager, on = { watchNode })
+        assertEquals("the positive control: the phone is counting up", TimerState.COUNTING_UP, phoneNode.engine.currentState)
+
+        watchNode.tapStop()
+        world.advance(1_000L)
+
+        assertEquals(TimerState.IDLE, phoneNode.engine.currentState)
+        assertEquals(listOf(PairEvent.Stopped), phoneNode.events)
+        assertTrue("the watch is told nothing of its own Stop", watchNode.events.isEmpty())
+    }
+
+    @Test
+    fun `a Stop in the lead-in stops the other device's lead-in too`() {
+        val armed = withLeadIn(raceManager, 60)!!
+        raceUnderWay(intoMs = 5_000L, sequence = armed)
+        assertTrue("the positive control: the watch is in the lead-in", isInLeadIn(armed, watchNode.engine.remainingMs))
+
+        watchNode.tapStop()
+        world.advance(1_000L)
+
+        assertEquals(TimerState.IDLE, phoneNode.engine.currentState)
+        assertEquals(noCues, cuesOver(armed.totalMs))
+    }
+
+    @Test
+    fun `two Stops that cross change nothing more, and say nothing on either`() {
+        raceUnderWay(intoMs = 20_000L)
+
+        phoneNode.tapStop()
+        world.advance(40L)
+        watchNode.tapStop()
+        world.advance(1_000L)
+
+        assertEquals("the positive control: both were sent", 1 to 1, stopsSentBy(phone) to stopsSentBy(watch))
+        assertEquals(TimerState.IDLE, phoneNode.engine.currentState)
+        assertEquals(TimerState.IDLE, watchNode.engine.currentState)
+        assertTrue("a copy of a Stop already taken is no news, and no stale control", phoneNode.events.isEmpty() && watchNode.events.isEmpty())
+    }
+
+    @Test
+    fun `Done on a summary stays on the device it is tapped on`() {
+        // The owner's rule at #328's pickup: only a running race's Stop mirrors, so one device never
+        // takes a frozen finish time off a screen the committee is still writing it down from.
+        raceUnderWay(intoMs = raceManager.totalMs + 45_000L, sequence = raceManager)
+        phoneNode.tapEndRace()
+        world.advance(1_000L)
+        assertEquals("the positive control: both summaries are up", TimerState.RACE_ENDED, watchNode.engine.currentState)
+
+        watchNode.tapStop() // Done
+        world.advance(1_000L)
+
+        assertEquals(TimerState.IDLE, watchNode.engine.currentState)
+        assertEquals("the phone's final time stays up", TimerState.RACE_ENDED, phoneNode.engine.currentState)
+        assertEquals(0, stopsSentBy(watch))
+        assertTrue("and nothing is said", phoneNode.events.isEmpty())
+    }
+
+    @Test
+    fun `Stop on GO stays on the device it is tapped on`() {
+        val club = BuiltInSequences.club
+        raceUnderWay(intoMs = club.totalMs + 500L, sequence = club)
+        assertEquals(
+            "the positive control: GO! on both",
+            TimerState.FINISHED to TimerState.FINISHED,
+            phoneNode.engine.currentState to watchNode.engine.currentState,
+        )
+
+        phoneNode.tapStop()
+        world.advance(1_000L)
+
+        assertEquals("the watch keeps its GO!", TimerState.FINISHED, watchNode.engine.currentState)
+        assertEquals(0, stopsSentBy(phone))
+        assertTrue("and nothing is said", watchNode.events.isEmpty())
+    }
+
+    @Test
+    fun `a Stop lands on the race it names and nothing else`() {
+        // The stale-control rule #221 states: the watch restarted while the two were apart, and the
+        // phone's Stop of the race it left lands as they meet. It must not stop the watch's new race.
+        raceUnderWay(intoMs = 20_000L)
+        dropLink()
+        watchNode.stopUnheard()
+        watchNode.tapStart(BuiltInSequences.club)
+        val clubGun = watchNode.gun()
+        world.advance(5_000L)
+        restoreLink()
+        phoneNode.tapStop() // tapped as they meet, before the watch's check takes the phone over
+        world.advance(1_000L)
+
+        assertEquals("the positive control: the Stop was sent", 1, stopsSentBy(phone))
+        assertEquals(listOf(PairEvent.StaleControl(PairControl.STOP)), watchNode.events)
+        assertEquals("the watch's own race is untouched", TimerState.RUNNING, watchNode.engine.currentState)
+        assertEquals(BuiltInSequences.club, watchNode.engine.loadedSequence)
+        assertEquals(clubGun, watchNode.gun())
+    }
+
+    @Test
+    fun `a Stop for a race the watch has already ended leaves its summary up, and says so`() {
+        // The watch's End Race is lost, so the phone counts on and its officer taps Stop.
+        dropNext = { from, text -> from == watch.id && text.startsWith("rtpair1 end") }
+        raceUnderWay(intoMs = raceManager.totalMs + 45_000L, sequence = raceManager)
+        watchNode.tapEndRace()
+        world.advance(1_000L)
+        assertEquals("the positive control: the phone counts on", TimerState.COUNTING_UP, phoneNode.engine.currentState)
+
+        phoneNode.tapStop()
+        world.advance(1_000L)
+
+        assertEquals("the final time stays on the watch", TimerState.RACE_ENDED, watchNode.engine.currentState)
+        assertEquals("the positive control: the watch was asked", listOf(TimerState.RACE_ENDED), watchNode.stopsAsked)
+        assertEquals(listOf(PairEvent.StaleControl(PairControl.STOP)), watchNode.events)
+    }
+
+    @Test
+    fun `with no counterpart Stop is the Stop it always was, and sends nothing`() {
+        // The transport is present and finds nobody: the phone-standalone case.
+        present = false
+        phoneNode.peer = watchNode
+        phoneNode.link.onPeers(emptyList())
+        phoneNode.link.setActive(true)
+        world.advance(5_000L)
+        phoneNode.tapStart(BuiltInSequences.usSailing)
+        world.advance(20_000L)
+
+        phoneNode.tapStop()
+
+        assertEquals(TimerState.IDLE, phoneNode.engine.currentState)
+        assertEquals("no cue sounds after it", noCues, cuesOver(BuiltInSequences.usSailing.totalMs))
+        assertNull(phoneNode.gunAt)
+        assertEquals("and nothing went anywhere", 0, stopsSentBy(phone))
+        assertTrue("nothing at all", sent.isEmpty())
+    }
+
     // --- #221 AC 3: a control for a race not running here ------------------------------------------
 
     private fun dropLink() {
@@ -1044,7 +1242,7 @@ class PairRaceTest {
         raceUnderWay(intoMs = 20_000L)
         dropLink()
         // Out of range, the watch's officer restarts on another sequence: a race the phone never hears of.
-        watchNode.stop()
+        watchNode.stopUnheard()
         watchNode.tapStart(BuiltInSequences.club)
         val clubGun = watchNode.gun()
         world.advance(5_000L)
@@ -1065,7 +1263,7 @@ class PairRaceTest {
     @Test
     fun `an End Race for a race the phone has stopped is dropped with a notice`() {
         raceUnderWay(intoMs = raceManager.totalMs + 30_000L, sequence = raceManager, on = { watchNode })
-        phoneNode.stop() // Stop is local until #328
+        phoneNode.stopUnheard() // the Stop lost in transit, so the watch counts on (#328)
 
         watchNode.tapEndRace()
         world.advance(1_000L)
@@ -1082,12 +1280,19 @@ class PairRaceTest {
 
         watchNode.starts.onPeerSync(PeerSync(RaceKey(Long.MAX_VALUE, 1L), raceId = 999L, JoinGun(watch.elapsedMs() + 60_000L, 20L), 60_000L))
         watchNode.starts.onPeerEnd(PeerEnd(raceId = 999L, elapsedMs = 5_000L))
+        watchNode.starts.onPeerStop(PeerStop(raceId = 999L))
 
         assertEquals(
-            listOf(PairEvent.StaleControl(PairControl.SYNC), PairEvent.StaleControl(PairControl.END_RACE)),
+            listOf(
+                PairEvent.StaleControl(PairControl.SYNC),
+                PairEvent.StaleControl(PairControl.END_RACE),
+                PairEvent.StaleControl(PairControl.STOP),
+            ),
             watchNode.events,
         )
         assertTrue(watchNode.moves.isEmpty())
+        assertTrue("a Stop naming another race never reaches the engine", watchNode.stopsAsked.isEmpty())
+        assertEquals(TimerState.RUNNING, watchNode.engine.currentState)
         assertEquals(gun, watchNode.gun())
     }
 
@@ -1209,13 +1414,13 @@ class PairRaceTest {
     @Test
     fun `a device with a race on screen takes no setup, and takes the later pick when its race is over`() {
         raceUnderWay(intoMs = 1_000L)
-        watchNode.stop() // the watch is back at its pre-start screen; the phone still races
+        watchNode.stopUnheard() // the watch is back at its pre-start screen; the phone still races
         watchNode.pick(BuiltInSequences.scholastic)
         world.advance(1_000L)
         assertEquals("the phone's race is untouched", BuiltInSequences.usSailing, phoneNode.engine.loadedSequence)
         assertEquals("and its screen shows its race", BuiltInSequences.usSailing.id, phoneNode.screen.sequenceId)
 
-        phoneNode.stop()
+        phoneNode.stopUnheard()
         world.advance(1_000L)
 
         assertEquals(SetupChoice(BuiltInSequences.scholastic.id, 0), phoneNode.screen)
@@ -1258,6 +1463,14 @@ class PairRaceTest {
         }
         assertEquals("Watch synced a race not running here", pairStaleControlLine(PairControl.SYNC, "Watch"))
         assertEquals("Watch ended a race not running here", pairStaleControlLine(PairControl.END_RACE, "Watch"))
+        assertEquals("Watch stopped a race not running here", pairStaleControlLine(PairControl.STOP, "Watch"))
+    }
+
+    @Test
+    fun `the stopped line fits the watch's banner`() {
+        val line = pairStoppedLine("Phone")
+        assertEquals("Phone stopped the race", line)
+        assertTrue("\"$line\" overflows the banner", line.length <= NOTICE_MAX_CHARS && MessageSurface.BANNER.holds(line))
     }
 
     @Test
@@ -1477,7 +1690,7 @@ class PairRaceTest {
     fun `a restart made while apart takes the other device over when they meet, and the phone offers the choice`() {
         raceUnderWay(intoMs = 5_000L)
         walkApart()
-        watchNode.stop()
+        watchNode.stopUnheard()
         watchNode.tapStart(BuiltInSequences.club) // tapped last, and the phone never heard of it
         world.advance(5_000L)
         assertEquals("the positive control: the phone still runs its own", BuiltInSequences.usSailing, phoneNode.engine.loadedSequence)
@@ -1509,19 +1722,45 @@ class PairRaceTest {
     }
 
     @Test
-    fun `a race stopped here is not rejoined when the devices meet`() {
+    fun `a Stop taken while apart is sent back when they meet, the other stops too, and neither rejoins`() {
         raceUnderWay(intoMs = 5_000L)
         walkApart()
-        watchNode.stop() // Stop is local until #328
+        watchNode.tapStop()
         world.advance(5_000L)
+        assertEquals("the positive control: the phone counts on", TimerState.RUNNING, phoneNode.engine.currentState)
+        assertEquals("the positive control: nothing crossed while apart", 0, stopsSentBy(watch))
 
         walkBack()
         world.advance(2_000L)
 
+        assertEquals(TimerState.IDLE, phoneNode.engine.currentState)
         assertEquals(TimerState.IDLE, watchNode.engine.currentState)
+        assertEquals("the watch's Stop, sent back for the phone's check", 1, stopsSentBy(watch))
+        assertEquals("the phone is told why its countdown went", listOf(PairEvent.Stopped), phoneNode.events)
         assertEquals("the one join is the race's own", 1, watchNode.joins.size)
         assertEquals("a device running nothing names no race", 0, checksSentBy(watch))
         assertEquals("the positive control: the phone, still racing, did", 1, checksSentBy(phone))
+    }
+
+    @Test
+    fun `a race run to its gun sends no Stop when the devices meet, though the peer still counts`() {
+        // Over by itself, not by the officer. The phone's gun moved 20 s later while the two were
+        // apart, so the watch's race runs out first and the phone's check of it lands on a watch
+        // running nothing: there is no Stop to send, and the phone counts on to its own gun.
+        val sequence = BuiltInSequences.club
+        raceUnderWay(intoMs = 5_000L, sequence = sequence)
+        walkApart()
+        phoneNode.skewGun(20_000L)
+        world.advance(sequence.totalMs - 5_000L + 1_000L)
+        assertFalse("the positive control: the watch's race is over", watchNode.raceRunning())
+        assertEquals("the positive control: the phone still counts", TimerState.RUNNING, phoneNode.engine.currentState)
+
+        walkBack()
+        world.advance(2_000L)
+
+        assertEquals("the positive control: the phone's check reached the watch", 1, checksSentBy(phone))
+        assertEquals("the watch stopped nothing that was running", 0, stopsSentBy(watch))
+        assertEquals(TimerState.RUNNING, phoneNode.engine.currentState)
     }
 
     @Test
@@ -1591,7 +1830,7 @@ class PairRaceTest {
         world.advance(1_000L)
         assertTrue("the positive control", phoneNode.starts.linkLost)
 
-        phoneNode.stop()
+        phoneNode.stopUnheard()
 
         assertFalse(phoneNode.starts.linkLost)
     }

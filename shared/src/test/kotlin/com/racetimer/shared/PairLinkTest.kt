@@ -100,6 +100,7 @@ class PairLinkTest {
         val peerEnds = mutableListOf<PeerEnd>()
         val peerSetups = mutableListOf<PeerSetup>()
         val peerChecks = mutableListOf<PeerCheck>()
+        val peerStops = mutableListOf<PeerStop>()
         var nearbyNews = 0
         val link = PairLink(
             clock = device,
@@ -113,6 +114,7 @@ class PairLinkTest {
             onPeerSetup = { peerSetups += it },
             onPeerNearby = { nearbyNews++ },
             onPeerCheck = { peerChecks += it },
+            onPeerStop = { peerStops += it },
         )
     }
 
@@ -420,6 +422,8 @@ class PairLinkTest {
             PairMessage.Setup(Long.MIN_VALUE, 1L, 0L, "us_sailing_race_manager"),
             PairMessage.Check(1_790_000_000_000L, -9L, 36_000_500L, -4L, 36_000_600L, 36_300_000L, anchored = true, sequenceId = "custom_8m"),
             PairMessage.Check(Long.MIN_VALUE, 1L, Long.MAX_VALUE, 2L, 3L, 4L, anchored = false, sequenceId = "scholastic_race_manager_alert60s"),
+            PairMessage.Stop(-9L),
+            PairMessage.Stop(Long.MAX_VALUE),
         )
         messages.forEach { assertEquals(it, PairMessage.decode(it.encode())) }
     }
@@ -442,6 +446,8 @@ class PairLinkTest {
             // anchored flag that is neither 0 nor 1.
             "rtpair1 check 1 2 3 4 5 6 club_3_2_1", "rtpair1 check 1 2 3 4 5 6 1 1 club_3_2_1", "rtpair1 check 1 2 x 4 5 6 1 club_3_2_1",
             "rtpair1 check 1 2 3 4 5 6 1 club-3", "rtpair1 check 1 2 3 4 5 6 2 club_3_2_1", "rtpair1 check 1 2 3 4 5 6 -1 club_3_2_1",
+            // #328: a stop with no race, a field too many, and a race id that is not a number.
+            "rtpair1 stop", "rtpair1 stop 1 2", "rtpair1 stop x",
         )
         rejected.forEach { assertNull(it, PairMessage.decode(it.toByteArray(Charsets.UTF_8))) }
     }
@@ -616,6 +622,39 @@ class PairLinkTest {
         discover()
         b.link.onMessage(phone.id, arriving.encode(), watch.elapsedMs())
         assertEquals(1, b.peerChecks.size)
+    }
+
+    // --- a Stop (#328) ------------------------------------------------------------------------------
+
+    @Test
+    fun `a Stop arrives naming the race it stopped`() {
+        discover()
+        a.link.announceStop(raceId = 7L)
+        b.link.announceStop(raceId = -3L)
+        world.advance(1_000L)
+
+        assertEquals(PeerStop(7L), b.peerStops.single())
+        assertEquals(PeerStop(-3L), a.peerStops.single())
+    }
+
+    @Test
+    fun `a Stop is neither sent to nor taken from a peer reachable only through the cloud`() {
+        air.nearby = false
+        discover()
+
+        a.link.announceStop(7L)
+        world.advance(1_000L)
+        assertTrue("nothing sent over the cloud", air.sent.none { it.second.startsWith("rtpair1 stop") })
+
+        val arriving = PairMessage.Stop(7L)
+        b.link.onMessage(phone.id, arriving.encode(), watch.elapsedMs())
+        assertTrue(b.peerStops.isEmpty())
+
+        // The positive control: the same message from a nearby peer is taken.
+        air.nearby = true
+        discover()
+        b.link.onMessage(phone.id, arriving.encode(), watch.elapsedMs())
+        assertEquals(1, b.peerStops.size)
     }
 
     @Test
