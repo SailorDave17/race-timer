@@ -152,6 +152,41 @@ const val COUNTDOWN_DIGIT_ARGB = 0xFFFFFFFFL
  */
 const val TIME_OF_DAY_TEXT_ARGB = 0xFFFFFFFFL
 
+// --- The labels drawn straight onto the state background (#297) -------------
+//
+// Three pieces of quiet text sit bare on the countdown's background, with no scrim, and until #297
+// nothing measured them. Rule 1 of `docs/message-surface.md` allows that only where every
+// background the text can reach has been checked, and these were the unchecked cases. On the amber
+// that shipped until #277 the sequence name was 3.20 : 1 and the phone notice 3.93 : 1, both under
+// the bar. #277 fixed both, but only as a side effect of darkening the amber, with nothing to stop
+// the next palette change from sinking them again.
+//
+// They are ARGB values with the alpha already in the top byte, rather than a float alpha applied to
+// white on the screen, so `MessageContrastTest` measures the colour that is drawn and not a second
+// rounding of it. Compose stores `Color.White.copy(alpha = 0.7f)` as `0xB3FFFFFF`, and the same for
+// 0.85f and 0.6f, so moving from the literal to these constants changes no pixel.
+//
+// Both `TimerScreen`s read them. `shared` cannot see either screen, so the test guards these values
+// and the import keeps the screens honest. A literal `Color.White.copy(alpha = …)` coming back on
+// either `TimerScreen` is the regression the test cannot catch.
+//
+// The other white-at-an-alpha text in the app was reviewed for #297 and left out of scope. The
+// phone's picker, duration and display-choice screens draw on a fixed `BG_NORMAL_ARGB` surface, and
+// the watch's pickers draw on the theme background. Neither is a countdown state, so neither can
+// change under them when the palette is retuned. That leaves only this group.
+
+/** The sequence name above the readout, both `TimerScreen`s: white at 70 %. On screen in every state. */
+const val SEQUENCE_NAME_TEXT_ARGB = 0xB3FFFFFFL
+
+/** The phone `TimerScreen`'s one-line notice under the sequence name: white at 85 %. */
+const val PHONE_NOTICE_TEXT_ARGB = 0xD9FFFFFFL
+
+/**
+ * The pair's status line at the foot of the pre-start screen, both `TimerScreen`s: white at 60 %.
+ * Each screen shows it in `IDLE` only, so its whole exposure today is navy.
+ */
+const val PAIR_STATUS_TEXT_ARGB = 0x99FFFFFFL
+
 // --- Message surfaces -------------------------------------------------------
 
 /** Tier 1 transient banner text (`MessageBanner`). */

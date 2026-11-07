@@ -25,6 +25,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.racetimer.shared.PAIR_STATUS_TEXT_ARGB
+import com.racetimer.shared.PHONE_NOTICE_TEXT_ARGB
+import com.racetimer.shared.SEQUENCE_NAME_TEXT_ARGB
 import com.racetimer.shared.TimerState
 import kotlin.math.min
 
@@ -179,7 +182,7 @@ fun TimerScreen(
         ) {
             Text(
                 text = sequenceName,
-                color = Color.White.copy(alpha = 0.7f),
+                color = Color(SEQUENCE_NAME_TEXT_ARGB),
                 fontSize = 16.sp,
                 textAlign = TextAlign.Center,
             )
@@ -189,7 +192,7 @@ fun TimerScreen(
                 // message surface yet; when one arrives this is the line it absorbs.
                 Text(
                     text = notice,
-                    color = Color.White.copy(alpha = 0.85f),
+                    color = Color(PHONE_NOTICE_TEXT_ARGB),
                     fontSize = 16.sp,
                     textAlign = TextAlign.Center,
                 )
@@ -343,7 +346,7 @@ fun TimerScreen(
             if (state == TimerState.IDLE && pairStatus != null) {
                 Text(
                     text = pairStatus,
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = Color(PAIR_STATUS_TEXT_ARGB),
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.testTag(TAG_PAIR_STATUS),
