@@ -48,6 +48,7 @@ import com.racetimer.shared.pairGunCorrectedLine
 import com.racetimer.shared.pairGunMovedLine
 import com.racetimer.shared.pairLinkLostLine
 import com.racetimer.shared.pairStaleControlLine
+import com.racetimer.shared.pairStoppedLine
 import com.racetimer.shared.RaceSequence
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.TimerState
@@ -190,6 +191,8 @@ class MainActivity : ComponentActivity() {
             is PairEvent.StaleControl -> pairStaleControlLine(event.control, peerNoun = "Watch")
             // #222: the link came back and this phone's gun moved a few milliseconds to the watch's.
             is PairEvent.GunCorrected -> pairGunCorrectedLine(event.shiftMs, peerNoun = "Watch")
+            // #328: the watch's Stop brought this phone back to its pre-start screen.
+            PairEvent.Stopped -> pairStoppedLine(peerNoun = "Watch")
         }
         pairNewsState.value = PairNews(text, ++pairNewsSerial)
     }

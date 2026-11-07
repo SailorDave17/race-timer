@@ -24,6 +24,7 @@ import com.racetimer.shared.PeerEnd
 import com.racetimer.shared.PeerNode
 import com.racetimer.shared.PeerSetup
 import com.racetimer.shared.PeerStart
+import com.racetimer.shared.PeerStop
 import com.racetimer.shared.PeerSync
 import com.racetimer.shared.RaceKey
 import com.racetimer.shared.SetupChoice
@@ -59,7 +60,7 @@ import java.util.concurrent.Executor
  * call onto the link's own thread, and hands every start the peer sends to [onPeerStart] — on the
  * link's thread, the moment it is decoded. **So do a race's Sync and End Race, and the pre-start
  * setup (#221)**, each through its own callback, the same way — **and the check each device sends
- * when the link comes back (#222)**.
+ * when the link comes back (#222)**, and a Stop taken while a race runs (#328).
  */
 class WearablePairLink private constructor(private val app: Context) : PairAnnouncer {
 
@@ -103,6 +104,10 @@ class WearablePairLink private constructor(private val app: Context) : PairAnnou
     @Volatile
     var onPeerCheck: ((PeerCheck) -> Unit)? = null
 
+    /** Receives each Stop the peer takes of a running race, on the link's thread (#328). Set once by [PairRaces]. */
+    @Volatile
+    var onPeerStop: ((PeerStop) -> Unit)? = null
+
     /**
      * The peer's clock minus this one's from the rounds the link holds, readable from any thread, or
      * null with none. Refreshed on every status the link publishes, which it does on every kept round
@@ -143,6 +148,7 @@ class WearablePairLink private constructor(private val app: Context) : PairAnnou
         onPeerSetup = { setup -> onPeerSetup?.invoke(setup) },
         onPeerNearby = { onPeerNearby?.invoke() },
         onPeerCheck = { check -> onPeerCheck?.invoke(check) },
+        onPeerStop = { stop -> onPeerStop?.invoke(stop) },
     )
 
     private val messageListener = MessageClient.OnMessageReceivedListener { event ->
@@ -175,6 +181,10 @@ class WearablePairLink private constructor(private val app: Context) : PairAnnou
 
     override fun announceEnd(raceId: Long, elapsedMs: Long) {
         handler.post { link.announceEnd(raceId, elapsedMs) }
+    }
+
+    override fun announceStop(raceId: Long) {
+        handler.post { link.announceStop(raceId) }
     }
 
     override fun announceSetup(key: RaceKey, choice: SetupChoice) {

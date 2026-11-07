@@ -88,6 +88,9 @@ import com.racetimer.shared.startPlan
  * a moved gun re-sizes the wake lock exactly as [ACTION_SYNC] does (#126, whose defect class must
  * not be reborn through the remote path), and an ended race winds the foreground down exactly as
  * [ACTION_END_RACE] does. A Sync or End Race taken here is told to the watch after it has been taken.
+ *
+ * The watch's Stop arrives as [stopRace] (#328) and is [ACTION_STOP]'s work. A Stop taken here of a
+ * race that is running is told to the watch as it is taken; one on "GO!" or a summary is not.
  */
 class PhoneTimerService : Service(), PairRaces.RaceService {
 
@@ -361,6 +364,24 @@ class PhoneTimerService : Service(), PairRaces.RaceService {
         return held
     }
 
+    /**
+     * The watch's Stop (#328): [ACTION_STOP]'s work, for a race counting down or counting up here.
+     * Anything else — idle, "GO!", a frozen summary — has no running race to stop, and says so.
+     */
+    override fun stopRace(): Boolean {
+        if (!runner.raceInProgress) return false
+        haltRace()
+        stopForegroundAndCleanup()
+        return true
+    }
+
+    /** The engine back to the top, and the post-gun linger of the race before cancelled with it. */
+    private fun haltRace() {
+        runner.stop()
+        gunTeardownPending = false
+        handler.removeCallbacks(gunTeardownRunnable)
+    }
+
     /** The watch's setup, onto the runner's selection — only at the pre-start screen, as [atPreStart] says. */
     override fun applySetup(choice: SetupChoice) {
         if (!atPreStart()) return
@@ -463,9 +484,11 @@ class PhoneTimerService : Service(), PairRaces.RaceService {
                 stopForegroundAndCleanup()
             }
             ACTION_STOP -> {
-                runner.stop()
-                gunTeardownPending = false
-                handler.removeCallbacks(gunTeardownRunnable)
+                // A race counting down or up is stopped on the watch too (#328). Told first, while
+                // the pair can still see whether a race is running: a Stop on "GO!" or a frozen
+                // summary puts away a race already over, and stays here (`PairStarts.stoppingHere`).
+                pairRaces.stoppingHere()
+                haltRace()
                 stopForegroundAndCleanup()
             }
         }

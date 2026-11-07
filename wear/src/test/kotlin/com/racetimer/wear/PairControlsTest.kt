@@ -181,6 +181,70 @@ class PairControlsTest {
         assertEquals(TimerState.RUNNING, svc.engine.currentState)
     }
 
+    // --- #328: the phone's Stop -------------------------------------------------------------------
+
+    private class Cues : TimerListener {
+        var count = 0
+        override fun onCue(cue: SequenceCue) {
+            count++
+        }
+        override fun onGun() {}
+        override fun onTick(remainingMs: Long) {}
+        override fun onSync(snappedToMs: Long) {}
+    }
+
+    @Test
+    fun `the phone's Stop stops the watch's countdown as Stop here does, and no cue sounds after it`() {
+        val svc = startedService()
+        val cues = Cues().also { svc.engine.addListener(it) }
+        assertTrue("the positive control: the race is saved", TimerService.savedSnapshot(svc) != null)
+
+        assertTrue(svc.stopRace())
+
+        assertEquals("back at the pre-start screen", TimerState.IDLE, svc.engine.currentState)
+        assertTrue(svc.atPreStart())
+        assertFalse("wake lock survived", ShadowPowerManager.getLatestWakeLock().isHeld)
+        assertTrue("still foreground", shadowOf(svc).isForegroundStopped)
+        assertNull("a stopped race is no race to restore", TimerService.savedSnapshot(svc))
+        idle(BuiltInSequences.usSailing.totalMs + 5_000L)
+        assertEquals("nothing sounded through where the gun was", 0, cues.count)
+    }
+
+    @Test
+    fun `the phone's Stop stops a count-up too`() {
+        val sequence = BuiltInSequences.scholasticRaceManager
+        val svc = startedService(sequence)
+        idle(sequence.totalMs + 45_300L)
+        assertEquals("the positive control: counting up", TimerState.COUNTING_UP, svc.engine.currentState)
+
+        assertTrue(svc.stopRace())
+
+        assertEquals(TimerState.IDLE, svc.engine.currentState)
+        assertTrue(shadowOf(svc).isForegroundStopped)
+        assertNull(TimerService.savedSnapshot(svc))
+    }
+
+    @Test
+    fun `a summary waiting for Done, a GO and an idle watch are no race for the phone's Stop to stop`() {
+        val sequence = BuiltInSequences.scholasticRaceManager
+        val ended = startedService(sequence)
+        idle(sequence.totalMs + 45_300L)
+        ended.onStartCommand(TimerService.endRaceIntent(ended), 0, 2)
+        val frozen = ended.engine.remainingMs
+        assertEquals("the positive control: a summary", TimerState.RACE_ENDED, ended.engine.currentState)
+        assertFalse(ended.stopRace())
+        assertEquals("the final time is still on screen", frozen, ended.engine.remainingMs)
+        assertFalse("and on the notification", shadowOf(ended).isForegroundStopped)
+
+        val go = startedService(BuiltInSequences.club)
+        idle(BuiltInSequences.club.totalMs + 200L)
+        assertEquals("the positive control: GO!", TimerState.FINISHED, go.engine.currentState)
+        assertFalse(go.stopRace())
+        assertEquals(TimerState.FINISHED, go.engine.currentState)
+
+        assertFalse(createdService().stopRace())
+    }
+
     // --- AC 5: the pre-start screen's state -------------------------------------------------------
 
     @Test

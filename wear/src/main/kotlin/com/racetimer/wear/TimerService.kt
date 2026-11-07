@@ -75,7 +75,8 @@ import com.racetimer.shared.startPlan
  *   [PairRaces.RaceService]: a moved gun re-aims the cues and re-sizes the wake lock exactly as
  *   [ACTION_SYNC] does (#126 must not be reborn through the remote path), and is felt and heard as a
  *   Sync here is; an ended race freezes as [ACTION_END_RACE] freezes it. A Sync or End Race taken
- *   here is told to the phone after it has been taken.
+ *   here is told to the phone after it has been taken. The phone's Stop of a running race is
+ *   [ACTION_STOP]'s work ([stopRace], #328), and a Stop here of a running race is told to the phone.
  */
 class TimerService : Service(), PairRaces.RaceService {
 
@@ -366,6 +367,19 @@ class TimerService : Service(), PairRaces.RaceService {
         val held = engine.endRaceAt(elapsedMs) ?: return null
         updateOngoingNotification()
         return held
+    }
+
+    /**
+     * The phone's Stop (#328): [ACTION_STOP]'s work, for a race counting down or counting up here.
+     * "GO!" and a summary waiting for Done are races already over, which a Stop from the phone does
+     * not take off this screen.
+     */
+    override fun stopRace(): Boolean {
+        if (!raceRunning()) return false
+        engine.stop()
+        clearPersistedState()
+        stopForegroundAndCleanup()
+        return true
     }
 
     /**
@@ -794,6 +808,11 @@ class TimerService : Service(), PairRaces.RaceService {
                 // Also the way out of a restored race the sailor did not want, or a RACE_ENDED
                 // summary the race committee is done reading: Stop clears the snapshot, so the next
                 // Start runs the sequence from the top rather than resuming.
+                //
+                // A race counting down or up is stopped on the phone too (#328). Told first, while
+                // the pair can still see whether a race is running: Done on a summary, or Stop on
+                // "GO!", puts away a race already over, and stays here (`PairStarts.stoppingHere`).
+                pairRaces.stoppingHere()
                 engine.stop()
                 clearPersistedState()
                 stopForegroundAndCleanup()

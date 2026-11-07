@@ -50,6 +50,7 @@ import com.racetimer.shared.SetupChoice
 import com.racetimer.shared.pairGunCorrectedLine
 import com.racetimer.shared.pairGunMovedLine
 import com.racetimer.shared.pairStaleControlLine
+import com.racetimer.shared.pairStoppedLine
 import com.racetimer.shared.RestoreOutcome
 import com.racetimer.shared.SequenceCue
 import com.racetimer.shared.StartNotice
@@ -251,6 +252,8 @@ class MainActivity : ComponentActivity() {
             // #222: the link came back and this watch's gun moved a few milliseconds to the phone's.
             // News, not a condition, so Tier 1; nothing buzzed or beeped, and this is how it is said.
             is PairEvent.GunCorrected -> showTransientMessage(pairGunCorrectedLine(event.shiftMs, peerNoun = "Phone"))
+            // #328: the phone's Stop brought this watch back to its pre-start screen. News, Tier 1.
+            PairEvent.Stopped -> showTransientMessage(pairStoppedLine(peerNoun = "Phone"))
         }
     }
 

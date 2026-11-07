@@ -6,7 +6,9 @@ device applies to it. The link that measures the two clocks is
 both is [#220](https://github.com/SailorDave17/race-timer/issues/220); Sync, End Race and the
 pre-start setup taken on either device and applied on both are
 [#221](https://github.com/SailorDave17/race-timer/issues/221); what a dropped link and its return
-mean for a race is [#222](https://github.com/SailorDave17/race-timer/issues/222). All belong to epic
+mean for a race is [#222](https://github.com/SailorDave17/race-timer/issues/222); a Stop taken on
+either device stopping the race on both is
+[#328](https://github.com/SailorDave17/race-timer/issues/328). All belong to epic
 [#196](https://github.com/SailorDave17/race-timer/issues/196), whose decision registry the D-numbers
 below refer to.
 
@@ -42,8 +44,8 @@ D2 was ratified on three conditions for the production link. Where each one live
 
 One line of UTF-8 text each, a version tag first: `rtpair1 <kind> <fields…>`. A device that reads a
 tag or a kind it does not know drops the line, so two app versions that disagree about the format
-have no link rather than a wrong one. The version tag did not move for #220, #221 or #222: an app
-from before any of them reads the new kind as one it does not know and drops it.
+have no link rather than a wrong one. The version tag did not move for #220, #221, #222 or #328: an
+app from before any of them reads the new kind as one it does not know and drops it.
 
 | Kind | Fields | Sent when |
 |---|---|---|
@@ -55,6 +57,7 @@ from before any of them reads the new kind as one it does not know and drops it.
 | `end` | the race id, and the elapsed time the race was frozen at | End Race was taken, or an earlier end kept and sent back (#221) |
 | `setup` | the pick's stamp (on the phone's clock) and a random id, the lead-in alert in seconds, and the sequence id without any lead-in | A pre-start pick was made, the peer came into range, a race ended, or the later pick is sent back (#221) |
 | `check` | a `start`'s stamp and race id, the stamp and random id the gun was last set under (a Sync's, or the start's own), when it left and the gun (both on the sender's clock), 1 if the sender set that gun itself and 0 if it placed it through the link, and the sequence id | The peer came into range while a race is running here (#222) |
+| `stop` | the race id | Stop was taken while that race was counting down or up, or the peer's check named a race stopped here (#328) |
 
 Every field is a number except the sequence id a `start`, a `setup` or a `check` ends with. That id is the
 string a saved race already carries (`custom_8m`, `scholastic_race_manager_alert60s`), and
@@ -205,12 +208,38 @@ leaves the foreground and clears its saved race; the watch leaves its summary up
 its own end and the peer's, and one that keeps its own sends it back, so the pair converges on one
 time even when one of the two is lost.
 
+## Stop on either device (#328)
+
+**A Stop taken while a race is counting down or counting up stops it on both devices** — the lead-in
+included. It carries nothing but the race it stopped: a Stop has no result two devices could read
+differently, so there is nothing to translate. The receiver does what its own Stop does — no further
+cue, the saved race cleared, the foreground left, back to the pre-start screen — and says so: *Phone
+stopped the race* as a Tier 1 banner on the watch, *Watch stopped the race* on the phone's notice line
+for three seconds. The owner's rule at #328's pickup: a countdown that vanishes with no word reads as
+a fault.
+
+**Only a running race's Stop is sent** (`PairStarts.stoppingHere`, asked before the engine stops).
+Stop also puts away a race that is already over — the watch's Done on a summary, a Stop on "GO!" —
+and those stay on the device they are tapped on, so one device never
+takes a frozen finish time off a screen the committee is still writing it down from (the owner's
+rule at #328's pickup). A race restored after a process death has no race id here and sends no Stop,
+as it sends no other control (below).
+
+**Two Stops that cross change nothing more.** Each device remembers the race it stopped, by its own
+Stop or the peer's, and a Stop of that race arriving afterwards is the other half of the crossing:
+taken silently, not said as stale.
+
+A Stop then a Start on one device — the general recall — stops both and starts both; a Start tapped
+on the other device after a Stop joins as any start does.
+
 ## A control for a race not running here (#221 AC 3)
 
-Every `sync` and `end` names its race. A device applies one only to **the race it names, and only
+Every `sync`, `end` and `stop` names its race. A device applies one only to **the race it names, and only
 while that race is running here**; anything else is dropped and said — *Phone synced a race not
 running here* as a Tier 1 banner on the watch, *Watch ended a race not running here* on the phone's
-notice line for three seconds. It is never applied to whatever the device happens to be running.
+notice line for three seconds, and *… stopped a race not running here* likewise for a Stop (#328). It
+is never applied to whatever the device happens to be running. A Stop for a race already over here —
+a summary waiting for Done, a "GO!" — is one of these: it does not take the summary off the screen.
 That covers a control delayed past a link drop and a restart on this device, and one for a race
 this device has since stopped: a device remembers the race it last started or joined after the race
 is over, so a late control for it is recognised as its own rather than taken for another's.
@@ -285,7 +314,8 @@ does:
 |---|---|
 | Running the same race | Judges the gun by D6 (below) |
 | Ended that race while apart | Sends its End Race again, so the peer freezes at the same time (#221's earlier-end rule) |
-| Stopped that race while apart | Nothing. Stop is not mirrored until [#328](https://github.com/SailorDave17/race-timer/issues/328), and a stopped race is never rejoined |
+| Stopped that race while apart | Sends its Stop again, so the peer stops too (#328). A stopped race is never rejoined |
+| Finished that race otherwise — run to its gun, or its summary put away | Nothing: there is no Stop of the officer's to send |
 | Idle, or running another race | Takes it as a start (#220's rule): joins from idle; a running race switches if the check's start was tapped later, or keeps its own and sends it again; the phone offers the choice as #220 does |
 
 ### D6: the gun, corrected or flagged
@@ -318,8 +348,8 @@ far inside 100 ms; what a check finds beyond it is a Sync taken while apart, or 
 ## What each device keeps
 
 No wall-clock time crosses the link: every number a start, a Sync, a pick or a check carries is a
-reading of a device's clock since boot, a random id, or — for End Race — a duration; and a check's
-last number is a single bit.
+reading of a device's clock since boot, a random id, or — for End Race — a duration; a check's last
+number is a single bit; and a Stop's only number is its race's random id.
 
 The keys and race ids live in memory (`PairRaceBook`, the most recent 64), for the process's life,
 and so do the setup's key (`PairSetup`). A joined race is saved as any race is — its sequence and its
@@ -330,17 +360,15 @@ is — the sequence and the lead-in alert, in the keys each app already had — 
 
 ## What the pair does not do yet
 
-- **Stop is mirrored by no story yet.** A Stop on one device leaves the other counting. A Start tapped
-  after it takes the other device over, as the rule above says, so a general recall restarts both.
-  [#328](https://github.com/SailorDave17/race-timer/issues/328) mirrors it under the control rule
-  above.
 - **A race restored after a process death takes no control from the peer, and sends none.** It has
   no key and no race id here, so a Sync or End Race naming the race it was is stale on this device,
   and one taken on it is not told. The next start on either device joins both again.
 - **A single Sync lost in transit while both are in range is not sent again.** Only two that cross
   are resent, by the device holding the later. The two guns then differ by the Sync until the next
   one. A Sync taken while the two were *apart* is found when they meet (#222, above); one lost with
-  both in range is not, since nothing sends a check without a drop.
+  both in range is not, since nothing sends a check without a drop. **The same is true of a Stop**
+  (#328): one lost with both in range leaves the other device counting until a Start on either takes
+  it over, or a Stop there.
 - **A gun a suspend moved is not seen.** A device suspended between races can come back with its
   clock offset moved by a fraction of a second, and a start it joins before a fresh round lands on
   the stale rounds, reporting itself in budget. That is
@@ -361,7 +389,8 @@ the link at every phase (pre-start, lead-in, countdown, count-up), and holds D6 
 gap of exactly 100 ms corrected and 101 ms flagged, both signs, over a link with no error. `PairLinkTest`
 covers the wire, the nearby rule and the held offset; `TimerEngineTest` covers `join`, `moveGun` and
 `endRaceAt`; each app's `PairJoinTest` covers the service arm, and each app's `PairControlsTest` the
-service carrying out the peer's Sync (the wake lock re-sized, #221 AC 4), End Race and setup, and a
-reconnect's correction (not heard as a Sync) and flag (#222);
+service carrying out the peer's Sync (the wake lock re-sized, #221 AC 4), End Race and setup, a
+reconnect's correction (not heard as a Sync) and flag (#222), and the peer's Stop, which leaves a
+summary or a "GO!" alone (#328);
 `FollowRemoteStartTest`, `TimerScreenPairChoiceTest` and `PairNewsOnScreenTest` cover the phone's
 screen.

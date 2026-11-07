@@ -192,6 +192,64 @@ class PairControlsTest {
         assertFalse(shadowOf(svc).isForegroundStopped)
     }
 
+    // --- #328: the watch's Stop -------------------------------------------------------------------
+
+    private class Cues : TimerListener {
+        var count = 0
+        override fun onCue(cue: SequenceCue) {
+            count++
+        }
+        override fun onGun() {}
+        override fun onTick(remainingMs: Long) {}
+        override fun onSync(snappedToMs: Long) {}
+    }
+
+    @Test
+    fun `the watch's Stop stops the phone's countdown as Stop here does, and no cue sounds after it`() {
+        val svc = startedService()
+        val cues = Cues().also { svc.runner.engine.addListener(it) }
+        assertNotNull("the positive control: the race is saved", persistence().saved())
+
+        assertTrue(svc.stopRace())
+
+        assertEquals("back at the pre-start screen", TimerState.IDLE, svc.runner.engine.currentState)
+        assertFalse("wake lock survived", ShadowPowerManager.getLatestWakeLock().isHeld)
+        assertTrue("still foreground", shadowOf(svc).isForegroundStopped)
+        assertNull("a stopped race is no race to restore", persistence().saved())
+        idle(BuiltInSequences.usSailing.totalMs + 5_000L)
+        assertEquals("nothing sounded through where the gun was", 0, cues.count)
+    }
+
+    @Test
+    fun `the watch's Stop stops a count-up too`() {
+        val svc = countingUp()
+        assertEquals("the positive control: counting up", TimerState.COUNTING_UP, svc.runner.engine.currentState)
+
+        assertTrue(svc.stopRace())
+
+        assertEquals(TimerState.IDLE, svc.runner.engine.currentState)
+        assertTrue(shadowOf(svc).isForegroundStopped)
+        assertNull(persistence().saved())
+    }
+
+    @Test
+    fun `a frozen summary, a GO and an idle phone are no race for the watch's Stop to stop`() {
+        val ended = countingUp()
+        ended.onStartCommand(Intent().setAction(PhoneTimerService.ACTION_END_RACE), 0, 2)
+        val frozen = ended.runner.engine.remainingMs
+        assertFalse(ended.stopRace())
+        assertEquals("the final time is still on screen", TimerState.RACE_ENDED, ended.runner.engine.currentState)
+        assertEquals(frozen, ended.runner.engine.remainingMs)
+
+        val go = startedService(BuiltInSequences.club)
+        idle(BuiltInSequences.club.totalMs + 500L)
+        assertEquals("the positive control: GO!", TimerState.FINISHED, go.runner.engine.currentState)
+        assertFalse(go.stopRace())
+        assertEquals(TimerState.FINISHED, go.runner.engine.currentState)
+
+        assertFalse(createdService().stopRace())
+    }
+
     // --- AC 5: the watch's setup ------------------------------------------------------------------
 
     @Test

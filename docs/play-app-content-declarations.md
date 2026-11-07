@@ -450,6 +450,25 @@ of a device running a race, and only then. Still no time of day crosses the link
 | **Foreground service permissions** | **Block unchanged; declaration text revised** | `docs/play-store-fgs-justification.md`: the long form gained the sentence saying when a check is sent; the Console block already names what it carries, so #222 adds nothing to the re-paste #220 and #221 owe |
 | Every other section | Unchanged | Nothing here touches ads, ratings, the advertising ID, target audience, health, finance, government, app access or data deletion |
 
+## Stop over the link — re-checked for #328, 2026-11-06
+
+[#328](https://github.com/SailorDave17/race-timer/issues/328) makes a Stop taken on either device,
+while a race counts down or up, stop the race on both. Like #220–#222 it adds **no permission, no
+dependency and no component** — `docs/declared-surface.lock` is unchanged again — and it adds one
+message kind, the stop. The format is [`pair-protocol.md`](pair-protocol.md).
+
+**What it carries that nothing did before: nothing.** Its one field is the race's random id, which
+every start already sends. What is new is the **occasion**: a Stop tapped while a race is running, or
+sent back when the other device comes into range and names a race stopped here. Still no time of day
+crosses the link.
+
+| Console section | After #328 | Why |
+|---|---|---|
+| **Privacy policy URL** | Same URL, **revised content** | `docs/privacy-policy.md` revised in the same change: one row added to what is exchanged, and "stop" added to the Summary, the paragraph above the table, the race-id and reconnect rows, and *Nothing in it identifies you*. Nothing new is stored. The effective date moves to 7 November 2026, the day it is expected to merge; otherwise move it to the merge day, and confirm the live page when #328 merges |
+| **Data safety** | **No data collected. No data shared** — unchanged | The #220 argument carries it by the same three mechanisms: to the user's own other device only; to and from a directly connected peer only (`PairLinkTest`'s "a Stop is neither sent to nor taken from a peer reachable only through the cloud", #328's mutation M11, 1 red as predicted); and nothing kept, since a Stop taken from the peer clears the saved race as a Stop here does. The open question grows by nothing: a stop says less than a start already said |
+| **Foreground service permissions** | **Text revised — the Console block needs re-pasting** | `docs/play-store-fgs-justification.md`: the block's "only things it sends" sentence now names the stop. The one re-paste owed now covers #220, #221, #294 and #328 |
+| Every other section | Unchanged | Nothing here touches ads, ratings, the advertising ID, target audience, health, finance, government, app access or data deletion |
+
 ## The companion link — re-checked for #294, 2026-11-03
 
 [#294](https://github.com/SailorDave17/race-timer/issues/294) has the phone app hand each start
@@ -544,6 +563,7 @@ change that, on the day it merges, makes something above **wrong**.
 | **Data Layer sync between the watch and the phone** ([#219](https://github.com/SailorDave17/race-timer/issues/219)) | **Landed 2026-09-25.** Data does now leave a device by the app's own action — clock readings, to the user's other device — and Data safety was re-answered from scratch in *The pair link* above rather than edited: same answer, new grounds, one gap named. The privacy policy and the FGS justification were rewritten where they said the app transmits nothing; no permission moved in either manifest. The watch's standalone `meta-data` was re-read and stays true, as predicted |
 | **Starts sent over the link** ([#220](https://github.com/SailorDave17/race-timer/issues/220)) | **Landed 2026-09-28.** No permission, dependency or component moved, so the lock stayed green — the example of a change this table predicts that the lock by construction cannot see. What moved is **what is sent**: a sequence id, the first thing sent that describes what the user did. The privacy policy, the FGS text (Console re-paste owed) and Data safety's reasons moved; Data safety's answer did not, pending the question in *Race starts over the link* |
 | **Race controls and the start screen sent over the link** ([#221](https://github.com/SailorDave17/race-timer/issues/221)) | **Landed with #221.** No permission, dependency or component moved, so the lock stayed green for the second time running. What moved is again **what is sent**: a Sync's gun, an End Race's elapsed time, and the start screen's choice. The privacy policy and the FGS text moved (one Console re-paste now covers #220 and #221); Data safety's answer did not, and its open question grew by the start screen's choice |
+| **A Stop sent over the link** ([#328](https://github.com/SailorDave17/race-timer/issues/328)) | **Landed with #328.** No permission, dependency or component moved, so the lock stayed green again. What moved is the **occasion** something is sent, not what: a stop carries only the race id a start already sends. The privacy policy and the FGS text moved (the owed re-paste now covers #328 as well); Data safety's answer and its open question did not |
 | **Haptics on the phone** ([#208](https://github.com/SailorDave17/race-timer/issues/208)) | **Landed 2026-09-05.** Added `VIBRATE` to the phone manifest. Nothing in this document moved — the permission was already declared by the watch and already in the app-wide set — and `docs/privacy-policy.md`'s permission table, which said `VIBRATE` was **watch-only**, was corrected in the same change, with its effective date. Kept as the worked example of a manifest change that moves one document and not the other |
 
 **One row of this table has already been half-resolved, and the correction is instructive.** It
