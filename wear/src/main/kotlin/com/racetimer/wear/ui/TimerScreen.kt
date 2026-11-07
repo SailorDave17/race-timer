@@ -54,6 +54,8 @@ import com.racetimer.shared.BG_FINAL_TEN_ARGB
 import com.racetimer.shared.BG_FINAL_TEN_FLASH_ARGB
 import com.racetimer.shared.COUNTDOWN_DIGIT_ARGB
 import com.racetimer.shared.NoticeTier
+import com.racetimer.shared.PAIR_STATUS_TEXT_ARGB
+import com.racetimer.shared.SEQUENCE_NAME_TEXT_ARGB
 import com.racetimer.shared.StartNotice
 import com.racetimer.shared.StartRemedy
 import com.racetimer.shared.TIER1_SCRIM_ARGB
@@ -277,7 +279,7 @@ fun TimerScreen(
             FittedText(
                 text = if (canPick) "$sequenceName  ▾" else sequenceName,
                 style = MaterialTheme.typography.caption1,
-                color = Color.White.copy(alpha = 0.7f),
+                color = Color(SEQUENCE_NAME_TEXT_ARGB),
                 modifier = Modifier
                     .staysInsideRoundScreen()
                     .let { if (canPick) it.clickable(onClick = onPickSequence) else it },
@@ -494,7 +496,7 @@ fun TimerScreen(
             Text(
                 text = pairStatus,
                 style = MaterialTheme.typography.caption3,
-                color = Color.White.copy(alpha = 0.6f),
+                color = Color(PAIR_STATUS_TEXT_ARGB),
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 modifier = Modifier

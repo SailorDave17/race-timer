@@ -355,6 +355,81 @@ class MessageContrastTest {
         )
     }
 
+    // --- The labels drawn straight onto the state background (#297) ----------------------------
+
+    /** A translucent [textArgb] as it lands on [bg]: its alpha composited first, then measured. */
+    private fun bareLabelContrast(textArgb: Long, bg: Long): Double =
+        contrastRatio(compositeOver(textArgb, bg), bg)
+
+    private fun assertBareLabelLegible(name: String, textArgb: Long, backgrounds: Set<Long>) {
+        for (bg in backgrounds) {
+            val ratio = bareLabelContrast(textArgb, bg)
+            assertTrue(
+                "$name on background ${bg.toString(16)} is %.2f : 1, below the %.1f : 1 bar"
+                    .format(ratio, WCAG_NORMAL_TEXT_MIN),
+                ratio >= WCAG_NORMAL_TEXT_MIN,
+            )
+        }
+    }
+
+    @Test fun `the sequence name is legible on every background it can render on`() {
+        // On screen in every state on both screens, so rule 1 holds it to every background. The
+        // phone has no flash, so the trough is wider than its own reach. That errs the safe way, and
+        // one set for both screens means neither can drop out of the check.
+        val reachable = renderedBackgroundsWhen { true }
+        assertTrue(
+            "the positive control: the final-ten flash trough must be in the set",
+            BG_FINAL_TEN_FLASH_ARGB in reachable,
+        )
+        assertBareLabelLegible("sequence name", SEQUENCE_NAME_TEXT_ARGB, reachable)
+    }
+
+    @Test fun `the phone notice line is legible on every background it can render on`() {
+        // MainActivity passes the notice whatever the engine's state, so every background is live.
+        assertBareLabelLegible("phone notice", PHONE_NOTICE_TEXT_ARGB, renderedBackgroundsWhen { true })
+    }
+
+    @Test fun `the pair status line is legible on the pre-start screen it is confined to`() {
+        // Both TimerScreens gate it on IDLE, so navy is its whole exposure, the way the discard
+        // warning's is. If IDLE ever gains a colour, the derived set brings it in here.
+        assertBareLabelLegible("pair status", PAIR_STATUS_TEXT_ARGB, renderedBackgroundsWhen { it == TimerState.IDLE })
+        assertEquals(6.81, bareLabelContrast(PAIR_STATUS_TEXT_ARGB, BG_NORMAL_ARGB), 0.01)
+    }
+
+    @Test fun `the sequence name failed on the amber that shipped before 277`() {
+        // The negative control #297 asked for. Nothing measured this label while the old amber was
+        // live, and it sat under the bar for months. The notice line failed with it. Both are
+        // asserted as failures so the guard above is known to be able to fail.
+        val name = bareLabelContrast(SEQUENCE_NAME_TEXT_ARGB, AMBER_BEFORE_277)
+        assertEquals(3.20, name, 0.01)
+        assertFalse(
+            "the 70 %% name on the old amber is %.2f : 1 and must stay below the bar".format(name),
+            name >= WCAG_NORMAL_TEXT_MIN,
+        )
+        val notice = bareLabelContrast(PHONE_NOTICE_TEXT_ARGB, AMBER_BEFORE_277)
+        assertEquals(3.93, notice, 0.01)
+        assertFalse("the 85 % notice on the old amber must stay below the bar", notice >= WCAG_NORMAL_TEXT_MIN)
+    }
+
+    @Test fun `the labels are measured after their alpha, not as opaque white`() {
+        // contrastRatio ignores alpha. Measured straight, the 70 % name would read as opaque white
+        // and clear the old amber at 4.77 : 1. Composited, it fails there at 3.20.
+        assertTrue(contrastRatio(SEQUENCE_NAME_TEXT_ARGB, AMBER_BEFORE_277) >= WCAG_NORMAL_TEXT_MIN)
+        assertFalse(bareLabelContrast(SEQUENCE_NAME_TEXT_ARGB, AMBER_BEFORE_277) >= WCAG_NORMAL_TEXT_MIN)
+    }
+
+    @Test fun `the figures 297 recorded are the computed ones`() {
+        // #297's table, pinned so a retune that moves the tight case says so here. The finished
+        // green is the worst background for both labels since #277.
+        assertEquals(6.55, bareLabelContrast(SEQUENCE_NAME_TEXT_ARGB, BG_ONE_MINUTE_ARGB), 0.01)
+        assertEquals(8.86, bareLabelContrast(PHONE_NOTICE_TEXT_ARGB, BG_ONE_MINUTE_ARGB), 0.01)
+        for ((label, worst) in listOf(SEQUENCE_NAME_TEXT_ARGB to 5.64, PHONE_NOTICE_TEXT_ARGB to 7.53)) {
+            val tightest = renderedBackgroundsWhen { true }.minByOrNull { bareLabelContrast(label, it) }!!
+            assertEquals(BG_FINISHED_ARGB, tightest)
+            assertEquals(worst, bareLabelContrast(label, tightest), 0.01)
+        }
+    }
+
     @Test fun `darkening the amber took the digits from barely over the bar to well clear of it`() {
         // #277's recorded figure, asserted so it cannot age in the KDoc or the doc. The old value
         // is asserted too: it is the evidence that the retune moved the right way, and it matches
