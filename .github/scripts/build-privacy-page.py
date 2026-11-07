@@ -8,18 +8,29 @@ address -- all already visible in a public repo, but a rendered, search-indexed 
 thing from a file in a git tree, and that is exactly how the pairing address ended up online.
 
 Run by the publish workflow on every change to the policy, and by hand for the first publish, so the
-two cannot diverge.
+two cannot diverge. CI runs it as well, on every PR and push, so a change that breaks the script or
+makes the document refuse fails on the PR instead of in the publish run after the merge (#306).
 
     python .github/scripts/build-privacy-page.py <output-dir>
+    python .github/scripts/build-privacy-page.py --selftest     # known-answer cases; wired into CI
 
 Every transform asserts its own precondition. Stripping the maintainer block by a pattern that
 matched nothing would publish the block, and the failure would be silent -- the page would render
 fine, because the block is an HTML comment and browsers do not draw it.
+
+Every refusal a document can trigger has a known-answer case in --selftest, matched on that
+refusal's own message rather than on a non-zero exit. (The two that are about how the script was
+invoked -- the argument count, and the working directory -- have none: deleting either turns a clear
+message into a traceback, and publishes nothing.) Two of them overlap on purpose: the leftover-terminator check is a spare for
+the premature-terminator check, so with the premature check deleted the same input is still refused,
+in the spare's words. Only the message shows which check fired (#266, run R9), so an exit-code
+assertion would stay green through that deletion.
 """
 
 import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 SOURCE = Path("docs/privacy-policy.md")
@@ -101,21 +112,18 @@ def strip_maintainer_block(text):
     return stripped.rstrip() + "\n"
 
 
-def main():
-    if len(sys.argv) != 2:
-        raise SystemExit(__doc__)
-    out = Path(sys.argv[1])
-
-    if not SOURCE.exists():
-        raise SystemExit(f"{SOURCE} not found -- run this from the repository root")
-
-    policy = strip_maintainer_block(SOURCE.read_text(encoding="utf-8"))
+def build_policy(text):
+    """The text to publish, made from the source document, or a refusal."""
+    policy = strip_maintainer_block(text)
 
     # A published policy that does not say when it took effect is not a policy Play will accept,
     # and the placeholder is easy to leave behind.
     if "Effective date:" not in policy:
         raise SystemExit("the policy has no effective date -- refusing to publish")
+    return policy
 
+
+def write_site(policy, out):
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
@@ -123,6 +131,163 @@ def main():
     (out / "_config.yml").write_text(CONFIG, encoding="utf-8")
     (out / "index.md").write_text(INDEX, encoding="utf-8")
     (out / "privacy-policy.md").write_text(FRONT_MATTER + policy, encoding="utf-8")
+
+
+# --selftest (#306). Each case says what it expects before it runs, and a refusing case names the
+# refusal it expects by that refusal's own words. Each fixture breaks exactly one rule and is clean on
+# every other, so with its own check deleted it either builds or is refused in a different check's
+# words, and the case reads both as a failure. The fixtures live here, not in docs/, so the cases
+# mean the same on every machine whatever the checkout's line endings.
+
+_PUBLIC = (
+    "# Privacy Policy\n"
+    "\n"
+    "**Effective date:** 1 January 2026\n"
+    "\n"
+    "The app collects no data.\n"
+)
+
+_PUBLIC_UNDATED = (
+    "# Privacy Policy\n"
+    "\n"
+    "The app collects no data.\n"
+)
+
+_BLOCK = (
+    "<!--\n"
+    "MAINTAINER NOTES - remove this block before publishing.\n"
+    "\n"
+    "Where each claim above is checked.\n"
+    "-->\n"
+)
+
+# The #266 leak. Line 9 of _doc(block=_BLOCK_CUT_SHORT): five lines of _PUBLIC, the blank line _doc
+# adds, then the opener, the MAINTAINER line and this one.
+_BLOCK_CUT_SHORT = (
+    "<!--\n"
+    "MAINTAINER NOTES - remove this block before publishing.\n"
+    "A stray --> ends the comment here, in the source as well as in the strip.\n"
+    "So this line and the rest of the block would publish.\n"
+    "-->\n"
+)
+
+
+def _doc(public=_PUBLIC, block=_BLOCK):
+    """A source document: the public text, a blank line, then the trailing maintainer block."""
+    return public + "\n" + block
+
+
+SELFTEST_CASES = []
+
+# The number of cases below. A run that registers fewer has lost one, and passing on what is left
+# would certify a refusal that no longer has a case.
+EXPECTED_CASES = 8
+
+
+def case(name, expect):
+    def wrap(fn):
+        SELFTEST_CASES.append((name, expect, fn))
+        return fn
+    return wrap
+
+
+def _refused(text, *fragments):
+    """Build `text`, and require a refusal whose message carries every fragment."""
+    try:
+        build_policy(text)
+    except SystemExit as exc:
+        message = str(exc.code)
+        assert all(f in message for f in fragments), "refused in another check's words: " + message
+        return
+    raise AssertionError("built without refusing")
+
+
+@case("a clean document builds: the block is gone and the public text is kept as written", "build")
+def _clean():
+    policy = build_policy(_doc())
+    assert policy == _PUBLIC, repr(policy)
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "site"
+        write_site(policy, out)
+        names = sorted(f.name for f in out.iterdir())
+        assert names == ["_config.yml", "index.md", "privacy-policy.md"], names
+        assert (out / "privacy-policy.md").read_text(encoding="utf-8") == FRONT_MATTER + _PUBLIC
+
+
+@case("no maintainer block is refused by the count check", "refuse")
+def _no_block():
+    _refused(_PUBLIC, "expected exactly 1 maintainer block in", ", found 0 --")
+
+
+@case("two maintainer blocks are refused by the count check", "refuse")
+def _two_blocks():
+    _refused(_doc() + "\n" + _BLOCK, "expected exactly 1 maintainer block in", ", found 2 --")
+
+
+@case("a `-->` inside the block is refused by the premature-terminator check, naming its line", "refuse")
+def _cut_short():
+    _refused(
+        _doc(block=_BLOCK_CUT_SHORT),
+        "line 9: a `-->` inside the maintainer block closes the HTML comment there",
+    )
+
+
+@case("the MAINTAINER literal in the public text is refused", "refuse")
+def _literal():
+    _refused(_doc(public=_PUBLIC + "Write to the MAINTAINER with questions.\n"),
+             "maintainer text survived the strip")
+
+
+@case("an unclosed `<!--` in the public text is refused", "refuse")
+def _opener():
+    _refused(_doc(public=_PUBLIC + "A draft note <!-- left open\n"),
+             "an HTML comment survived the strip")
+
+
+@case("a `-->` in the public text is refused by the leftover-terminator check", "refuse")
+def _terminator():
+    _refused(_doc(public=_PUBLIC + "An arrow --> in the prose.\n"),
+             "an HTML comment terminator `-->` survived the strip")
+
+
+@case("a policy with no effective date is refused", "refuse")
+def _no_date():
+    _refused(_doc(public=_PUBLIC_UNDATED), "the policy has no effective date")
+
+
+def selftest(out=sys.stdout):
+    failed = 0
+    for name, expect, fn in SELFTEST_CASES:
+        try:
+            fn()
+            print("  ok   [{}] {}".format(expect, name), file=out)
+        except AssertionError as exc:
+            failed += 1
+            print("  FAIL [{}] {}: {}".format(expect, name, exc), file=out)
+        # A crash is a failure and must be named. So is a refusal the case did not ask for: SystemExit
+        # is not an Exception, and uncaught it would end the run here with the remaining cases unrun.
+        except (Exception, SystemExit) as exc:  # noqa: BLE001
+            failed += 1
+            print("  FAIL [{}] {}: unexpected {}: {}".format(expect, name, type(exc).__name__, exc), file=out)
+    print("{} case(s), {} failed".format(len(SELFTEST_CASES), failed), file=out)
+    if len(SELFTEST_CASES) < EXPECTED_CASES:
+        print("FAIL: {} case(s) registered, {} expected -- a case was dropped".format(
+            len(SELFTEST_CASES), EXPECTED_CASES), file=out)
+        return 1
+    return 1 if failed else 0
+
+
+def main():
+    if sys.argv[1:] == ["--selftest"]:
+        raise SystemExit(selftest())
+    if len(sys.argv) != 2:
+        raise SystemExit(__doc__)
+    out = Path(sys.argv[1])
+
+    if not SOURCE.exists():
+        raise SystemExit(f"{SOURCE} not found -- run this from the repository root")
+
+    write_site(build_policy(SOURCE.read_text(encoding="utf-8")), out)
 
     print(f"built {out}/ from {SOURCE}")
     print(f"  canonical URL: {CANONICAL}")
