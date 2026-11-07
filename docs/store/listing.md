@@ -245,8 +245,9 @@ are not visible from the text itself.
   **unfinished** — [#121](https://github.com/SailorDave17/race-timer/issues/121) is open.
 - **No promise you will always hear or feel the gun.** Under Do Not Disturb the tones are silent —
   `setStreamVolume` is refused, and the watch says so during the race, since
-  [#96](https://github.com/SailorDave17/race-timer/issues/96) shipped the Tier 3 line *"Do Not
-  Disturb — cues silent, wrist still buzzing"*. The wrist is the channel that survives: cues are
+  [#96](https://github.com/SailorDave17/race-timer/issues/96) shipped the Tier 3 line, which reads
+  *"Do Not Disturb — cues on wrist only"* since
+  [#301](https://github.com/SailorDave17/race-timer/issues/301). The wrist is the channel that survives: cues are
   declared `USAGE_TOUCH`, and **30 of 30 were delivered at `zen_mode=2`, the 3000 ms gun included**
   ([#144](https://github.com/SailorDave17/race-timer/issues/144) →
   [#187](https://github.com/SailorDave17/race-timer/pull/187)). The copy still describes the cue

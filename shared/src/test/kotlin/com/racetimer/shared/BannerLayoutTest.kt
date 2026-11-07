@@ -119,6 +119,14 @@ class BannerLayoutTest {
     /** One px of the reference screen, which is as fine as a `screencap` measurement reads. */
     private val onePx = 1f / REFERENCE_SCREEN_PX
 
+    /**
+     * #96's wording of the Do Not Disturb notice, the string the watch drew on three lines.
+     *
+     * #301 reworded `NOTICE_CUE_VOLUME_REFUSED` onto two lines. The measurements this file checks
+     * the model against are of this string, so the tests that use them keep it.
+     */
+    private val notice96AsMeasured = "Do Not Disturb — cues silent, wrist still buzzing"
+
     @Test fun `the plate grows by one measured line per line`() {
         // Wiring rather than evidence: the line height and the inset are *solved* from these two
         // plates, so this proves the function puts them back together, not that they are right.
@@ -132,16 +140,22 @@ class BannerLayoutTest {
         // comes from where the label sat, the spacer from the source and the density, and the
         // squeeze from the buttons, which nothing above was measured from. Start went from 119 to
         // 111 px under the two-line notice, and Sync from 136 to 81 px under the three-line one.
-        assertEquals(8f / 450f, statusLineOverflowFraction(2, StatusLineScreen.PRE_START), 2 * onePx)
-        assertEquals(55f / 450f, statusLineOverflowFraction(3, StatusLineScreen.RUNNING), 2 * onePx)
+        //
+        // Those were measured on the column before #301, which still held the sync-label slot
+        // under a plate. So this is the plate's whole cost against the spare room, with no slot
+        // given back. The shipped column's figures are in the #301 section below.
+        assertEquals(8f / 450f, statusLineCostFraction(2) - StatusLineScreen.PRE_START.spareFraction, 2 * onePx)
+        assertEquals(55f / 450f, statusLineCostFraction(3) - StatusLineScreen.RUNNING.spareFraction, 2 * onePx)
     }
 
-    @Test fun `a notice that ships fills the column, so its plate is pinned where the watch drew it`() {
-        // The two states the watch was measured in, and the finding in one assertion each. Both
-        // overflow, which is what pins the top, and the pinned top is the measured edge.
-        assertTrue(statusLineOverflowFraction(2, StatusLineScreen.PRE_START) > 0f)
+    @Test fun `a three-line plate still fills the column, so it is pinned where the watch drew one`() {
+        // The ceiling, exercised on the shipped column. Even with the slot given back, three lines
+        // cost more than either screen has spare, so the column is full and the plate's top is
+        // the measured edge. No warning that ships reaches this state any more (#301, asserted
+        // below), and the ceiling is still what makes the bezel test below able to fail.
+        assertTrue(statusLineOverflowFraction(3, StatusLineScreen.PRE_START) > 0f)
         assertTrue(statusLineOverflowFraction(3, StatusLineScreen.RUNNING) > 0f)
-        assertEquals(55f / 450f, statusLineTopFraction(2, StatusLineScreen.PRE_START), onePx)
+        assertEquals(55f / 450f, statusLineTopFraction(3, StatusLineScreen.PRE_START), onePx)
         assertEquals(51f / 450f, statusLineTopFraction(3, StatusLineScreen.RUNNING), onePx)
     }
 
@@ -216,17 +230,126 @@ class BannerLayoutTest {
     @Test fun `the notice that exposed the gap takes three lines on the surface it renders on`() {
         // The cross-check, and it is independent of the calibration above: nothing about matching
         // the doc's 34 forces this to come out at three. *Measured on an SM-R925U* (#96), the Do
-        // Not Disturb warning renders on three lines — so a model that said two would be a model
-        // of nothing, whatever else it reproduced.
-        assertEquals(3, MessageSurface.STATUS_LINE.linesFor(NOTICE_CUE_VOLUME_REFUSED))
-        assertTrue(MessageSurface.STATUS_LINE.holds(NOTICE_CUE_VOLUME_REFUSED))
+        // Not Disturb warning rendered on three lines — so a model that said two would be a model
+        // of nothing, whatever else it reproduced. Pinned to the wording the watch drew, which
+        // #301 has since replaced, because the measurement is of that string and not of the
+        // constant's current value.
+        assertEquals(3, MessageSurface.STATUS_LINE.linesFor(notice96AsMeasured))
+        assertTrue(MessageSurface.STATUS_LINE.holds(notice96AsMeasured))
     }
 
     @Test fun `the same notice would have taken two lines on the banner`() {
         // The negative control for the test above: it pins the *cause* to the width cap rather than
         // to the string being long. Identical text, identical model, one surface — and the reason
         // the 60-character ceiling read as a two-line fit for four months.
-        assertEquals(2, MessageSurface.BANNER.linesFor(NOTICE_CUE_VOLUME_REFUSED))
+        assertEquals(2, MessageSurface.BANNER.linesFor(notice96AsMeasured))
+    }
+
+    // --- What a plate may take from the buttons: nothing (#301) ---------------------------------
+    //
+    // #233 measured the squeeze and #301 decided it: no notice that ships may take height from the
+    // button row on the screen it draws on. Two changes do that together. A Tier 3 line takes the
+    // place of the sync-label slot, and #96's notice moved to two lines. The tests below check
+    // each notice, where the line count that matters falls, and that neither change alone would
+    // have done.
+
+    /**
+     * Every notice the rules put on the Tier 3 plate, paired with the screen it is drawn on.
+     *
+     * Found by driving the two rules that produce them, the way `StartPreconditionsTest` derives
+     * its surfaces, so a notice added later is checked here without anyone listing it.
+     * `startNotice` is the pre-start screen's. `armedNotice` is the running race's, and the
+     * count-up's for the lost link (#222). The count-up screen has never been measured, so its
+     * notices are held to the running screen's spare room. *Reasoned, not measured*: the count-up
+     * readout is 40 sp against the countdown's 52, and End Race is 56 dp tall against Sync's 64, so
+     * the running screen is the tighter of the two.
+     */
+    private fun everyStatusLineNotice(): List<Pair<StatusLineScreen, String>> = buildList {
+        for (mask in 0 until 32) {
+            val readiness = DeviceReadiness(
+                foregroundServiceRefused = mask and 1 != 0,
+                audioUnavailable = mask and 2 != 0,
+                notificationsBlocked = mask and 4 != 0,
+                vibratorAbsent = mask and 8 != 0,
+                batterySaverActive = mask and 16 != 0,
+            )
+            for (accepted in listOf(false, true)) {
+                startNotice(readiness, accepted)
+                    ?.takeIf { it.tier.surface == MessageSurface.STATUS_LINE }
+                    ?.let { add(StatusLineScreen.PRE_START to it.text) }
+            }
+        }
+        for (state in TimerState.values()) {
+            for (refused in listOf(false, true)) {
+                for (linkLost in listOf(false, true)) {
+                    armedNotice(state, refused, linkLost)
+                        ?.takeIf { it.tier.surface == MessageSurface.STATUS_LINE }
+                        ?.let { add(StatusLineScreen.RUNNING to it.text) }
+                }
+            }
+        }
+    }.distinct()
+
+    @Test fun `no notice that ships takes height from the buttons, on the screen it draws on`() {
+        // #301's third criterion, at the figure the owner accepted: zero. A notice reworded onto a
+        // third line, or a new one that needs it, goes red here naming the string and the screen,
+        // instead of shrinking Sync on a wrist.
+        val notices = everyStatusLineNotice()
+        for ((screen, text) in notices) {
+            val lines = MessageSurface.STATUS_LINE.linesFor(text)
+            assertEquals("\"$text\" on ${screen.name}, $lines line(s)", 0f, statusLineOverflowFraction(lines, screen), 0f)
+        }
+        // Not a loop over nothing: both screens are reached, the notice #301 was filed for is
+        // among them, and so are the four pre-start warnings and the lost link.
+        assertEquals(StatusLineScreen.values().toSet(), notices.map { it.first }.toSet())
+        assertTrue(notices.contains(StatusLineScreen.RUNNING to NOTICE_CUE_VOLUME_REFUSED))
+        assertTrue("only ${notices.size} notices were collected", notices.size >= 6)
+    }
+
+    @Test fun `the notice as #96 worded it would still shrink Sync and Stop`() {
+        // The negative control for the test above, on the string #301 was filed for. Three lines
+        // on the plate, and even with the slot given back they overflow the running screen by
+        // about 20 px, which is what the wording change is for. It still *holds* the plate, which
+        // is a ceiling on the bezel and not on the buttons, so `holds` alone could never catch it.
+        val lines = MessageSurface.STATUS_LINE.linesFor(notice96AsMeasured)
+        assertEquals(3, lines)
+        assertEquals(20.25f / 450f, statusLineOverflowFraction(lines, StatusLineScreen.RUNNING), onePx)
+        assertTrue(MessageSurface.STATUS_LINE.holds(notice96AsMeasured))
+    }
+
+    @Test fun `two lines still shrink the buttons unless the plate takes the slot's place`() {
+        // The other half. Shorter copy alone was one of #301's options, and it is not enough: a
+        // two-line plate and its spacer cost 76.25 px, against 56 px spare running and 68 px
+        // pre-start, so both screens would still squeeze. The slot is what makes two lines fit.
+        for (screen in StatusLineScreen.values()) {
+            assertTrue(screen.name, statusLineCostFraction(2) - screen.spareFraction > 0f)
+        }
+    }
+
+    @Test fun `the model places the two-line plate where the watch drew it once the slot gave way`() {
+        // Predicted before the watch was looked at, and *measured on an SM-R925U* afterwards (#301):
+        // the column no longer fills, so it centres again and the plate sits lower than #233's
+        // pinned edge. 57.9 px predicted and 58 drawn running, 67.9 and 68 pre-start, with Sync,
+        // Stop and Start at their full 136, 119 and 119 px. Nothing here was fitted to those
+        // frames: the spare room, the slot and the plate all come from earlier measurements or
+        // from the source.
+        assertEquals(58f / 450f, statusLineTopFraction(2, StatusLineScreen.RUNNING), onePx)
+        assertEquals(68f / 450f, statusLineTopFraction(2, StatusLineScreen.PRE_START), onePx)
+    }
+
+    @Test fun `two lines shrink no button on either screen, and a third does on both`() {
+        // Where the line count that matters sits, now that the plate takes the slot's place. Two
+        // lines leave 14 px spare running and 26 px pre-start. Three overflow by 20 px and 8 px.
+        for (screen in StatusLineScreen.values()) {
+            assertEquals(screen.name, 0f, statusLineOverflowFraction(2, screen), 0f)
+            assertTrue(screen.name, statusLineOverflowFraction(3, screen) > 0f)
+        }
+    }
+
+    @Test fun `the slot the plate gives back is the one the screen draws, converted at the watch's density`() {
+        // Wiring: `TimerScreen` draws `SYNC_LABEL_SLOT_DP`, and this is that height in px at the
+        // 340 dpi `wm density` reports. 16 dp is 34 px.
+        assertEquals(34f / 450f, SYNC_LABEL_SLOT_FRACTION, onePx / 100)
     }
 
     @Test fun `every surface has a budget, including any added later`() {
@@ -265,7 +388,7 @@ class BannerLayoutTest {
 
     @Test fun `the wrap model is sensitive to the width it is given`() {
         // Without this, every assertion above would hold against a model that returned a constant.
-        val notice = NOTICE_CUE_VOLUME_REFUSED
+        val notice = notice96AsMeasured
         assertEquals(1, linesNeededFor(notice, 60))
         assertEquals(2, linesNeededFor(notice, 30))
         assertEquals(3, linesNeededFor(notice, 20))

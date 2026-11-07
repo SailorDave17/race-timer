@@ -50,6 +50,7 @@ import com.racetimer.shared.BLOCKING_PANEL_WIDTH_FRACTION
 import com.racetimer.shared.MessageSurface
 import com.racetimer.shared.STATUS_LINE_MAX_WIDTH_FRACTION
 import com.racetimer.shared.STATUS_LINE_TEXT_SP
+import com.racetimer.shared.SYNC_LABEL_SLOT_DP
 import com.racetimer.shared.BG_FINAL_TEN_ARGB
 import com.racetimer.shared.BG_FINAL_TEN_FLASH_ARGB
 import com.racetimer.shared.COUNTDOWN_DIGIT_ARGB
@@ -372,7 +373,8 @@ fun TimerScreen(
                         // The arithmetic and the negative control are in `shared/BannerLayout.kt`,
                         // with where the plate sits per line count (#233). Those figures were
                         // measured on this column as it is, so changing what it holds above or
-                        // below the plate, or the 2 dp spacer, moves `StatusLineScreen`'s numbers.
+                        // below the plate, the 2 dp spacer, or the sync-label slot the plate takes
+                        // the place of (#301), moves `StatusLineScreen`'s numbers.
                         .widthIn(max = configuration.screenWidthDp.dp * STATUS_LINE_MAX_WIDTH_FRACTION)
                         .background(Color(TIER3_SCRIM_ARGB), shape = RoundedCornerShape(6.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -406,7 +408,19 @@ fun TimerScreen(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Sync flash label
+            // Sync flash label, or the empty slot that holds room for it so a sync does not move the
+            // buttons — except while a Tier 3 line is up, when the line has taken that height
+            // (#301). Above the readout a line costs the column more than it has spare, and the
+            // overflow came out of the button row: a three-line notice shrank Sync and Stop to
+            // 81 px, 38 dp. Giving the slot up is half of what stops that, and the Do Not Disturb
+            // notice moving to two lines is the other half. `shared/BannerLayout.kt` has the
+            // arithmetic and asserts it for every notice that ships.
+            //
+            // Tapping Sync while a line is up brings the label back into a column with no room
+            // held for it, so for its 2 s Sync shrinks from 136 to 119 px tall, 56 dp and Stop's
+            // height (*measured on an SM-R925U*). That was chosen, not missed: the reason is on
+            // `SYNC_LABEL_SLOT_DP`.
+            val tier3LineUp = showResyncPrompt || discardWarning != null || warningNotice != null
             if (syncLabel != null) {
                 Text(
                     text = syncLabel,
@@ -414,8 +428,8 @@ fun TimerScreen(
                     color = Color(PRIMARY_ARGB),
                     textAlign = TextAlign.Center,
                 )
-            } else {
-                Spacer(modifier = Modifier.height(16.dp))
+            } else if (!tier3LineUp) {
+                Spacer(modifier = Modifier.height(SYNC_LABEL_SLOT_DP.dp))
             }
 
             Spacer(modifier = Modifier.height(6.dp))

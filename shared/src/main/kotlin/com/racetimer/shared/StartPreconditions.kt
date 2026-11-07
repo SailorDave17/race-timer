@@ -177,8 +177,15 @@ const val NOTICE_BATTERY_SAVER = "Battery saver — sound may be cut"
  * result: **30 of 30 cues delivered at `zen_mode=2`, the 3000 ms gun included**. So the wrist is now
  * the channel that survives exactly this condition, and a warning that stopped at "cues silent"
  * would send a sailor to watch the screen through a start they could have felt.
+ *
+ * **Reworded by #301, and the reason is the line count, not the words.** #96 shipped "Do Not
+ * Disturb — cues silent, wrist still buzzing", 49 characters on **three** lines of the Tier 3
+ * plate, and a three-line plate mid-race shrank Sync and Stop to 38 dp, under the 48 dp touch
+ * target. "Cues on wrist only" keeps both halves: the tones are gone, and the wrist still carries
+ * every cue. It fits on two lines, the most the plate takes without shrinking a button
+ * (`statusLineOverflowFraction`). Owner decision, 2026-11-06.
  */
-const val NOTICE_CUE_VOLUME_REFUSED = "Do Not Disturb — cues silent, wrist still buzzing"
+const val NOTICE_CUE_VOLUME_REFUSED = "Do Not Disturb — cues on wrist only"
 
 /**
  * The longest a notice may be, in characters — a **shared ceiling over every surface**.
@@ -189,7 +196,8 @@ const val NOTICE_CUE_VOLUME_REFUSED = "Do Not Disturb — cues silent, wrist sti
  *
  * That is a ceiling, not a fit, for the two surfaces it was not derived for — which is #231. A
  * string can sit well inside 60 and still take three lines on the Tier 3 status line, whose cap is
- * a third narrower, and [NOTICE_CUE_VOLUME_REFUSED] does exactly that. The per-surface budget is
+ * a third narrower, and #96's wording of [NOTICE_CUE_VOLUME_REFUSED] did exactly that until #301
+ * reworded it. The per-surface budget is
  * [MessageSurface], and `StartPreconditionsTest` asserts every notice against **both**: this
  * ceiling, which is coarse and holds for all of them, and its own surface's line budget, which is
  * the one that can actually catch a copy edit spilling off a plate.

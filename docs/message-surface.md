@@ -211,7 +211,7 @@ persisting until the sailor acts because each asks for something a 3 s banner co
 | The same prompt, for a race joined from the phone (#220) or a gun the phone's Sync moved (#221) | "Phone start ±*N* ms — tap Sync to confirm", or "Phone start unmeasured — tap Sync to confirm"; after the phone's Sync, "Phone sync ±*N* ms — …" and "Phone sync unmeasured — …" | `RUNNING`, after joining a race — or taking the phone's Sync — whose gun the link could not place inside the pair's 100 ms budget, until Sync is tapped here, a later Sync from the phone lands inside the budget, or the race ends | **Yes** — the same line, so the same scrim |
 | The same prompt, for a gun the phone's came back apart from (#222) | "Phone gun *N* ms apart — tap Sync to confirm" below a second, "Phone gun *N.N* s apart — …" above | `RUNNING`, after the link came back and this watch's gun measured further than D6's 100 ms from the phone's it follows; cleared as the line above is | **Yes** — the same line |
 | Discard warning (#89) | "Start discards saved *name*" | `IDLE` pre-start only, cleared by `clearResumeOffer` | No — navy is its whole exposure |
-| `StartNotice` warning line (#13, #96, #222) | the three Tier 3 rows of the catalogue below, plus "Do Not Disturb — cues silent, wrist still buzzing", and "Phone out of range — counting alone" | `IDLE` for #13's three; `RUNNING` for #96's; `RUNNING` and `COUNTING_UP` for #222's, which yields to #96's | **Yes** — `#FF3A2A00` |
+| `StartNotice` warning line (#13, #96, #222) | the three Tier 3 rows of the catalogue below, plus "Do Not Disturb — cues on wrist only" (#301; #96 shipped it as "Do Not Disturb — cues silent, wrist still buzzing"), and "Phone out of range — counting alone" | `IDLE` for #13's three; `RUNNING` for #96's; `RUNNING` and `COUNTING_UP` for #222's, which yields to #96's | **Yes** — `#FF3A2A00` |
 
 They are the `showResyncPrompt`, `discardWarning` and `warningNotice` blocks of `TimerScreen`, in
 that precedence order — named rather than cited by line, because the two line ranges this paragraph
@@ -280,8 +280,9 @@ took the contrast ratios out of this document. Read them there; this table is a 
 
 ### How #96 found it
 
-`NOTICE_CUE_VOLUME_REFUSED` is 49 characters — comfortably inside the 60, and it renders on **three**
-lines, *measured on an SM-R925U*. Nothing is wrong with the result: there is no Start button on a
+`NOTICE_CUE_VOLUME_REFUSED` was 49 characters — comfortably inside the 60, and it rendered on **three**
+lines, *measured on an SM-R925U*. (#301 has since reworded it onto two; see the next section. The
+assertions below still pin the wording the watch drew, because that is what was measured.) Nothing is wrong with the result: there is no Start button on a
 running race, the readout is not covered, and the plate clears the bezel. But 60 was a ceiling that
 happened not to bite, described as a fit that had been measured, and the next person to write a
 running-race notice would have had no way to tell those apart.
@@ -320,9 +321,51 @@ line count and per screen, and `BannerLayoutTest` proves every line count the su
 the circle. The unbounded-centring case is asserted to fail. The model is also checked against
 something it was not built from: it predicts the button squeeze the watch drew, 8 px and 55 px.
 
-**The squeeze is real and is not fixed here.** A three-line notice mid-race turns Sync and Stop into
-81 px pills. The notice covers nothing and clears the bezel, and that is all #96 checked. #301 owns
-what to do about it.
+**The squeeze was real, and #233 did not fix it.** A three-line notice mid-race turned Sync and Stop
+into 81 px pills, 38 dp, under the 48 dp touch target. The notice covered nothing and cleared the
+bezel, and that is all #96 checked.
+
+### No notice takes height from the buttons (#301)
+
+#301 fixed it with two changes, because neither was enough alone:
+
+- **A Tier 3 line takes the place of the sync-label slot.** Below the readout, `TimerScreen` keeps an
+  empty 16 dp slot (`SYNC_LABEL_SLOT_DP`) so that the "Synced → X:XX" label does not move the
+  buttons when it flashes. While any Tier 3 line is up, that slot gives way to it, which gives the
+  column 34 px back.
+- **The Do Not Disturb notice moved to two lines**: "Do Not Disturb — cues on wrist only". It keeps
+  both halves of #96's wording (the tones are gone, and the wrist still carries every cue), and saves
+  another 34 px. Owner decision, 2026-11-06.
+
+The slot alone would have left the three-line plate 20 px over, which still shrinks Sync and Stop,
+and the shorter copy alone would have left 20 px over as well. With both, a two-line plate leaves 14
+px spare running and 26 px pre-start, so the column centres again and no button shrinks. *Measured
+on an SM-R925U*, before and after, with each figure predicted by the model before the watch was
+looked at:
+
+| Screen | Plate top | Plate height | Buttons, before → after |
+|---|---|---|---|
+| Pre-start, Notifications off | 55 → **68** px (predicted 67.9) | 72 px | Start 111 → **119** px |
+| Running, Do Not Disturb | 51 → **58** px (predicted 57.9) | 106 → **72** px | Sync 81 → **136** px, Stop 81 → **119** px |
+
+The SM-L715U (498 px, 234 dp) agreed: Sync 129 → 136 px under the old three-line notice, and every
+button at full size under the new one. Its plate tops, 82 px running and 92 pre-start, were reasoned
+by adding its extra 48 px of height to the spare room, not modelled.
+
+**What it costs, chosen deliberately.** Tapping Sync while a Tier 3 line is up puts the "Synced"
+label back into a column that no longer holds room for it, so for the label's 2 s the column
+overflows again. *Measured*: Sync goes from 136 to 119 px tall (56 dp, the same height as Stop),
+Stop is unchanged, and both are back to full size when the label clears. The reason is on
+`SYNC_LABEL_SLOT_DP`: that is above the touch target, the tap has already landed, and the
+alternative was a 38 dp row for the whole race.
+
+**The guard.** `BannerLayoutTest` drives `startNotice` and `armedNotice` for every notice that lands
+on this plate, pairs each with the screen it draws on, and asserts `statusLineOverflowFraction` is
+zero for all of them. A notice reworded onto a third line fails it, naming the string and the screen.
+`MessageSurface.STATUS_LINE.maxLines` stays at three, because it is a ceiling on fouling the bezel,
+not on the buttons, and the phone's re-sync lines are held to it. Those lines are drawn on the
+degraded-recovery site, which has no width cap and no explicit type size, so the model does not
+describe them. That site is a separate story.
 
 ## The time of day at the rim (#303)
 
@@ -379,6 +422,8 @@ screen at the smallest size is #312's (owner decision on #303).
    day at the rim gives way to a Tier 3 line on the same rule (#303).
 7. **Budget against the tier, not against the number.** 60 characters is the shared ceiling and it
    is two lines on Tier 1 and three on Tier 3 — see [the copy budget](#the-copy-budget-and-which-surface-it-was-derived-for).
+   A Tier 3 warning stops at two, because a third line shrinks the buttons
+   ([#301](#no-notice-takes-height-from-the-buttons-301)), and `BannerLayoutTest` refuses one that does not.
    Add the string to `StartPreconditionsTest` and let it derive the surface from the tier the rule
    returns; a notice that later changes tier is then re-checked against the plate it moved to.
 
@@ -407,7 +452,7 @@ screen fails rather than wraps. *It asserted only the first of those until #231,
 | The phone out of range, for a race that had it (#222) | 3 | "Phone out of range — counting alone" | none — the lowest line of the tier, `RUNNING` and `COUNTING_UP`. The copy is `pairLinkLostLine` in `shared/PairRace.kt` through `armedNotice`, and `StartPreconditionsTest` holds it to the plate |
 | The phone's gun came back beyond D6's bound (#222) | 3 | "Phone gun 8.0 s apart — tap Sync to confirm" | Sync — on the degraded-recovery line, `pairGunsApartLine` in `shared/PairRace.kt`; `PairRaceTest` holds it to the plate |
 | The link came back and the gun was matched within D6's bound (#222) | 1 | "Phone back — gun matched, 40 ms" | none — news, `pairGunCorrectedLine`; `PairRaceTest` holds it to the banner |
-| Cue volume raise refused (Do Not Disturb) | 3 | "Do Not Disturb — cues silent, wrist still buzzing" | none — **shipped** (#96), `RUNNING` only |
+| Cue volume raise refused (Do Not Disturb) | 3 | "Do Not Disturb — cues on wrist only" | none — **shipped** (#96), `RUNNING` only; reworded onto two lines by #301 |
 | Cue dropped mid-race | 1 | "Cue silent — wrist still buzzing" | none — **shipped** (#161) |
 | Cue truncated mid-race | 1 | "Cue cut short — wrist still buzzing" | none — **shipped** (#161) |
 
@@ -459,7 +504,7 @@ moving is not a check that passed — it is two errors agreeing. Name both trees
 | Notification permission denied | Tier 3, tappable to Settings |
 | Battery saver on | Tier 3, "Battery saver — sound may be cut" |
 | No settings activity for a remedy | The notice it was offered from stays on screen |
-| `setStreamVolume` refused (Do Not Disturb) | Tier 3 for the length of the countdown, "Do Not Disturb — cues silent, wrist still buzzing" (#96) |
+| `setStreamVolume` refused (Do Not Disturb) | Tier 3 for the length of the countdown, "Do Not Disturb — cues on wrist only" (#96, reworded by #301) |
 | `AudioTrack` write returned `<= 0` (`writeCue`) | Tier 1, "Cue silent — wrist still buzzing" (#161) |
 | `AudioTrack` write threw, track discarded (`writeCue`) | Tier 1, "Cue silent — wrist still buzzing" (#161) — same copy as the row above, because the sailor's consequence is the same |
 | Tail write failed, cue truncated (`writeCue`) | Tier 1, "Cue cut short — wrist still buzzing" (#161) |
@@ -541,9 +586,11 @@ call; what has not been demonstrated is the tail-write site setting the notice.
 ---
 
 Source: this repo's code as of the `develop` branch, plus issues #22, #13, #12, #123, #96, #144, #277,
-#303.
+#303, #301.
 Owner: SailorDave17.
-Last reviewed: 2026-09-29 (#222 added the lost link's Tier 3 line, the first that speaks through a
+Last reviewed: 2026-11-06 (#301: a Tier 3 line now takes the sync-label slot's place and the Do Not
+Disturb notice is two lines, so no notice shrinks Sync, Stop or Start; measured before and after on
+both watches. Before that, 2026-09-29: #222 added the lost link's Tier 3 line, the first that speaks through a
 count-up, which `MessageContrastTest` now drives there; the reconnect's flag on the re-sync prompt;
 and its correction's Tier 1 banner. Before that, 2026-09-26: #303 added the time of day at the rim,
 which gives way to Tier 3 and Tier 2, and rule 6 now names it. Before that, 2026-09-25: #277 darkened the one-minute amber to `#553000`. The state table, the
