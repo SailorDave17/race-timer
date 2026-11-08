@@ -173,7 +173,8 @@ mic heard both, and the analyser flagged the gun rather than time it.
   from *GO!* lands on the picker, which marks no current choice, so a watch pick taken there
   (`peer setup taken`) is invisible until the officer picks again. The protocol promises only that a
   pre-start screen shows a setup, so this is not a breach. It is the phone's picker, not the link.
-  Filed as [#336](https://github.com/SailorDave17/race-timer/issues/336).
+  Filed as [#336](https://github.com/SailorDave17/race-timer/issues/336), which since opens the
+  phone's pre-start screen for a setup taken on its picker (`docs/pair-protocol.md`).
 
 ## Limits
 

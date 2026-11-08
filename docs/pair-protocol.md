@@ -271,6 +271,10 @@ the alert both pickers open on (the owner's reading of D8 at #221's pickup).
   without the lead-in, and a lead-in's alert — so after a race both screens are set to what was run.
 - **A device with a race on screen takes no setup**: not a countdown, not a count-up, not a "GO!"
   still showing, not a frozen summary waiting for Done. Only its pre-start screen shows a setup.
+- **A setup taken while the phone shows its sequence picker opens the phone's pre-start screen for
+  it** (#336, the owner's form at pickup), since the picker marks no current choice and would
+  otherwise hold a setup nobody can see. Not from the Custom stepper, where the officer is dialling
+  a length and the next Set is a later pick anyway, and not past the launch surface.
 
 **When the two are compared:** every pick is sent as it is made; both devices send theirs when the
 peer comes into range (`PairLink`'s `onPeerNearby`); and a device sends its own when its race is over
