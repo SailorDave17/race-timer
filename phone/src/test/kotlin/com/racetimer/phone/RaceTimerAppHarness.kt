@@ -90,12 +90,16 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
      * screen reads exactly as it did before #279. A test that *does* care has to be able to open on
      * the officer having asked for the panel, because that is the only condition under which a
      * count-up has anything to release.
+     *
+     * [answerDisplay] false leaves the launch surface up, unanswered, for a test about what reaches
+     * the app before the officer has passed it (#336); [answerDisplaySurface] then answers it.
      */
     fun launch(
         fullBrightness: Boolean = DisplayChoice.INITIAL.fullBrightness,
         applyDisplay: (DisplayChoice) -> Unit = {},
         readPairNotice: (() -> String?)? = null,
         readPairLinkLost: (() -> Boolean)? = null,
+        answerDisplay: Boolean = true,
     ) {
         compose.setContent {
             // The #239 flush loop rides the same frame pump that would otherwise spin forever —
@@ -120,9 +124,24 @@ internal class RaceTimerAppHarness(private val compose: ComposeContentTestRule) 
         if (fullBrightness != DisplayChoice.INITIAL.fullBrightness) {
             compose.onNodeWithTag(TAG_FULL_BRIGHTNESS).performClick()
         }
+        if (answerDisplay) answerDisplaySurface()
+    }
+
+    /** Tap Continue on the launch surface, leaving the sequence picker up. */
+    fun answerDisplaySurface() {
         compose.onNodeWithTag(TAG_CONTINUE).performClick()
         // The choice is applied from a LaunchedEffect, so the tap alone does not land it.
         compose.waitForIdle()
+    }
+
+    /**
+     * The watch's setup lands on this phone (#221): what the service does with it, then what
+     * `MainActivity` does. The service takes a setup only at the pre-start state (an idle engine),
+     * so a test that calls this over a race is arranging something production cannot reach.
+     */
+    fun setupFromTheWatch(sequence: RaceSequence) {
+        check(runner.select(sequence)) { "the service takes no setup over a race in progress" }
+        selectionVersion++
     }
 
     /**

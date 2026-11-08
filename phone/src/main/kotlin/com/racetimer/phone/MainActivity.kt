@@ -433,11 +433,13 @@ class MainActivity : ComponentActivity() {
  * [onPairNewsExpired].
  *
  * [selectionVersion] moves when the watch's setup has changed the runner's selection, which is not
- * Compose state. **It is read nowhere, and changing is its whole job**: a new value makes the caller
- * run this composable again, and that run reads `runner.selected` afresh — the name, and the length
- * the next Start will run. A `refresh()` keyed on it sat here first and was *measured* redundant in
- * #221's mutation pass (deleted, 0 red against a predicted 1: `PairNewsOnScreenTest` stayed green),
- * so it is not kept. Removing the parameter itself is what that test catches.
+ * Compose state. **Its first job is changing**: a new value makes the caller run this composable
+ * again, and that run reads `runner.selected` afresh — the name, and the length the next Start will
+ * run. A `refresh()` keyed on it sat here first and was *measured* redundant in #221's mutation pass
+ * (deleted, 0 red against a predicted 1: `PairNewsOnScreenTest` stayed green), so it is not kept.
+ * Removing the parameter itself is what that test catches. **Since #336 it is also read**, by the
+ * one effect that takes the officer off the sequence picker when the watch's setup lands there — see
+ * that effect for why a move, and not the value, is what it acts on.
  *
  * **That only works because this composable is never skipped, and since #193 that is declared
  * rather than assumed.** Under Kotlin 1.9 it held by accident: [runner] and the view model are
@@ -475,7 +477,7 @@ internal fun RaceTimerApp(
     readPairLinkLost: (() -> Boolean)? = null,
     pairNews: PairNews? = null,
     onPairNewsExpired: (PairNews) -> Unit = {},
-    @Suppress("UNUSED_PARAMETER") selectionVersion: Int = 0,
+    selectionVersion: Int = 0,
 ) {
     var onTimerScreen by remember { mutableStateOf(false) }
     var onCustomScreen by remember { mutableStateOf(false) }
@@ -576,6 +578,34 @@ internal fun RaceTimerApp(
                 onTimerScreen = true
             }
         }
+    }
+
+    // A setup the watch sends while the phone shows its sequence picker opens the pre-start screen
+    // for it (#336, the owner's form at pickup). The picker marks no current choice, so a setup
+    // taken there moved the runner's selection while nothing on screen changed. The pre-start
+    // screen is the one screen that shows a setup, the one `docs/pair-protocol.md` promises it on,
+    // and Start is a tap away. Back returns to the picker as it does after any pick.
+    //
+    // **A move, never the value.** The baseline is what the composition opened on, so a first
+    // launch, a rotation and a return from the background open where they always did (AC 2): only a
+    // setup taken while this composition is up moves the officer.
+    //
+    // **The picker only.** The Custom stepper is an edit in progress, and taking the officer off it
+    // would discard what they were dialling; their Set is a later pick and wins anyway (owner's
+    // call at pickup). Nor does a setup taken under the launch surface skip the picker once the
+    // surface is answered: the officer has not seen the picker yet, so it hides nothing. In both
+    // cases the move is spent where it landed and does not fire later on the picker.
+    //
+    // Deliberately not `openWith`: that tells the watch about the pick, and this one came from it.
+    // And no `refresh()` before the switch, unlike `openWith`: the display loop reads the runner on
+    // its first pass, and a `refresh()` here was *measured* unobservable (deleted, 0 red against a
+    // predicted 0), the same finding as #221's twin on [selectionVersion].
+    var seenSelectionVersion by remember { mutableStateOf(selectionVersion) }
+    LaunchedEffect(selectionVersion) {
+        if (selectionVersion == seenSelectionVersion) return@LaunchedEffect
+        seenSelectionVersion = selectionVersion
+        val onPicker = displayChoice.answered && !onTimerScreen && !onCustomScreen
+        if (onPicker && runner != null) onTimerScreen = true
     }
 
     // A saved race walks the officer straight to it: the offer lands on the timer screen, not
