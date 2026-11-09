@@ -332,6 +332,11 @@ What the console clock looked and sounded like on a real committee boat is in
 session, each against its device, build and launch choices, and says when a row stops counting
 because a later change touched what it observed.
 
+Whether each of the watch's colour states reads at a glance in direct sun is in
+[`docs/sun-legibility-audit.md`](docs/sun-legibility-audit.md), with photographs of the states
+taken on the wrist. Like the committee-boat file, it ties each session to the build that was worn and
+says which changes stop a session counting.
+
 ## Tech stack
 
 | Layer | Technology |
