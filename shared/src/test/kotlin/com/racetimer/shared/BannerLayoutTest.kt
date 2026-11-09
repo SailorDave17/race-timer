@@ -15,21 +15,41 @@ import org.junit.Test
  */
 class BannerLayoutTest {
 
+    /**
+     * The SM-R925U's width in dp, as #302 measured it: 450 px at the 340 that `wm density` reports.
+     *
+     * Written from the probes rather than read off [REFERENCE_SCREEN_DP], so the test that pins that
+     * constant has something to disagree with, and the pre-#102 geometry below stays on this watch
+     * whatever the constant is later set to.
+     */
+    private val measuredScreenDp = 450f / (340f / 160f)
+
     @Test fun `the shipped banner geometry fits inside a round screen`() {
         assertTrue(bannerFitsRoundScreen())
     }
 
     @Test fun `the geometry that shipped before did not fit`() {
-        // What #102's clipping actually was, in numbers. The banner sat 2 dp from the top of a
-        // 225 dp screen and took the full width less 12 dp either side, so its top corners were far
-        // outside the circle and the first line of any wrapping message was cut away by the mask.
+        // What #102's clipping actually was, in numbers. The banner sat 2 dp from the top, took the
+        // full width less 12 dp either side and was 32 dp tall, so its top corners were far outside
+        // the circle and the first line of any wrapping message was cut away by the mask.
+        //
+        // As fractions of the 211.76 dp the watch reports (#302). Until then they were fractions of
+        // 225 dp, a width the watch does not have. The banner is rejected by a wide margin on
+        // either: its far corners sit at about 1.75 times the circle's squared radius.
         assertFalse(
             bannerFitsRoundScreen(
-                topFraction = 2f / 225f,
-                widthFraction = 201f / 225f,
-                heightFraction = 32f / 225f,
+                topFraction = 2f / measuredScreenDp,
+                widthFraction = (measuredScreenDp - 2 * 12f) / measuredScreenDp,
+                heightFraction = 32f / measuredScreenDp,
             )
         )
+    }
+
+    @Test fun `the reference screen is the width the watch reports`() {
+        // #302's first criterion. `wm size` 450x450, `wm density` 340 with no override, and
+        // font_scale 1.0, read over ADB on 2026-09-25. It was 225, "450 px at 2×", until a probe
+        // disagreed with it by about 6 %.
+        assertEquals(measuredScreenDp, REFERENCE_SCREEN_DP, 0.001f)
     }
 
     @Test fun `a banner pinned to the very top never fits, however narrow`() {
@@ -210,7 +230,7 @@ class BannerLayoutTest {
     // --- How much copy each surface holds (#231) ------------------------------------------------
 
     @Test fun `the character model reproduces the figure the doc already publishes`() {
-        // The calibration, and the reason `AVERAGE_CHAR_WIDTH_EM` is 0.51 rather than a number
+        // The calibration, and the reason `AVERAGE_CHAR_WIDTH_EM` is 0.48 rather than a number
         // looked up in a font table. docs/message-surface.md has said "roughly 34 characters" for
         // the Tier 1 banner since #102; if this model disagreed with that, one of the two would be
         // wrong and nobody would find out. Anchoring here means the doc's own sentence is now an
@@ -350,6 +370,23 @@ class BannerLayoutTest {
         // Wiring: `TimerScreen` draws `SYNC_LABEL_SLOT_DP`, and this is that height in px at the
         // 340 dpi `wm density` reports. 16 dp is 34 px.
         assertEquals(34f / 450f, SYNC_LABEL_SLOT_FRACTION, onePx / 100)
+    }
+
+    @Test fun `correcting the reference screen moved no surface's budget`() {
+        // #302's fourth criterion. Each surface's characters a line under the model before the
+        // correction, a 225 dp screen and a 0.51 em, written in as literals because that model is
+        // gone from the source. A line count depends on nothing else (`linesFor`), so equal budgets
+        // mean that no notice `StartPreconditionsTest` or `PairRaceTest` holds to one wraps
+        // differently. Driven off the enum, so the Tier 2 panel is held too, though no other test
+        // pins its figure.
+        //
+        // If a later re-calibration turns this red, a shipped notice may now wrap onto a different
+        // number of lines on the watch. Check it there and record the result, then change this.
+        for (surface in MessageSurface.values()) {
+            val before = ((surface.widthFraction * 225f) / (0.51f * surface.textSizeSp)).toInt()
+            assertEquals(surface.name, before, surface.charsPerLine)
+        }
+        assertTrue("the enum is empty, so the loop above proves nothing", MessageSurface.values().isNotEmpty())
     }
 
     @Test fun `every surface has a budget, including any added later`() {
