@@ -131,6 +131,17 @@ const val STATUS_LINE_MAX_WIDTH_FRACTION = 0.55f
 const val REFERENCE_SCREEN_PX = 450f
 
 /**
+ * How many px one dp is on the reference screen: the 340 that `wm density` reports, over Android's
+ * baseline of 160, which is 2.125 (#302). With `font_scale` at 1.0 an sp is the same size.
+ *
+ * Every dp-to-px conversion in this file goes through this one figure, so the density is written
+ * down once. [REFERENCE_SCREEN_DP] was converted at a reasoned 2× until #302, while
+ * [STATUS_LINE_SPACER_FRACTION] and [SYNC_LABEL_SLOT_FRACTION] were already converted at the
+ * measured 340.
+ */
+const val REFERENCE_SCREEN_PX_PER_DP = 340f / 160f
+
+/**
  * One line of Tier 3 text, as a fraction of screen height.
  *
  * `caption2`'s line height. Measured as the difference between the three-line and the two-line
@@ -152,12 +163,12 @@ const val STATUS_LINE_PLATE_INSET_FRACTION = 4f / REFERENCE_SCREEN_PX
  * Converted rather than measured, on purpose. It is the one input the cross-check in
  * `BannerLayoutTest` must not share with the observations it checks, so it comes from the source
  * and the density instead of from a screenshot: 2 dp at the 340 dpi `wm density` reports is 4.25 px.
- * That density is **not** the 2× [REFERENCE_SCREEN_DP] was written against, which works out at
- * 212 dp across rather than 225. The character model is unaffected, because
- * [AVERAGE_CHAR_WIDTH_EM] is calibrated against the same figure and absorbs the difference, but
- * the comment on that constant is wrong about the watch.
+ *
+ * *(Until #302 this went on to say that the density was not the 2× [REFERENCE_SCREEN_DP] had been
+ * written against, and that the comment on that constant was wrong about the watch. #302 corrected
+ * the constant to this density, so neither is true any more.)*
  */
-const val STATUS_LINE_SPACER_FRACTION = 4.25f / REFERENCE_SCREEN_PX
+const val STATUS_LINE_SPACER_FRACTION = 2f * REFERENCE_SCREEN_PX_PER_DP / REFERENCE_SCREEN_PX
 
 /**
  * The height `TimerScreen` keeps clear below the readout for the "Synced → X:XX" label, in dp.
@@ -182,7 +193,7 @@ const val SYNC_LABEL_SLOT_DP = 16f
  * Converted, like [STATUS_LINE_SPACER_FRACTION], rather than measured: 16 dp at the 340 dpi that
  * `wm density` reports is 34 px.
  */
-const val SYNC_LABEL_SLOT_FRACTION = SYNC_LABEL_SLOT_DP * 340f / 160f / REFERENCE_SCREEN_PX
+const val SYNC_LABEL_SLOT_FRACTION = SYNC_LABEL_SLOT_DP * REFERENCE_SCREEN_PX_PER_DP / REFERENCE_SCREEN_PX
 
 /**
  * The two screens a Tier 3 plate is drawn on, and the two measurements that place it on each.
@@ -311,7 +322,19 @@ fun bannerFitsRoundScreen(
 // A change that breaks either is a change to a claim, not to a constant.
 
 /**
- * The screen these character budgets are quoted at, in dp — 450 px at 2× on an SM-R925U.
+ * The screen these character budgets are quoted at, in dp: the SM-R925U's 450 px at the density it
+ * reports, which is 211.76 dp across.
+ *
+ * *Measured on an SM-R925U over ADB, 2026-09-25 (#302)*:
+ *
+ *     adb shell wm size                         Physical size: 450x450
+ *     adb shell wm density                      Physical density: 340   (no override line)
+ *     adb shell dumpsys display                 density 340, 326.571 x 326.571 dpi
+ *     adb shell settings get system font_scale  1.0
+ *
+ * 450 px ÷ (340 / 160) = 211.76 dp, and at that font scale an sp is a dp. Until #302 this was
+ * `225f`, "450 px at 2×". That figure was reasoned, not measured, and about 6 % wider than the
+ * watch. [AVERAGE_CHAR_WIDTH_EM] had been calibrated against it, so the two errors cancelled.
  *
  * The fractions above need no reference screen: a circle and a plate scale together, so they hold
  * on any round watch. A *character* count does not, because type is specified in sp and does not
@@ -319,7 +342,7 @@ fun bannerFitsRoundScreen(
  * width. This is the size the budgets are computed for, and the reason they are a house standard
  * rather than a universal one.
  */
-const val REFERENCE_SCREEN_DP = 225f
+const val REFERENCE_SCREEN_DP = REFERENCE_SCREEN_PX / REFERENCE_SCREEN_PX_PER_DP
 
 /**
  * Average character advance as a fraction of type size, for the default sans family.
@@ -329,13 +352,20 @@ const val REFERENCE_SCREEN_DP = 225f
  * repo had already committed to, so anchoring on it means the model cannot quietly disagree with
  * the doc it exists to make checkable.
  *
+ * **Re-calibrated by #302, from 0.51.** That value had been fitted against a 225 dp screen. On the
+ * measured [REFERENCE_SCREEN_DP] any value above 0.468 and up to 0.481 gives 34. Of those, 0.48 is
+ * 0.51 × 211.76 / 225 exactly, so the ratio of screen to em is unchanged, and that ratio is the only
+ * way either constant reaches [MessageSurface.charsPerLine]. So every surface holds exactly the
+ * characters a line it held before. This is the cancellation #302 suspected, now written into the
+ * value. `BannerLayoutTest` holds each surface to its pre-#302 figure.
+ *
  * The cross-check is independent of the calibration and is what makes it more than circular:
  * applied to Tier 3's narrower cap it predicts #96's notice on three lines, which is what the
  * watch drew. `memory/projects/race-timer-transient-message-surface` carries a second, looser
  * estimate — "at 11 sp a forty-character notice needs ~140 dp" — that works out at `0.32` here and
  * is **falsified** by that same render: it would put the notice on two lines.
  */
-const val AVERAGE_CHAR_WIDTH_EM = 0.51f
+const val AVERAGE_CHAR_WIDTH_EM = 0.48f
 
 /** Type size of the Tier 1 banner, in sp. Applied by `TimerScreen`, so this is the live value. */
 const val BANNER_TEXT_SP = 11f
