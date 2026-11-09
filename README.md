@@ -327,6 +327,11 @@ session attached, and what the measurement cannot see — is in
 journal is armed with `adb shell setprop log.tag.RaceDayJournal DEBUG` and read back with
 `python .github/scripts/parse-start-day.py`, whose `--selftest` runs in CI.
 
+What the console clock looked and sounded like on a real committee boat is in
+[`docs/committee-boat-observation.md`](docs/committee-boat-observation.md). It has one row per
+session, each against its device, build and launch choices, and says when a row stops counting
+because a later change touched what it observed.
+
 ## Tech stack
 
 | Layer | Technology |
