@@ -889,11 +889,17 @@ class PairStarts(
  * is counting on a gun that may be out by more than the pair promises, and Sync against the next flag
  * is the one act that settles it. [peerNoun] is the other device: "Phone" on the watch, "Watch" on the
  * phone.
+ *
+ * Two lines on the watch's capped Tier 3 plate, at any bound (#353). The words stop at "tap Sync": a
+ * third line takes Sync and Stop's height mid-race (#301), and "to confirm" was the only part the
+ * line's place does not already say. "not measured" rather than "unmeasured" for the same reason: the
+ * single long word would not break, and put "Sync" on a third line. `BannerLayoutTest` holds every
+ * line this can produce to zero overflow on the running screen.
  */
 fun pairJoinNotice(gun: JoinGun, peerNoun: String, placedBy: PairControlledGun = PairControlledGun.START): String? {
     val what = placedBy.word
-    val bound = gun.errorBoundMs ?: return "$peerNoun $what unmeasured — tap Sync to confirm"
-    return if (bound <= PAIR_SKEW_BUDGET_MS) null else "$peerNoun $what ±$bound ms — tap Sync to confirm"
+    val bound = gun.errorBoundMs ?: return "$peerNoun $what not measured — tap Sync"
+    return if (bound <= PAIR_SKEW_BUDGET_MS) null else "$peerNoun $what ±$bound ms — tap Sync"
 }
 
 /**
@@ -942,7 +948,7 @@ fun pairLinkLostLine(peerNoun: String): String = "$peerNoun out of range — cou
  * The standing line a reconnect leaves when the two guns came back further apart than D6 corrects by
  * itself (#222 AC 2): how far, and the one act that settles it. [apartMs] reads in milliseconds below a
  * second, where a disagreement just past the bound would otherwise round to "0.1 s", and in tenths of
- * a second above it.
+ * a second above it. Two lines on the watch's capped plate, for the reason on [pairJoinNotice] (#353).
  */
 fun pairGunsApartLine(apartMs: Long, peerNoun: String): String {
     val magnitude = if (apartMs == Long.MIN_VALUE) Long.MAX_VALUE else abs(apartMs)
@@ -952,7 +958,7 @@ fun pairGunsApartLine(apartMs: Long, peerNoun: String): String {
         val tenths = (magnitude + 50L) / 100L
         String.format(Locale.ROOT, "%d.%d s", tenths / 10L, tenths % 10L)
     }
-    return "$peerNoun gun $gap apart — tap Sync to confirm"
+    return "$peerNoun gun $gap apart — tap Sync"
 }
 
 /**

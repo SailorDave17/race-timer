@@ -51,6 +51,13 @@ enum class RestoreOutcome {
     EXPIRED,
 }
 
+/**
+ * The words of the watch's standing prompt after a [RestoreOutcome.DEGRADED] restore (Tier 3,
+ * `docs/message-surface.md`). Two lines on the capped plate, so it costs the running screen's buttons
+ * nothing. Here rather than in `TimerScreen` so `BannerLayoutTest` can hold it to that (#353).
+ */
+const val RESYNC_PROMPT_RECOVERED = "Recovered — tap Sync to confirm"
+
 /** Outcome of a [TimerEngine.join]: what the engine is now doing, or that it did nothing. */
 enum class JoinOutcome {
     /** Counting down to the joined gun. */
@@ -756,6 +763,17 @@ fun discardedOnStartRemainingMs(
     nowWallMs: Long,
 ): Long? = recoverableRemainingMs(snap, sequence, nowElapsedMs, nowWallMs)
     ?.takeIf { snap.sequenceId != selectedSequenceId }
+
+/**
+ * The pre-start line shown while [discardedOnStartRemainingMs] is non-null: what Start throws away,
+ * named by the saved race's sequence rather than its time (#89).
+ *
+ * Two lines on the capped Tier 3 plate for every sequence but the two race-manager ones, whose names
+ * are wider than a line by themselves and take a third. That third line costs Start about 8 px, and
+ * it is kept on purpose: the owner chose the name over the height (#353, 2026-11-15).
+ * `BannerLayoutTest` pins that overflow to those two names, so a third name needing it goes red.
+ */
+fun discardWarningLine(sequenceName: String): String = "Start discards saved $sequenceName"
 
 /**
  * Is there anything left of this saved race, whatever sequence is currently selected?

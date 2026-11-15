@@ -143,11 +143,11 @@ class PairNewsOnScreenTest {
     }
 
     private companion object {
-        const val FLAG = "Watch start ±180 ms — tap Sync to confirm"
+        const val FLAG = "Watch start ±180 ms — tap Sync"
         const val SYNCED = "Watch synced → 4:00"
         const val STALE = "Watch synced a race not running here"
         const val LOST = "Watch out of range — counting alone"
-        const val APART = "Watch gun 8.0 s apart — tap Sync to confirm"
+        const val APART = "Watch gun 8.0 s apart — tap Sync"
         const val CORRECTED = "Watch back — gun matched, 40 ms"
     }
 }

@@ -61,6 +61,8 @@ import com.racetimer.shared.TimerState
 import com.racetimer.shared.ambientPermitsOverride
 import com.racetimer.shared.armedNotice
 import com.racetimer.shared.cueLossNotice
+import com.racetimer.shared.RESYNC_PROMPT_RECOVERED
+import com.racetimer.shared.discardWarningLine
 import com.racetimer.shared.discardedOnStartRemainingMs
 import com.racetimer.shared.forcesMaxBrightness
 import com.racetimer.shared.formatCountdown
@@ -78,7 +80,6 @@ import com.racetimer.wear.ui.CustomDurationScreen
 import com.racetimer.wear.ui.DEFAULT_CUSTOM_MINUTES
 import com.racetimer.wear.ui.LeadInDurationScreen
 import com.racetimer.wear.ui.LeadInPickerScreen
-import com.racetimer.wear.ui.RESYNC_PROMPT_RECOVERED
 import com.racetimer.wear.ui.RaceTimerTheme
 import com.racetimer.wear.ui.SequencePickerScreen
 import com.racetimer.wear.ui.TimerScreen
@@ -787,7 +788,7 @@ class MainActivity : ComponentActivity() {
             SystemMonotonicClock.elapsedMs(),
             System.currentTimeMillis(),
         ) ?: return null
-        return "Start discards saved ${sequence.name}"
+        return discardWarningLine(sequence.name)
     }
 
     /** Drop the saved race's claim on the pre-start screen, whichever way the sailor answered it. */

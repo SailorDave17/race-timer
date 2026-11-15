@@ -80,7 +80,7 @@ class PairControlsTest {
         val gun = svc.runner.engine.snapshot()!!.gunElapsedMs
 
         svc.moveGun(JoinGun(gun + 8_000L, 240L))
-        assertEquals("Watch sync ±240 ms — tap Sync to confirm", svc.pairJoinNotice)
+        assertEquals("Watch sync ±240 ms — tap Sync", svc.pairJoinNotice)
 
         svc.moveGun(JoinGun(gun + 8_000L, 40L))
         assertNull(svc.pairJoinNotice)
@@ -128,7 +128,7 @@ class PairControlsTest {
     fun `a gap beyond the bound stands until a Sync here, and a correction inside the budget clears it`() {
         val svc = startedService()
         assertTrue(svc.gunsApart(8_000L))
-        assertEquals("Watch gun 8.0 s apart — tap Sync to confirm", svc.pairJoinNotice)
+        assertEquals("Watch gun 8.0 s apart — tap Sync", svc.pairJoinNotice)
 
         svc.onStartCommand(Intent().setAction(PhoneTimerService.ACTION_SYNC), 0, 2)
         assertNull("the officer synced against the flag", svc.pairJoinNotice)
