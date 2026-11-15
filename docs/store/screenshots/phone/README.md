@@ -56,6 +56,12 @@ later release tells whether that has happened.
 | Device | the same AVD, `RaceTimer_Phone_1080x1920`, API 36 |
 | Captured | 2026-11-06: `04` at 0:55 portrait, `15` at 0:52 landscape (the shot it replaces read 0:54) |
 
+**`04` is in the listing since 2026-11-15** ([#346](https://github.com/SailorDave17/race-timer/issues/346)).
+This file (sha256 `0cb1b621…`) replaced the old amber in the Console's phone screenshot slot 4,
+with the other seven left in their order. The change was sent for Google's review the same day,
+about 18:50 UTC, alongside the Wear `04`. `15` needed no upload, because the landscape set is not
+in the listing.
+
 The installed APK's `sha256sum` matched the local build before the captures. The AVD held an
 older install signed with a different key (the FGS video's debug-key build), so it was uninstalled
 first; the AVD carries no data worth keeping. Notifications were granted this time, so the status

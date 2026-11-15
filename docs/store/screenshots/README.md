@@ -55,6 +55,11 @@ Play. Its background reads `#553000`.
 
 The installed APK's `sha256sum` matched the local build before the capture.
 
+**In the listing since 2026-11-15** ([#346](https://github.com/SailorDave17/race-timer/issues/346)).
+This file (sha256 `414dbf5a…`) replaced the old amber in the Console's Wear OS screenshot slot 4,
+with the other seven left in their order. The change was sent for Google's review the same day,
+about 18:50 UTC, alongside the phone `04`. With managed publishing off, approval makes it live.
+
 **The other seven no longer match `v1.1` either.** [#303](https://github.com/SailorDave17/race-timer/issues/303)
 added the time of day at the top rim of the timer screen before `v1.1`, so the new `04` carries a
 clock line that `02`–`07` (captured from `1.0`) do not. Only the amber was in #298's scope.
