@@ -208,14 +208,22 @@ persisting until the sailor acts because each asks for something a 3 s banner co
 | Site | Line | On screen when | Scrim |
 |---|---|---|---|
 | Degraded-recovery prompt | "Recovered — tap Sync to confirm" | `RUNNING`, after a `DEGRADED` restore, until Sync is tapped | **Yes** — `#FF3A2A00`, added by #123 |
-| The same prompt, for a race joined from the phone (#220) or a gun the phone's Sync moved (#221) | "Phone start ±*N* ms — tap Sync to confirm", or "Phone start unmeasured — tap Sync to confirm"; after the phone's Sync, "Phone sync ±*N* ms — …" and "Phone sync unmeasured — …" | `RUNNING`, after joining a race — or taking the phone's Sync — whose gun the link could not place inside the pair's 100 ms budget, until Sync is tapped here, a later Sync from the phone lands inside the budget, or the race ends | **Yes** — the same line, so the same scrim |
-| The same prompt, for a gun the phone's came back apart from (#222) | "Phone gun *N* ms apart — tap Sync to confirm" below a second, "Phone gun *N.N* s apart — …" above | `RUNNING`, after the link came back and this watch's gun measured further than D6's 100 ms from the phone's it follows; cleared as the line above is | **Yes** — the same line |
+| The same prompt, for a race joined from the phone (#220) or a gun the phone's Sync moved (#221) | "Phone start ±*N* ms — tap Sync", or "Phone start not measured — tap Sync"; after the phone's Sync, "Phone sync ±*N* ms — …" and "Phone sync not measured — …". Until #353 each ended "— tap Sync to confirm", three lines on the capped plate | `RUNNING`, after joining a race — or taking the phone's Sync — whose gun the link could not place inside the pair's 100 ms budget, until Sync is tapped here, a later Sync from the phone lands inside the budget, or the race ends | **Yes** — the same line, so the same scrim |
+| The same prompt, for a gun the phone's came back apart from (#222) | "Phone gun *N* ms apart — tap Sync" below a second, "Phone gun *N.N* s apart — …" above | `RUNNING`, after the link came back and this watch's gun measured further than D6's 100 ms from the phone's it follows; cleared as the line above is | **Yes** — the same line |
 | Discard warning (#89) | "Start discards saved *name*" | `IDLE` pre-start only, cleared by `clearResumeOffer` | No — navy is its whole exposure |
 | `StartNotice` warning line (#13, #96, #222) | the three Tier 3 rows of the catalogue below, plus "Do Not Disturb — cues on wrist only" (#301; #96 shipped it as "Do Not Disturb — cues silent, wrist still buzzing"), and "Phone out of range — counting alone" | `IDLE` for #13's three; `RUNNING` for #96's; `RUNNING` and `COUNTING_UP` for #222's, which yields to #96's | **Yes** — `#FF3A2A00` |
 
 They are the `showResyncPrompt`, `discardWarning` and `warningNotice` blocks of `TimerScreen`, in
 that precedence order — named rather than cited by line, because the two line ranges this paragraph
 used to give were both wrong by more than a hundred lines before anyone noticed.
+
+**All three draw at the same width cap and type size** (`STATUS_LINE_MAX_WIDTH_FRACTION`,
+`STATUS_LINE_TEXT_SP`). Until #353 only the warning line did, so the other two were offered the
+column's full width and could run past the circle's chord. Every line the re-sync prompt can show
+fits two lines, and costs the running screen's buttons nothing. The discard warning does too, except
+for the two race-manager sequences, whose names are wider than a line by themselves. They take a
+third line and cost Start about 8 px, which the owner chose over dropping the name (2026-11-15).
+`BannerLayoutTest` holds both to that, derived from the functions that write the lines.
 
 **The third site is the one that reaches a running race with a message that is not a prompt**, and
 #96 is why it needed the scrim. Until then every notice it carried was confined to the pre-start
@@ -476,12 +484,12 @@ screen fails rather than wraps. *It asserted only the first of those until #231,
 | Exact recovery (race resumed) | 1 | "Resumed race in progress" | none — **shipped** |
 | Spent snapshot discarded | 1 | "Old race ended — starting fresh" | none — **shipped** |
 | Degraded recovery | 3 | "Recovered — tap Sync to confirm" | Sync — **shipped**, scrimmed #123 |
-| Race joined from the phone on a gun outside the pair's budget | 3 | "Phone start ±*N* ms — tap Sync to confirm" / "Phone start unmeasured — tap Sync to confirm" | Sync — **shipped** (#220), on the degraded-recovery line. The copy is `pairJoinNotice` in `shared/PairRace.kt`, not `StartPreconditions.kt`, and `PairRaceTest` holds it against this plate and the 60-character ceiling at the widest bounds a link produces |
-| The phone's Sync moved the gun outside the pair's budget | 3 | "Phone sync ±*N* ms — tap Sync to confirm" / "Phone sync unmeasured — tap Sync to confirm" | Sync — **shipped** (#221), the same line and the same `pairJoinNotice`, in a Sync's words; `PairRaceTest` holds these to the plate as well |
+| Race joined from the phone on a gun outside the pair's budget | 3 | "Phone start ±*N* ms — tap Sync" / "Phone start not measured — tap Sync" (two lines since #353) | Sync — **shipped** (#220), on the degraded-recovery line. The copy is `pairJoinNotice` in `shared/PairRace.kt`, not `StartPreconditions.kt`, and `PairRaceTest` holds it against this plate and the 60-character ceiling at the widest bounds a link produces |
+| The phone's Sync moved the gun outside the pair's budget | 3 | "Phone sync ±*N* ms — tap Sync" / "Phone sync not measured — tap Sync" | Sync — **shipped** (#221), the same line and the same `pairJoinNotice`, in a Sync's words; `PairRaceTest` holds these to the plate as well |
 | A Sync, End Race or Stop from the phone for a race not running here | 1 | "Phone synced a race not running here" / "Phone ended a race not running here" / "Phone stopped a race not running here" | none — **shipped** (#221; Stop's #328). The copy is `pairStaleControlLine` in `shared/PairRace.kt`, and `PairRaceTest` holds it against the banner's line budget and the 60-character ceiling. News about the pair, not a condition to act on here, so Tier 1 |
 | The phone's Stop stopped the race here (#328) | 1 | "Phone stopped the race" | none — news on the pre-start screen the Stop left, `pairStoppedLine` in `shared/PairRace.kt`; `PairRaceTest` holds it to the banner |
 | The phone out of range, for a race that had it (#222) | 3 | "Phone out of range — counting alone" | none — the lowest line of the tier, `RUNNING` and `COUNTING_UP`. The copy is `pairLinkLostLine` in `shared/PairRace.kt` through `armedNotice`, and `StartPreconditionsTest` holds it to the plate |
-| The phone's gun came back beyond D6's bound (#222) | 3 | "Phone gun 8.0 s apart — tap Sync to confirm" | Sync — on the degraded-recovery line, `pairGunsApartLine` in `shared/PairRace.kt`; `PairRaceTest` holds it to the plate |
+| The phone's gun came back beyond D6's bound (#222) | 3 | "Phone gun 8.0 s apart — tap Sync" | Sync — on the degraded-recovery line, `pairGunsApartLine` in `shared/PairRace.kt`; `PairRaceTest` holds it to the plate |
 | The link came back and the gun was matched within D6's bound (#222) | 1 | "Phone back — gun matched, 40 ms" | none — news, `pairGunCorrectedLine`; `PairRaceTest` holds it to the banner |
 | Cue volume raise refused (Do Not Disturb) | 3 | "Do Not Disturb — cues on wrist only" | none — **shipped** (#96), `RUNNING` only; reworded onto two lines by #301 |
 | Cue dropped mid-race | 1 | "Cue silent — wrist still buzzing" | none — **shipped** (#161) |

@@ -102,8 +102,8 @@ pickup, 2026-09-28. A clock that is counting and says it is unsure beats one tha
 | The translation | The gun joined | The standing line (`pairJoinNotice`) |
 |---|---|---|
 | Within the budget | the translated gun | none |
-| Outside the budget | the best-effort gun, the midpoint of what the rounds allow | *Phone start ±180 ms — tap Sync to confirm* |
-| No rounds at all | anchored to the start's arrival: the latest the gun can be, late by the message's own trip | *Phone start unmeasured — tap Sync to confirm* |
+| Outside the budget | the best-effort gun, the midpoint of what the rounds allow | *Phone start ±180 ms — tap Sync* |
+| No rounds at all | anchored to the start's arrival: the latest the gun can be, late by the message's own trip | *Phone start not measured — tap Sync* |
 
 On the watch it is the degraded-restore prompt's Tier 3 line, for the same reason in the same words'
 shape ([`message-surface.md`](message-surface.md)); on the phone it is the notice line under the
@@ -188,7 +188,7 @@ the move lands: that is a message's trip later, and on the owner's pair a Sync t
 cross, which read *Watch synced → 0:59* for a Sync to 1:00 until #221's hardware run found it.
 
 A gun that could not be placed inside D2's budget is flagged as a joined start's is, in a Sync's
-words (*Phone sync ±180 ms — tap Sync to confirm*), and one placed inside it clears the flag.
+words (*Phone sync ±180 ms — tap Sync*), and one placed inside it clears the flag.
 
 **Two Syncs that cross settle on the later.** Each Sync carries a key made exactly as a start's is
 — the instant on the phone's clock, raised past everything the device has seen, then a random id —
@@ -339,7 +339,7 @@ does:
   running race silently, however little. The wake lock is re-sized and the race persisted, as a
   Sync's move does.
 - **Beyond it:** never moved by itself. The device that follows owes the officer the standing line
-  *Phone gun 8.0 s apart — tap Sync to confirm* (milliseconds under a second), on the joined start's
+  *Phone gun 8.0 s apart — tap Sync* (milliseconds under a second), on the joined start's
   plate, until a Sync settles it. A Sync on either device then moves both, as #221 does.
 - **A gap the link cannot place inside D2's budget** is flagged only if even its bound cannot bring it
   inside 100 ms, and never corrected. With no rounds at all nothing is said.

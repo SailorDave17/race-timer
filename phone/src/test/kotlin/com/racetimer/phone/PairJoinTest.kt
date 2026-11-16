@@ -106,7 +106,7 @@ class PairJoinTest {
         val svc = createdService()
         svc.join(BuiltInSequences.club, gunTappedAgo(BuiltInSequences.club, 100L), boundMs = 240L)
 
-        assertEquals("Watch start ±240 ms — tap Sync to confirm", svc.pairJoinNotice)
+        assertEquals("Watch start ±240 ms — tap Sync", svc.pairJoinNotice)
         svc.onStartCommand(Intent().setAction(PhoneTimerService.ACTION_SYNC), 0, 2)
         assertNull(svc.pairJoinNotice)
     }
@@ -116,7 +116,7 @@ class PairJoinTest {
         val svc = createdService()
         svc.join(BuiltInSequences.club, gunTappedAgo(BuiltInSequences.club, 100L), boundMs = null)
 
-        assertEquals("Watch start unmeasured — tap Sync to confirm", svc.pairJoinNotice)
+        assertEquals("Watch start not measured — tap Sync", svc.pairJoinNotice)
         svc.onStartCommand(Intent().setAction(PhoneTimerService.ACTION_STOP), 0, 2)
         assertNull(svc.pairJoinNotice)
     }

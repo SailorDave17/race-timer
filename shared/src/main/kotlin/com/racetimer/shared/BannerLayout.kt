@@ -445,9 +445,14 @@ enum class MessageSurface(
      * **It is a ceiling on fouling the bezel, not on shrinking the buttons.** Since #301 two lines
      * fit the column on both screens and a third overflows it, by 8 px pre-start and 20 px running,
      * which comes out of Start or Sync and Stop. So no warning that ships may use the third line,
-     * and `BannerLayoutTest` asserts that notice by notice rather than here. The budget stays at
-     * three because the phone's re-sync lines (#220, #221, #222) are held to it and still need
-     * three, on a site drawn without this surface's cap. That site is a separate story.
+     * and `BannerLayoutTest` asserts that notice by notice rather than here.
+     *
+     * The budget stays at three for one line only: the pre-start discard warning for the two
+     * race-manager sequences, whose names are wider than a line by themselves (`discardWarningLine`).
+     * The owner kept the name over Start's 8 px (#353, 2026-11-15). The phone's re-sync lines
+     * (#220, #221, #222), which held it at three until then, were reworded to two lines in the same
+     * story, and both sites now draw with this surface's cap. Drop the name, or shorten those two
+     * sequence names, and this can come down to two.
      */
     STATUS_LINE(STATUS_LINE_MAX_WIDTH_FRACTION, STATUS_LINE_TEXT_SP, maxLines = 3),
 

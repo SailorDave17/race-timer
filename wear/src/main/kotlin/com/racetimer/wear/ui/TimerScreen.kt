@@ -48,6 +48,7 @@ import com.racetimer.shared.BANNER_TOP_FRACTION
 import com.racetimer.shared.BLOCKING_PANEL_TEXT_SP
 import com.racetimer.shared.BLOCKING_PANEL_WIDTH_FRACTION
 import com.racetimer.shared.MessageSurface
+import com.racetimer.shared.RESYNC_PROMPT_RECOVERED
 import com.racetimer.shared.STATUS_LINE_MAX_WIDTH_FRACTION
 import com.racetimer.shared.STATUS_LINE_TEXT_SP
 import com.racetimer.shared.SYNC_LABEL_SLOT_DP
@@ -121,9 +122,6 @@ private fun backgroundColorFor(remainingMs: Long, state: TimerState): Color =
 // ---------------------------------------------------------------------------
 // Main timer screen
 // ---------------------------------------------------------------------------
-
-/** The degraded-recovery prompt's words (Tier 3, `docs/message-surface.md`). */
-const val RESYNC_PROMPT_RECOVERED = "Recovered — tap Sync to confirm"
 
 /**
  * Full-screen glanceable countdown for the Wear OS watch.
@@ -296,15 +294,22 @@ fun TimerScreen(
             // failing. Since #277 darkened the amber, bare text would clear there (7.12 : 1), so the
             // scrim is margin rather than rescue, and it stays under rule 1. The failing control is
             // pinned to the amber it was measured on.
+            //
+            // Capped and sized as the warning line below is (#353), and for the same reason: left to
+            // the column's full width its plate ran past the circle's chord where it sits, as #13 found
+            // on the warning line. `BannerLayoutTest` holds every line this can show to zero overflow
+            // on the running screen, which is the half of that the cap's wrap decides.
             if (showResyncPrompt) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = resyncPromptText,
                     style = MaterialTheme.typography.caption2,
+                    fontSize = STATUS_LINE_TEXT_SP.sp,
                     color = Color(TIER3_TEXT_ARGB),
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
+                        .widthIn(max = configuration.screenWidthDp.dp * STATUS_LINE_MAX_WIDTH_FRACTION)
                         .background(Color(TIER3_SCRIM_ARGB), shape = RoundedCornerShape(6.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
@@ -321,14 +326,23 @@ fun TimerScreen(
             // docs/message-surface.md permits bare text exactly where every reachable background has
             // been checked; `MessageContrastTest` is that check, and it derives the reachable set
             // from `backgroundArgbFor` rather than trusting this comment.
+            //
+            // Capped and sized as the other two (#353), though bare: with no plate there is nothing to
+            // cut at the bezel, but uncapped text still ran wider than the chord, and the cap is also
+            // what the copy budget in `shared/BannerLayout.kt` assumes. The two race-manager names
+            // wrap it to three lines and cost Start about 8 px, by the owner's choice; the reason is on
+            // `discardWarningLine`.
             if (discardWarning != null) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = discardWarning,
                     style = MaterialTheme.typography.caption2,
+                    fontSize = STATUS_LINE_TEXT_SP.sp,
                     color = Color(TIER3_TEXT_ARGB),
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .widthIn(max = configuration.screenWidthDp.dp * STATUS_LINE_MAX_WIDTH_FRACTION),
                 )
             }
 

@@ -725,7 +725,7 @@ class PairRaceTest {
         val gun = watchNode.joins.single().race.gun
         assertFalse(gun.inBudget)
         assertEquals("the watch counts rather than refusing", TimerState.RUNNING, watchNode.engine.currentState)
-        assertEquals("Phone start ±${gun.errorBoundMs} ms — tap Sync to confirm", pairJoinNotice(gun, "Phone"))
+        assertEquals("Phone start ±${gun.errorBoundMs} ms — tap Sync", pairJoinNotice(gun, "Phone"))
         // And the bound it reports is honest even so.
         assertTrue(gunGapMs() <= gun.errorBoundMs!!)
     }
@@ -738,7 +738,7 @@ class PairRaceTest {
 
         val gun = watchNode.joins.single().race.gun
         assertNull(gun.errorBoundMs)
-        assertEquals("Phone start unmeasured — tap Sync to confirm", pairJoinNotice(gun, "Phone"))
+        assertEquals("Phone start not measured — tap Sync", pairJoinNotice(gun, "Phone"))
         assertEquals(TimerState.RUNNING, watchNode.engine.currentState)
     }
 
@@ -788,7 +788,7 @@ class PairRaceTest {
     fun `a join inside the budget says nothing, and one at the budget exactly is inside it`() {
         assertNull(pairJoinNotice(JoinGun(0L, 0L), "Watch"))
         assertNull(pairJoinNotice(JoinGun(0L, PAIR_SKEW_BUDGET_MS), "Watch"))
-        assertEquals("Watch start ±101 ms — tap Sync to confirm", pairJoinNotice(JoinGun(0L, PAIR_SKEW_BUDGET_MS + 1L), "Watch"))
+        assertEquals("Watch start ±101 ms — tap Sync", pairJoinNotice(JoinGun(0L, PAIR_SKEW_BUDGET_MS + 1L), "Watch"))
     }
 
     @Test
@@ -1481,8 +1481,8 @@ class PairRaceTest {
             pairJoinNotice(JoinGun(0L, 999_999L), "Phone", PairControlledGun.SYNC)!!,
             pairJoinNotice(JoinGun(0L, null), "Phone", PairControlledGun.SYNC)!!,
         )
-        assertEquals("Phone sync ±180 ms — tap Sync to confirm", lines[0])
-        assertEquals("Phone sync unmeasured — tap Sync to confirm", lines[2])
+        assertEquals("Phone sync ±180 ms — tap Sync", lines[0])
+        assertEquals("Phone sync not measured — tap Sync", lines[2])
         for (line in lines) assertTrue("\"$line\" overflows the plate", MessageSurface.STATUS_LINE.holds(line) && line.length <= NOTICE_MAX_CHARS)
     }
 
@@ -1885,11 +1885,11 @@ class PairRaceTest {
 
     @Test
     fun `the gap line reads milliseconds under a second and tenths above, and fits the plate`() {
-        assertEquals("Phone gun 101 ms apart — tap Sync to confirm", pairGunsApartLine(101L, "Phone"))
-        assertEquals("the sign is not the officer's concern", "Phone gun 101 ms apart — tap Sync to confirm", pairGunsApartLine(-101L, "Phone"))
-        assertEquals("Watch gun 999 ms apart — tap Sync to confirm", pairGunsApartLine(999L, "Watch"))
-        assertEquals("Watch gun 1.0 s apart — tap Sync to confirm", pairGunsApartLine(1_000L, "Watch"))
-        assertEquals("Phone gun 8.0 s apart — tap Sync to confirm", pairGunsApartLine(7_981L, "Phone"))
+        assertEquals("Phone gun 101 ms apart — tap Sync", pairGunsApartLine(101L, "Phone"))
+        assertEquals("the sign is not the officer's concern", "Phone gun 101 ms apart — tap Sync", pairGunsApartLine(-101L, "Phone"))
+        assertEquals("Watch gun 999 ms apart — tap Sync", pairGunsApartLine(999L, "Watch"))
+        assertEquals("Watch gun 1.0 s apart — tap Sync", pairGunsApartLine(1_000L, "Watch"))
+        assertEquals("Phone gun 8.0 s apart — tap Sync", pairGunsApartLine(7_981L, "Phone"))
         // A day apart is further than any race runs; it still fits.
         for (gap in listOf(101L, 999L, 59_999L, 86_400_000L)) {
             val line = pairGunsApartLine(gap, "Phone")

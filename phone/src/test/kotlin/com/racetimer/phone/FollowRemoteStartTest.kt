@@ -100,6 +100,6 @@ class FollowRemoteStartTest {
     }
 
     private companion object {
-        const val FLAG = "Watch start ±180 ms — tap Sync to confirm"
+        const val FLAG = "Watch start ±180 ms — tap Sync"
     }
 }

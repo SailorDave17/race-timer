@@ -337,6 +337,93 @@ class BannerLayoutTest {
         assertTrue(MessageSurface.STATUS_LINE.holds(notice96AsMeasured))
     }
 
+    // --- #353: the two Tier 3 sites #301 left out --------------------------------------------------
+
+    /**
+     * Every line the watch's re-sync prompt can show, from the functions that write it rather than
+     * from a list of strings: the degraded-recovery words, and the phone's join, Sync and gap lines.
+     *
+     * The bounds and gaps run past anything a race reaches, as `PairRaceTest`'s plate checks do. A
+     * round after a reconnect stall can run to tens of seconds, so the join bound goes to 9,999,999 ms,
+     * well over two hours. The gap goes to a day.
+     */
+    private fun everyResyncPromptLine(): List<String> = buildList {
+        add(RESYNC_PROMPT_RECOVERED)
+        for (placedBy in PairControlledGun.values()) {
+            add(pairJoinNotice(JoinGun(0L, null), "Phone", placedBy)!!)
+            for (bound in listOf(PAIR_SKEW_BUDGET_MS + 1L, 999L, 9_999L, 52_000L, 999_999L, 9_999_999L)) {
+                add(pairJoinNotice(JoinGun(0L, bound), "Phone", placedBy)!!)
+            }
+        }
+        for (apart in listOf(101L, 999L, 1_000L, 7_981L, 59_999L, 999_999L, 86_400_000L)) {
+            add(pairGunsApartLine(apart, "Phone"))
+        }
+    }.distinct()
+
+    /**
+     * Every line the pre-start discard warning can show: one per sequence a saved race can carry.
+     * A lead-in keeps its base sequence's name (`withLeadIn`), so the built-ins and the custom
+     * durations are the whole set. Custom runs to 999 minutes, past anything the picker is used for.
+     */
+    private fun everyDiscardWarningLine(): List<String> = buildList {
+        for (sequence in BuiltInSequences.all) add(discardWarningLine(sequence.name))
+        for (minutes in BuiltInSequences.CUSTOM_MIN_MINUTES..999) {
+            add(discardWarningLine(BuiltInSequences.custom(minutes).name))
+        }
+    }.distinct()
+
+    @Test fun `no re-sync prompt takes height from Sync and Stop`() {
+        // #353's third criterion for the prompt, at the figure #301 set: zero. It draws only on a
+        // running race, so the running screen is the one it is judged on.
+        val lines = everyResyncPromptLine()
+        for (text in lines) {
+            val count = MessageSurface.STATUS_LINE.linesFor(text)
+            assertEquals("\"$text\", $count line(s)", 0f, statusLineOverflowFraction(count, StatusLineScreen.RUNNING), 0f)
+        }
+        // Not a loop over nothing: every producer is reached, both words for who placed the gun,
+        // and the bound nobody could measure.
+        assertTrue(lines.contains(RESYNC_PROMPT_RECOVERED))
+        assertTrue(lines.contains("Phone start not measured — tap Sync"))
+        assertTrue(lines.contains("Phone sync ±9999999 ms — tap Sync"))
+        assertTrue(lines.contains("Phone gun 86400.0 s apart — tap Sync"))
+        assertTrue("only ${lines.size} lines were collected", lines.size >= 20)
+    }
+
+    @Test fun `the re-sync prompt as #220 worded it would shrink Sync and Stop`() {
+        // The negative control for the test above, on the words this story changed. With "to
+        // confirm" the line wraps to three on the capped plate and costs the running screen's
+        // buttons about 20 px, the squeeze #301 removed for the warnings.
+        val before353 = "Phone start ±180 ms — tap Sync to confirm"
+        val count = MessageSurface.STATUS_LINE.linesFor(before353)
+        assertEquals(3, count)
+        assertEquals(20.25f / 450f, statusLineOverflowFraction(count, StatusLineScreen.RUNNING), onePx)
+    }
+
+    @Test fun `the discard warning takes height from Start only for the two race-manager names`() {
+        // #353's third criterion for the warning, as the owner settled it (2026-11-15): keep the
+        // sequence's name, which #89 put there, and let the two names wider than a line take a third
+        // one pre-start, costing Start about 8 px. Every other name costs nothing. A sequence added
+        // later whose name needs three lines goes red here, by name, rather than quietly joining them.
+        val threeLines = mutableSetOf<String>()
+        for (text in everyDiscardWarningLine()) {
+            val count = MessageSurface.STATUS_LINE.linesFor(text)
+            val overflow = statusLineOverflowFraction(count, StatusLineScreen.PRE_START)
+            if (count == 3) {
+                threeLines.add(text)
+                assertEquals("\"$text\"", 8.25f / 450f, overflow, onePx)
+            } else {
+                assertEquals("\"$text\", $count line(s)", 0f, overflow, 0f)
+            }
+        }
+        assertEquals(
+            setOf(
+                discardWarningLine(BuiltInSequences.usSailingRaceManager.name),
+                discardWarningLine(BuiltInSequences.scholasticRaceManager.name),
+            ),
+            threeLines,
+        )
+    }
+
     @Test fun `two lines still shrink the buttons unless the plate takes the slot's place`() {
         // The other half. Shorter copy alone was one of #301's options, and it is not enough: a
         // two-line plate and its spacer cost 76.25 px, against 56 px spare running and 68 px
